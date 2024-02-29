@@ -2,14 +2,14 @@
 python==3.11  # PyMC not compatible with higher version
 
 # Dataframes, arrays and math
-numpy>=1.24.3
+numpy>=1.26.4
 pandas>=2.0.3
-polars>=0.20.7
-scipy>=1.11.4
+polars>=0.20.11
+#scipy>=1.11.4
 
 # Plotting
-matplotlib>=3.7.1
-seaborn>=0.12.2
+matplotlib>=3.8.3
+seaborn>=0.13.2
 
 # Geospatial analysis
 geopandas>=0.14.2
@@ -19,5 +19,15 @@ pygeoprocessing>=2.4.2
 rasterstats>=0.19.0
 
 # Modelling
-pymc>=5.6.1
+pymc>=5.10.4
 numpyro>=0.13.2  # For using JAX backend with PyMC   
+scikit-learn>=1.4.1
+statsmodels
+
+# Code formatting and linting
+black>=24.2.0
+jupyter_black>=0.3.4  # Not on conda, PIP required
+
+# Notebooks
+jupyter>=1.0.0
+ipykernel>=6.29.3
