@@ -5,6 +5,7 @@ python==3.11  # PyMC not compatible with higher version
 numpy>=1.26.4
 pandas>=2.0.3
 polars>=0.20.11
+pyarrow>=15.0
 #scipy>=1.11.4
 
 # Plotting
@@ -22,11 +23,13 @@ rasterstats>=0.19.0
 pymc>=5.10.4
 numpyro>=0.13.2  # For using JAX backend with PyMC   
 scikit-learn>=1.4.1
-statsmodels
+statsmodels>=0.14.1
 
-# Code formatting and linting
+# Code formatting, typing and linting
 black>=24.2.0
 jupyter_black>=0.3.4  # Not on conda, PIP required
+typing>=3.10
+mypy>=1.8
 
 # Notebooks
 jupyter>=1.0.0
