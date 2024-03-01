@@ -1,0 +1,79 @@
+
+# PREDICTS processing -------------------
+# These are configs for predicts_processing.py
+
+predicts:
+  2016_source_file: "../../data/PREDICTS/PREDICTS_2016/data.csv"
+  2022_source_file: "../../data/PREDICTS/PREDICTS_2022/data.csv"
+  concat_data_output_path: "../../data/PREDICTS/merged_data.csv"
+  site_coord_output_path: "../../data/PREDICTS/site_coordinates/site_coord.shp"
+
+  col_order:
+  - _id
+  - Source_ID
+  - Reference
+  - Study_number
+  - Study_name
+  - Block
+  - Site_number
+  - Site_name
+  - SS
+  - SSS
+  - SSB
+  - SSBS
+  - Longitude
+  - Latitude
+  - Coordinates_method
+  - Country
+  - Country_distance_metres
+  - UN_region
+  - UN_subregion
+  - Realm
+  - Biome
+  - Ecoregion
+  - Ecoregion_distance_metres
+  - Wilderness_area
+  - Hotspot
+  - Study_common_taxon
+  - Rank_of_study_common_taxon
+  - Sample_start_earliest
+  - Sample_end_latest
+  - Sample_midpoint
+  - Sample_date_resolution
+  - Sampling_method
+  - Sampling_effort
+  - Rescaled_sampling_effort
+  - Sampling_effort_unit
+  - Max_linear_extent_metres
+  - Transect_details
+  - Taxon
+  - Taxon_number
+  - Taxon_name_entered
+  - Parsed_name
+  - Best_guess_binomial
+  - COL_ID
+  - Kingdom
+  - Phylum
+  - Class
+  - Order
+  - Family
+  - Genus
+  - Species
+  - Higher_taxon
+  - Indication
+  - Name_status
+  - Rank
+  - Diversity_metric_type
+  - Diversity_metric
+  - Diversity_metric_is_effort_sensitive
+  - Diversity_metric_is_suitable_for_Chao
+  - Diversity_metric_unit
+  - Measurement
+  - Effort_corrected_measurement
+  - Predominant_land_use
+  - Source_for_predominant_land_use
+  - Use_intensity
+  - Habitat_as_described
+  - Habitat_patch_area_square_metres
+  - Km_to_nearest_edge_of_habitat
+  - Years_since_fragmentation_or_conversion
