@@ -3,10 +3,10 @@
 # These are configs for predicts_processing.py
 
 predicts:
-  2016_source_file: "../../data/PREDICTS/PREDICTS_2016/data.csv"
-  2022_source_file: "../../data/PREDICTS/PREDICTS_2022/data.csv"
-  concat_data_output_path: "../../data/PREDICTS/merged_data.csv"
-  site_coord_output_path: "../../data/PREDICTS/site_coordinates/site_coord.shp"
+  source_file_2016: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
+  source_file_2022: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
+  concat_data_output_path: "../../../data/PREDICTS/merged_data.parquet"
+  site_coord_output_path: "../../../data/PREDICTS/site_coordinates/site_coord.shp"
 
   col_order:
   - _id
@@ -77,3 +77,14 @@ predicts:
   - Habitat_patch_area_square_metres
   - Km_to_nearest_edge_of_habitat
   - Years_since_fragmentation_or_conversion
+
+# Geodata processing -------------------
+# These are configs for geodata_processing.py
+
+geodata:
+  site_coord_source_file: "../../data/PREDICTS/site_coordinates/site_coord.shp"
+
+  buffer_distances:
+    - 1
+    - 10
+    - 50
