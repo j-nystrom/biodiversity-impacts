@@ -1,7 +1,6 @@
 import os
 import time
 from datetime import timedelta
-from typing import List
 
 import polars as pl
 from box import Box
@@ -34,7 +33,7 @@ class PredictsProcessingTask:
         self,
         source_file_2016: str = configs.predicts.source_file_2016,
         source_file_2022: str = configs.predicts.source_file_2022,
-        col_order: List[str] = configs.predicts.col_order,
+        col_order: list[str] = configs.predicts.col_order,
         concat_data_output_path: str = configs.predicts.concat_data_output_path,
         site_coord_output_path: str = configs.predicts.site_coord_output_path,
     ) -> None:
