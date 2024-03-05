@@ -29,7 +29,14 @@ class PredictsProcessingTask:
         """Initialize the class instance."""
         pass
 
-    def run_task(self) -> None:
+    def run_task(
+        self,
+        source_file_2016: str = configs.predicts.source_file_2016,
+        source_file_2022: str = configs.predicts.source_file_2022,
+        col_order: List[str] = configs.predicts.col_order,
+        concat_data_output_path: str = configs.predicts.concat_data_output_path,
+        site_coord_output_path: str = configs.predicts.site_coord_output_path,
+    ) -> None:
         """
         Orchestrate the processing of PREDICTS data, incl. loading,
         concatenating, generating site coordinates and saving dataframes.
@@ -40,6 +47,13 @@ class PredictsProcessingTask:
         3. Generates a geodataframe with coordinates for each sampling site.
         4. Saves both dataframes to disk.
 
+        Args:
+            source_file_2016 (str):
+            source_file_2022 (str):
+            col_order (List[str]):
+            concat_data_output_path (str):
+            site_coord_output_path (str):
+
         Returns:
             None
         """
@@ -48,20 +62,18 @@ class PredictsProcessingTask:
 
         # Load the two PREDICTS datasets (2016 and 2022)
         read_kwargs = {"infer_schema_length": 100000, "null_values": ["NA"]}
-        df_2016 = pl.read_csv(configs.predicts.source_file_2016, **read_kwargs)
-        df_2022 = pl.read_csv(configs.predicts.source_file_2022, **read_kwargs)
+        df_2016 = pl.read_csv(source_file_2016, **read_kwargs)
+        df_2022 = pl.read_csv(source_file_2022, **read_kwargs)
 
         # Concatenate them together
-        df_concat = self.concatenate_datasets(
-            df_2016, df_2022, col_order=configs.predicts.col_order
-        )
+        df_concat = self.concatenate_datasets(df_2016, df_2022, col_order=col_order)
 
         # Generate a geodataframe with coordinates for every sampling site
         gdf_site_coords = self.create_site_coord_geometries(df_concat)
 
         # Save both dataframes to disk
-        df_concat.write_parquet(configs.predicts.concat_data_output_path)
-        gdf_site_coords.to_file(configs.predicts.site_coord_output_path)
+        df_concat.write_parquet(concat_data_output_path)
+        gdf_site_coords.to_file(site_coord_output_path)
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"PREDICTS data processing finished in {runtime}.")
