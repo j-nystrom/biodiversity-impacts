@@ -29,11 +29,11 @@ class PredictsProcessingTask:
     def __init__(self) -> None:
         """
         Attributes:
-            predicts_2016 (str):
-            predicts_2016 (str):
-            target_col_order (list[str]):
-            all_predicts_data (str):
-            all_site_coords (str):
+            predicts_2016: Path to the PREDICTS 2016 data.
+            predicts_2016: Path to the PREDICTS 2016 data.
+            target_col_order: Target column order in concatenated dataframe.
+            all_predicts_data: Output path for the concatenated dataframe.
+            all_site_coords: Output path for geodataframe with site coords.
         """
         self.predicts_2016: str = configs.predicts.predicts_2016
         self.predicts_2022: str = configs.predicts.predicts_2022
@@ -46,11 +46,10 @@ class PredictsProcessingTask:
         Orchestrate the processing of PREDICTS data, incl. loading,
         concatenating, generating site coordinates and saving dataframes.
 
-        This function performs the following steps:
-        1. Loads the PREDICTS datasets for 2016 and 2022.
-        2. Concatenates the datasets together.
-        3. Generates a geodataframe with coordinates for each sampling site.
-        4. Saves both dataframes to disk.
+        This function performs the following steps: Loads the PREDICTS datasets
+        for 2016 and 2022; concatenates the datasets together; generates a
+        geodataframe with coordinates for each sampling site; and saves both
+        dataframes to disk.
 
         TODO: Add asserts that check that the length of the generated frames
         are correct.
