@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     """Parse the DAG names passed as command line arguments."""
     parser = argparse.ArgumentParser(description="Run specified DAGs.")
     parser.add_argument(
-        "--dags", nargs="+", help="Names of DAGs to run (space-separated if multiple)."
+        "dags", nargs="+", help="Names of DAGs to run (space-separated if multiple)."
     )
     return parser.parse_args()
 
