@@ -55,9 +55,8 @@ def create_logger(
     stream_handler.setFormatter(stream_format)
 
     # Add handlers to the logger object
-    logger.addHandler(file_handler)
+    # File handler disabled for now
+    # logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
-
-    logger.info(f"Logger object created for module {module_name}")
 
     return logger
