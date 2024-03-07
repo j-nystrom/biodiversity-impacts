@@ -26,11 +26,11 @@ class ProjectAndBufferTask:
     def __init__(self) -> None:
         """
         Attributes:
-            all_site_coords (str): Path to dataframe containing coordinates of
-                all sampling sites.
-            buffer_distances (list[int]):
-            glob_site_polygons (list[str]):
-            utm_site_polygons (list[str]):
+            all_site_coords: Path to dataframe containing coordinates of all
+                sampling sites.
+            buffer_distances: List of radii that should be used in buffering.
+            glob_site_polygons: Output paths of the polygons in global format.
+            utm_site_polygons: Output paths of the polygons in UTM format.
         """
         self.all_site_coords: str = configs.predicts.all_site_coords
         self.buffer_distances: list[int] = configs.geodata.buffer_distances
@@ -45,9 +45,7 @@ class ProjectAndBufferTask:
         then buffered into polygons. Finally, the polygon coordinates are
         reprojected into the global format.
         """
-        logger.info(
-            "Starting projection-buffering-reprojection of sampling site coordinates."
-        )
+        logger.info("Starting projection-buffering-reprojection of site coordinates.")
         start = time.time()
 
         # Instantiate a Projections class object
@@ -72,7 +70,7 @@ class ProjectAndBufferTask:
         for dist in self.buffer_distances:
             gdf[f"utm_{dist}km"] = buffer_points_in_utm(
                 gdf["utm_coord"],
-                dist * 1000,
+                dist,
                 polygon_type="square",
             )
 
