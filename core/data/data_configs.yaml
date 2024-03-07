@@ -1,14 +1,13 @@
 
-# PREDICTS processing -------------------
-# These are configs for predicts_processing.py
+# PREDICTS data and processing -------------------
 
 predicts:
-  source_file_2016: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
-  source_file_2022: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
-  concat_data_output_path: "../../../data/PREDICTS/merged_data.parquet"
-  site_coord_output_path: "../../../data/PREDICTS/site_coordinates/site_coord.shp"
+  predicts_2016_p: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
+  predicts_2022_path: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
+  all_predicts_data: "../../../data/output/predicts/all_predicts.parquet"
+  all_site_coords: "../../../data/output/site_coords/all_site_coords.shp"
 
-  col_order:
+  target_col_order:
   - _id
   - Source_ID
   - Reference
@@ -79,12 +78,91 @@ predicts:
   - Years_since_fragmentation_or_conversion
 
 # Geodata processing -------------------
-# These are configs for geodata_processing.py
 
 geodata:
-  site_coord_source_file: "../../data/PREDICTS/site_coordinates/site_coord.shp"
+  buffer_distances: [1, 10, 50]
+  glob_site_polygons:
+    - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
+    - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
+    - "../../../data/output/buff_polygons/glob_buff_polygons_50km.shp"
+  utm_site_polygons:
+    - "../../../data/output/buff_polygons/utm_buff_polygons_1km.shp"
+    - "../../../data/output/buff_polygons/utm_buff_polygons_10km.shp"
+    - "../../../data/output/buff_polygons/utm_buff_polygons_50km.shp"
 
-  buffer_distances:
-    - 1
-    - 10
-    - 50
+  pop_density:
+    site_polygon_paths:
+      - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
+      - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
+      - "../../../data/output/buff_polygons/glob_buff_polygons_50km.shp"
+    raster_paths:
+      - "../../../data/GPW/gpw_v4_2000_30_sec.tif"
+      - "../../../data/GPW/gpw_v4_2005_30_sec.tif"
+      - "../../../data/GPW/gpw_v4_2010_30_sec.tif"
+      - "../../../data/GPW/gpw_v4_2015_30_sec.tif"
+      - "../../../data/GPW/gpw_v4_2020_30_sec.tif"
+    output_paths:
+      - "../../../data/output/pop_density/pop_density_1km.parquet"
+      - "../../../data/output/pop_density/pop_density_10km.parquet"
+      - "../../../data/output/pop_density/pop_density_50km.parquet"
+    rasterstats_settings:
+      metrics: mean
+      include_all_pixels: True
+    result_col_names:
+      - Pop_density_1km_2000
+      - Pop_density_1km_2005
+      - Pop_density_1km_2010
+      - Pop_density_1km_2015
+      - Pop_density_1km_2020
+      - Pop_density_10km_2000
+      - Pop_density_10km_2005
+      - Pop_density_10km_2010
+      - Pop_density_10km_2015
+      - Pop_density_10km_2020
+      - Pop_density_50km_2000
+      - Pop_density_50km_2005
+      - Pop_density_50km_2010
+      - Pop_density_50km_2015
+      - Pop_density_50km_2020
+
+  elevation:
+    site_polygon_paths:
+      - "../../../data/PREDICTS/site_coordinates/site_coord_buff_1km.shp"
+    raster_paths:
+      - "../../../data/WorldClim/Elevation/wc2.1_30s_elev.tif"
+    output_path:
+      - "../../../data/WorldClim/Elevation/output/elevation.parquet"
+    result_col_names:
+      - Elevation_1km
+
+  bioclimatic:
+    site_polygon_paths:
+      - "../../../data/PREDICTS/site_coordinates/site_coord_buff_1km.shp"
+    raster_paths:
+      - ""
+      - ""
+    output_paths:
+      - "../../../data/WorldClim/Bioclimatic/output/bioclimatic.parquet"
+    result_col_names:
+      - ""
+      - ""
+
+  roads:
+    road_network_data:
+      - "../../../data/gROADS/oceania/groads-v1-oceania.shp"
+      - "../../../data/gROADS/europe/groads-v1-europe.shp"
+      - "../../../data/gROADS/africa/groads-v1-africa.shp"
+      - "../../../data/gROADS/asia/groads-v1-asia.shp"
+      - "../../../data/gROADS/americas/groads-v1-americas.shp"
+    road_density_data:
+      - "../../../data/output/road_density/road_density_oceania.parquet"
+      - "../../../data/output/road_density/road_density_europe.parquet"
+      - "../../../data/output/road_density/road_density_africa.parquet"
+      - "../../../data/output/road_density/road_density_asia.parquet"
+      - "../../../data/output/road_density/road_density_americas.parquet"
+    un_regions:
+      - Oceania
+      - Europe
+      - Africa
+      - Asia
+      - Americas
