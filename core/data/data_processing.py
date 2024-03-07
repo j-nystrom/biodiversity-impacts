@@ -33,10 +33,10 @@ class Projections:
     def __init__(self) -> None:
         """
         Attributes:
-            utm_transformer_dict (dict): For every new UTM zone code, the
-                transformer object for local projection is stored for future
-                re-use when a new site in that zone is encountered.
-            global_transformer_dict (dict): Same, but for the reprojections.
+            utm_transformer_dict: For every new UTM zone code, the transformer
+                object for local projection is stored for future re-use when a
+                new site in that zone is encountered.
+            global_transformer_dict: Same, but for the reprojections.
         """
         self.utm_transformer_dict: dict[str, Transformer] = {}
         self.global_transformer_dict: dict[str, Transformer] = {}
@@ -50,14 +50,13 @@ class Projections:
         coordinates into from global to local UTM format.
 
         Args:
-            geometry (Point or LineString): Coordinates of e.g. a sampling site
-                or road segment.
+            geometry: Coordinates of e.g. a sampling site or road segment.
 
         Returns:
-            local_coords (Point or LineString): The coordinates of the input
-                geometry transformed to local UTM coordinates.
-            epsg_code (str): The local EPSG code for this tranformation, used
-                for reprojection in a later stage.
+            local_coords: The coordinates of the input geometry transformed to
+                local UTM coordinates.
+            epsg_code: The local EPSG code for this tranformation, used for
+                reprojection in a later stage.
         """
         assert isinstance(
             geometry, (Point, LineString)
@@ -98,11 +97,11 @@ class Projections:
         global EPSG:4326 coordinates.
 
         Args:
-            polygon (Polygon): The buffered site that should be reprojected.
-            epsg_code (str): The stored local EPSG code for this tranformation.
+            polygon: The buffered site Polygon that should be reprojected.
+            epsg_code: The stored local EPSG code for this tranformation.
 
         Returns:
-            global_polygon (Polygon): The buffered site in global coordinates.
+            global_polygon: The buffered site Polygon in global coordinates.
         """
 
         # Fetch existing or initialize new Transformer object for reprojection
@@ -134,14 +133,14 @@ def buffer_points_in_utm(
     specified radius.
 
     Args:
-        points (gpd.GeoSeries): A GeoSeries with all the points that should
-            be buffered into Polygons.
-        buffer_dist (int): Buffer radius expressed in kilometers.
-        polygon_type (str): The shape of the buffered Polygon. Can be any
-            of ['square', 'round', 'flat']. Defaults to 'square'.
+        points: A GeoSeries with all the points that should be buffered into
+            Polygons.
+        buffer_dist: Buffer radius expressed in kilometers.
+        polygon_type: The shape of the buffered Polygon. Can be any of
+            ['square', 'round', 'flat']. Defaults to 'square'.
 
     Returns:
-        utm_coords_buff (gpd.GeoSeries): Polygons with the buffered points.
+        utm_coords_buff: Polygons consisting of the buffered points.
     """
     logger.info(f"Buffering Points into Polygons with radius {buffer_dist} km.")
     assert polygon_type in [
@@ -167,12 +166,12 @@ def concatenate_predicts_datasets(
     structures and specified order.
 
     Args:
-        df_2016 (pl.DataFrame): The PREDICTS dataset from 2016.
-        df_2022 (pl.DataFrame): The PREDICTS dataset from 2022.
-        col_order (List[str]): Column order in the concatenated dataframe.
+        df_2016: Dataframe with the PREDICTS dataset from 2016.
+        df_2022: Dataframe with the PREDICTS dataset from 2022.
+        col_order: Column order in the concatenated dataframe.
 
     Returns:
-        pl.DataFrame: Concatenated dataframe with ordered columns.
+        df_concat: Concatenated dataframe with ordered columns.
 
     Raises:
         ValueError: If 'col_order' has extra or missing columns from the
@@ -221,11 +220,11 @@ def create_site_coord_geometries(df_concat: pl.DataFrame) -> gpd.GeoDataFrame:
     filtering in other tasks.
 
     Args:
-        df_concat (pl.DataFrame): The concatenated PREDICTS data.
+        df_concat: The concatenated PREDICTS data.
 
     Returns:
-        gdf_site_coords (gpd.GeoDataFrame): Geodataframe with Point
-            coordinates and region information for each sampling site.
+        gdf_site_coords: Geodataframe with Point coordinates and region
+            information for each sampling site.
     """
     logger.info("Creating Point geometries for sampling site coordinates.")
 
@@ -280,14 +279,14 @@ def calculate_raster_stats(
     (representing sampling sites) that should be analyzed.
 
     Args:
-        polygon_path (str): Path to polygon shapefile with sampling sites.
-        raster_path (str): Path to raster file containing data for extraction.
-        metric (List[str]): Statistical metrics to compute.
-        include_all_pixels (bool): Whether to include all pixels that touch the
+        polygon_path: Path to polygon shapefile with sampling sites.
+        raster_path: Path to raster file containing data for extraction.
+        metric: Statistical metrics to compute.
+        include_all_pixels: Whether to include all pixels that touch the
             polygon boundaries, or just pixels with center points within it.
 
     Returns:
-        result (list): Computed values, one for each polygon in the shapefile.
+        result: List of computed values, one for each polygon in the shapefile.
     """
 
     # Calculate zonal statistics
@@ -310,12 +309,12 @@ def split_multi_line_strings(road_linestrings: gpd.GeoSeries) -> gpd.GeoDataFram
     necessary splits any geometries that turn out to be MultiLineStrings.
 
     Args:
-        road_linestrings (gpd.GeoSeries): A set of geometries that are a mix
-            of Linestrings and MultiLineStrings.
+        road_linestrings: A set of geometries that can be a mix of Linestrings
+            and MultiLineStrings.
 
     Returns:
-        split_linestrings (gpd.GeoDataFrame): Containing geometries that are
-            only single Linestrings.
+        split_linestrings: Geodataframe containing geometries that are only
+            single Linestrings.
     """
 
     result = []
@@ -342,13 +341,12 @@ def intersect_sites_and_roads(
     The length of that intersection gives a measure of density.
 
     Args:
-        site_polygons (gpd.GeoSeries): Site polygons for which the road density
-            should be calculated.
-        gdf_roads (gpd.GeoDataFrame): Road segments that form the basis of the
-            density calculations.
+        site_polygons: Site polygons for which the road density should be
+            calculated.
+        gdf_roads: Road segments for the density calculations.
 
     Returns:
-        site_road_len (list[float]): List of density values for each site.
+        site_road_len: List of density values for each site.
     """
     # Extract geoseries containing road linestrings
     road_linestrings = MultiLineString(gdf_roads["utm_coord"].tolist())
