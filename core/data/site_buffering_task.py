@@ -24,28 +24,26 @@ class ProjectAndBufferTask:
     """
 
     def __init__(self) -> None:
-        pass
+        """
+        Attributes:
+            all_site_coords (str): Path to dataframe containing coordinates of
+                all sampling sites.
+            buffer_distances (list[int]):
+            glob_site_polygons (list[str]):
+            utm_site_polygons (list[str]):
+        """
+        self.all_site_coords: str = configs.predicts.all_site_coords
+        self.buffer_distances: list[int] = configs.geodata.buffer_distances
+        self.glob_site_polygons: list[str] = configs.geodata.glob_site_polygons
+        self.utm_site_polygons: list[str] = configs.geodata.utm_site_polygons
 
-    def run_task(
-        self,
-        site_coord_source_file: str = configs.geodata.site_coord_source_file,
-        site_polygon_paths: list[str] = configs.predicts.site_polygon_paths,
-        buffer_distances: list[int] = configs.geodata.buffer_distances,
-    ) -> None:
+    def run_task(self) -> None:
         """
         Runs a sequence of functions to create polygons of different sizes from
         point coordinates representing different sampling sites. Coordinates
         are first projected from global EPSG:4326 to local UTM format. They are
         then buffered into polygons. Finally, the polygon coordinates are
         reprojected into the global format.
-
-        Args:
-            site_coord_source_file (str): Path to dataframe containing
-                coordinates of sites.
-            site_polygon_paths (List[str]):
-
-        Returns:
-            None
         """
         logger.info(
             "Starting projection-buffering-reprojection of sampling site coordinates."
@@ -57,7 +55,7 @@ class ProjectAndBufferTask:
 
         # Load the geodataframe with site coordinates from PREDICTS
         # Rename geometry column for clarity, since there will be multiple ones
-        gdf = gpd.read_file(site_coord_source_file)
+        gdf = gpd.read_file(self.all_site_coords)
         gdf = gdf.rename(columns={"geometry": "global_coord"})
 
         # Project each Point to local UTM and return UTM coords + EPSG codes
@@ -71,7 +69,7 @@ class ProjectAndBufferTask:
 
         # Buffer polygons for each specified radius and append as new columns
         # The list of distances are in km, hence the 1000 multiplication
-        for dist in buffer_distances:
+        for dist in self.buffer_distances:
             gdf[f"utm_{dist}km"] = buffer_points_in_utm(
                 gdf["utm_coord"],
                 dist * 1000,
@@ -79,18 +77,26 @@ class ProjectAndBufferTask:
             )
 
         # Reproject the polygons to global coordinate format
-        for dist in buffer_distances:
+        logger.info("Performing reprojections to global coordinates.")
+        for dist in self.buffer_distances:
             gdf[f"glob_{dist}km"] = gdf.apply(
                 lambda row: proj.reproject_to_global(
                     row[f"utm_{dist}km"], row["epsg_code"]
                 ),
                 axis=1,
             )
+        logger.info("Finished global reprojections.")
 
-        # Save one shapefile for each buffer distance
-        for dist, path in zip(buffer_distances, site_polygon_paths):
-            gdf_res = gdf[["SSBS", f"glob_{dist}km"]].rename(
-                columns={f"glob_{dist}km": "geometry"}
+        # Save one shapefile for each buffer distance in UTM and global formats
+        for dist, path in zip(self.buffer_distances, self.glob_site_polygons):
+            gdf_res = gpd.GeoDataFrame(
+                gdf[["SSBS", "UN_region", f"glob_{dist}km"]], geometry=f"glob_{dist}km"
+            )
+            gdf_res.to_file(path)
+
+        for dist, path in zip(self.buffer_distances, self.utm_site_polygons):
+            gdf_res = gpd.GeoDataFrame(
+                gdf[["SSBS", "UN_region", f"utm_{dist}km"]], geometry=f"utm_{dist}km"
             )
             gdf_res.to_file(path)
 
