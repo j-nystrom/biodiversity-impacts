@@ -1,4 +1,3 @@
-import datetime
 import logging
 import os
 
@@ -39,14 +38,14 @@ def create_logger(
     logger.setLevel(logging.DEBUG)
 
     # Create and configure file handler
-    filename = "_".join(
-        [module_name, "_logs_", datetime.datetime.now().strftime(filename_date_format)]
-    )
-    logging_path = "".join([output_path, filename, file_ending])
-    file_handler = logging.FileHandler(logging_path)
-    file_handler.setLevel(logging.DEBUG)
-    file_format = logging.Formatter(logger_format, datefmt=logger_date_format)
-    file_handler.setFormatter(file_format)
+    # filename = "_".join(
+    # [module_name, "_logs_", datetime.datetime.now().strftime(filename_date_format)]
+    # )
+    # logging_path = "".join([output_path, filename, file_ending])
+    # file_handler = logging.FileHandler(logging_path)
+    # file_handler.setLevel(logging.DEBUG)
+    # file_format = logging.Formatter(logger_format, datefmt=logger_date_format)
+    # file_handler.setFormatter(file_format)
 
     # Create and configure stream handler (printing to the console)
     stream_handler = logging.StreamHandler()
