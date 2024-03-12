@@ -32,12 +32,15 @@ class AbundanceFeatureEngineeringTask:
     def __init__(self) -> None:
         """
         Attributes:
-            combined_data:
-            cols_to_keep:
-            taxonomic_levels:
-            lui_col_order:
-            abundance_data:
-            study_mean_cols:
+            combined_data: Path to file with combined PREDICTS and other data.
+            cols_to_keep: Columns to keep from the original PREDICTS data.
+            study_mean_cols: Population and road density columns for which
+                within-study mean values should be calculated.
+            lui_col_order: The order of combined land-use and intensity dummy
+                columns in the final dataframe.
+            taxonomic_levels: The levels in the taxonomic hierarchy that should
+                be used as groupby columns when calculating abundance.
+            abundance_data: Output path for the final dataframe.
         """
         self.combined_data: str = configs.combined_data.combined_data_file
         self.cols_to_keep: list[str] = configs.feature_engineering.cols_to_keep
@@ -47,7 +50,17 @@ class AbundanceFeatureEngineeringTask:
         self.abundance_data: list[str] = configs.abundance.abundance_data
 
     def run_task(self) -> None:
-        """Add docstring."""
+        """
+        Runs a sequence of steps to create a dataframe that can be used as
+        input to the model pipeline, with total species abundance as the
+        response variable:
+        1. Read the combined data from the previous pipeline step.
+        2. Filter out incomplete-data site observations.
+        3. Calculate mean values for population and road density.
+        4. Combine land-use and intensity columns, generate dummy variables.
+        5. For each groupby key (different levels of granularity), calculate
+        and scale abundance per site.
+        """
         logger.info("Initiating feature pipeline for abundance.")
         start = time.time()
 
