@@ -1,5 +1,5 @@
 import os
-from typing import List, Tuple, Union
+from typing import Union
 
 import geopandas as gpd
 import polars as pl
@@ -43,7 +43,7 @@ class Projections:
 
     def project_to_local_utm(
         self, geometry: Union[Point, LineString]
-    ) -> Tuple[Union[Point, LineString], str]:
+    ) -> tuple[Union[Point, LineString], str]:
         """
         Calculates the local UTM zone for a Point or LineString that is given
         in the global EPSG:4326 format, and then transforms the geometry
@@ -159,7 +159,7 @@ def buffer_points_in_utm(
 
 
 def concatenate_predicts_datasets(
-    df_2016: pl.DataFrame, df_2022: pl.DataFrame, col_order: List[str]
+    df_2016: pl.DataFrame, df_2022: pl.DataFrame, col_order: list[str]
 ) -> pl.DataFrame:
     """
     Concatenate the two PREDICTS datasets, ensuring identical column
@@ -271,9 +271,9 @@ def create_site_coord_geometries(df_concat: pl.DataFrame) -> gpd.GeoDataFrame:
 def calculate_raster_stats(
     polygon_path: str,
     raster_path: str,
-    metric: List[str] = ["mean"],
+    metric: list[str] = ["mean"],
     include_all_pixels: bool = True,
-) -> List[float]:
+) -> list[float]:
     """
     Computes statistical metrics for raster pixels that overlap with polygons
     (representing sampling sites) that should be analyzed.

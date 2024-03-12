@@ -1,0 +1,101 @@
+combined_data:
+  year_intervals:
+    - [1984, 2000]
+    - [2000, 2005]
+    - [2005, 2010]
+    - [2010, 2015]
+    - [2015, 2020]
+  pixel_resolutions: [1km, 10km, 50km]
+  combined_data_file: "../../../data/output/combined/combined_data.parquet"
+
+feature_engineering:
+  cols_to_keep:
+    - SS
+    - SSB
+    - SSBS
+    - Longitude
+    - Latitude
+    - Country
+    - UN_region
+    - UN_subregion
+    - Realm
+    - Biome
+    - Ecoregion
+    - Wilderness_area
+    - Hotspot
+    - Sample_midpoint
+    - Sampling_method
+    - Sampling_effort
+    - Rescaled_sampling_effort
+    - Max_linear_extent_metres
+    - Kingdom
+    - Phylum
+    - Class
+    - Order
+    - Family
+    - Taxon_name_entered
+    - Diversity_metric_type
+    - Measurement
+    - Effort_corrected_measurement
+    - Predominant_land_use
+    - Use_intensity
+    - Habitat_patch_area_square_metres
+    - Km_to_nearest_edge_of_habitat
+    - Years_since_fragmentation_or_conversion
+    - Road_density_1km
+    - Road_density_10km
+    - Road_density_50km
+    - Pop_density_1km
+    - Pop_density_10km
+    - Pop_density_50km
+
+  study_mean_cols:
+    - Road_density_1km
+    - Road_density_10km
+    - Road_density_50km
+    - Pop_density_1km
+    - Pop_density_10km
+    - Pop_density_50km
+
+  lui_col_order:
+    - Primary vegetation_Minimal use
+    - Primary vegetation_Light use
+    - Primary vegetation_Intense use
+    - Young secondary vegetation_Minimal use
+    - Young secondary vegetation_Light use
+    - Young secondary vegetation_Intense use
+    - Intermediate secondary vegetation_Minimal use
+    - Intermediate secondary vegetation_Light use
+    - Intermediate secondary vegetation_Intense use
+    - Mature secondary vegetation_Minimal use
+    - Mature secondary vegetation_Light use
+    - Mature secondary vegetation_Intense use
+    - Secondary vegetation (indeterminate age)_Minimal use
+    - Secondary vegetation (indeterminate age)_Light use
+    - Secondary vegetation (indeterminate age)_Intense use
+    - Plantation forest_Minimal use
+    - Plantation forest_Light use
+    - Plantation forest_Intense use
+    - Pasture_Minimal use
+    - Pasture_Light use
+    - Pasture_Intense use
+    - Cropland_Minimal use
+    - Cropland_Light use
+    - Cropland_Intense use
+    - Urban_All use
+
+abundance:
+  taxonomic_levels:
+    - Kingdom
+    - Phylum
+    - Class
+    - Order
+    - Family
+
+  abundance_data:
+    - "../../../data/output/abundance/abundance_all_species.parquet"
+    - "../../../data/output/abundance/abundance_kingdom.parquet"
+    - "../../../data/output/abundance/abundance_phylum.parquet"
+    - "../../../data/output/abundance/abundance_class.parquet"
+    - "../../../data/output/abundance/abundance_order.parquet"
+    - "../../../data/output/abundance/abundance_family.parquet"
