@@ -32,8 +32,22 @@ def interpolate_population_density(
     # Helper function to calculate growth rate between two years
     def _calculate_growth_rate(
         df: pl.DataFrame, start_year: int, end_year: int
-    ) -> float:
-        return np.log(df[str(end_year)] / df[str(start_year)]) / (end_year - start_year)
+    ) -> pl.Series:
+        rates = np.log(
+            df.get_column(str(end_year)) / df.get_column(str(start_year))
+        ) / (end_year - start_year)
+
+        # If there are NaN or inf values, fill with zeros
+        logger.warning(
+            f"NaN or inf values in growth rate for {start_year}-{end_year}. \
+                Setting growth rates to 0."
+        )
+        if rates.is_nan().any() or rates.is_infinite().any():
+            rates = (
+                pl.when(rates.is_nan() | rates.is_infinite()).then(0).otherwise(rates)
+            )
+
+        return rates
 
     # Extrapolate back to 1984 using the growth rate from 2000 to 2005
     r_backwards = _calculate_growth_rate(df, year_intervals[1][0], year_intervals[1][1])
@@ -131,18 +145,21 @@ def calculate_study_mean_densities(
     return df_res
 
 
-def combine_land_use_and_intensity(
-    df: pl.DataFrame, lui_col_order: list[str]
+def create_land_use_and_intensity_dummies(
+    df: pl.DataFrame, land_use_col_order: list[str], lui_col_order: list[str]
 ) -> pl.DataFrame:
     """
     Creates a combined land-use and land-use intensity column to capture the
     characteristics of the sampling site. From this column, a set of dummy
-    variables columns are created, that can be used in the model.
+    variables columns are created, that can be used in the model. Dummies are
+    also generated for the original land-use column.
 
     Args:
         df: Dataframe containing 'Predominant_land_use' and 'Use_intensity'
             columns.
-        lui_col_order: The order of the generated columns in the output df.
+        land_use_col_order: The order of the land-use dummy columns in the
+            output df.
+        lui_col_order: The order of the combined dummies in the output df.
 
     Returns:
         df_res: Updated df with combined and dummy columns added.
@@ -152,6 +169,23 @@ def combine_land_use_and_intensity(
 
     # Make a copy of the dataframe
     df = df.clone()
+
+    # Generate dummy columns for the original land-use column
+    df_dummies_lu = df.select("Predominant_land_use").to_dummies("Predominant_land_use")
+
+    # Strip 'Predominant_land_use' from column names
+    old_cols = df_dummies_lu.columns
+    new_cols = [col.replace("Predominant_land_use_", "") for col in old_cols]
+
+    # Create a column mapping dictionary and rename columns
+    mapping_dict = {old_col: new_col for old_col, new_col in zip(old_cols, new_cols)}
+    df_dummies_lu = df_dummies_lu.rename(mapping_dict)
+
+    # Sort the columns in the logical order
+    df_dummies_lu = df_dummies_lu[land_use_col_order]
+
+    # Join the dummy columns with the original dataframe
+    df_res = pl.concat([df, df_dummies_lu], how="horizontal")
 
     # Create a column that combines land use type and intensity
     # Except for urban, where intensities are grouped together
@@ -167,21 +201,21 @@ def combine_land_use_and_intensity(
     )
 
     # Create dummy columns from the combined column
-    df_dummies = df.select("LU_type_intensity").to_dummies("LU_type_intensity")
+    df_dummies_comb = df.select("LU_type_intensity").to_dummies("LU_type_intensity")
 
     # Strip 'LU_type_intensity' from column names
-    old_cols = df_dummies.columns
+    old_cols = df_dummies_comb.columns
     new_cols = [col.replace("LU_type_intensity_", "") for col in old_cols]
 
     # Create a column mapping dictionary and rename columns
     mapping_dict = {old_col: new_col for old_col, new_col in zip(old_cols, new_cols)}
-    df_dummies = df_dummies.rename(mapping_dict)
+    df_dummies_comb = df_dummies_comb.rename(mapping_dict)
 
     # Sort the columns in the logical order
-    df_dummies = df_dummies[lui_col_order]
+    df_dummies_comb = df_dummies_comb[lui_col_order]
 
     # Join the dummy columns with the original dataframe
-    df_res = pl.concat([df, df_dummies], how="horizontal")
+    df_res = pl.concat([df_res, df_dummies_comb], how="horizontal")
 
     logger.info("Finished creating LUI columns.")
 

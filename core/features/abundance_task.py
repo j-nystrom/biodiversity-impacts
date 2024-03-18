@@ -8,7 +8,7 @@ from box import Box
 from core.features.feature_engineering import (
     calculate_scaled_abundance,
     calculate_study_mean_densities,
-    combine_land_use_and_intensity,
+    create_land_use_and_intensity_dummies,
     filter_out_insufficient_data_studies,
 )
 from core.utils.general_utils import create_logger
@@ -36,6 +36,8 @@ class AbundanceFeatureEngineeringTask:
             cols_to_keep: Columns to keep from the original PREDICTS data.
             study_mean_cols: Population and road density columns for which
                 within-study mean values should be calculated.
+            land_use_col_order: The order of land-use dummy columns in the
+                final dataframe
             lui_col_order: The order of combined land-use and intensity dummy
                 columns in the final dataframe.
             taxonomic_levels: The levels in the taxonomic hierarchy that should
@@ -45,6 +47,9 @@ class AbundanceFeatureEngineeringTask:
         self.combined_data: str = configs.combined_data.combined_data_file
         self.cols_to_keep: list[str] = configs.feature_engineering.cols_to_keep
         self.study_mean_cols: list[str] = configs.feature_engineering.study_mean_cols
+        self.land_use_col_order: list[str] = (
+            configs.feature_engineering.land_use_col_order
+        )
         self.lui_col_order: list[str] = configs.feature_engineering.lui_col_order
         self.taxonomic_levels: list[str] = configs.abundance.taxonomic_levels
         self.abundance_data: list[str] = configs.abundance.abundance_data
@@ -75,7 +80,11 @@ class AbundanceFeatureEngineeringTask:
         df = calculate_study_mean_densities(df, cols_to_incl=self.study_mean_cols)
 
         # Combine land use and intensity and create dummy variables from this
-        df = combine_land_use_and_intensity(df, lui_col_order=self.lui_col_order)
+        df = create_land_use_and_intensity_dummies(
+            df,
+            land_use_col_order=self.land_use_col_order,
+            lui_col_order=self.lui_col_order,
+        )
 
         # List of columns to group by. For each deeper level in the taxonomic
         # hierarchy, another column is added to the base list

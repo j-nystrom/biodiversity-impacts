@@ -57,6 +57,17 @@ feature_engineering:
     - Pop_density_10km
     - Pop_density_50km
 
+  land_use_col_order:
+    - Primary vegetation
+    - Young secondary vegetation
+    - Intermediate secondary vegetation
+    - Mature secondary vegetation
+    - Secondary vegetation (indeterminate age)
+    - Plantation forest
+    - Pasture
+    - Cropland
+    - Urban
+
   lui_col_order:
     - Primary vegetation_Minimal use
     - Primary vegetation_Light use
