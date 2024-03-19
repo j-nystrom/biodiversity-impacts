@@ -1,0 +1,7 @@
+
+logger_objects:
+  output_path: "/Users/jakobnystrom/Documents/001 Data science master/012 Master thesis/logs"
+  filename_date_format: "%Y-%m-%d_%H.%M"
+  file_ending: .csv
+  logger_format: "%(asctime)s | %(funcName)s | %(levelname)s | %(message)s"
+  logger_date_format: "%d-%b-%y %H:%M:%S"
