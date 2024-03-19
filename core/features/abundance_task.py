@@ -8,7 +8,10 @@ from box import Box
 from core.features.feature_engineering import (
     calculate_scaled_abundance,
     calculate_study_mean_densities,
-    create_land_use_and_intensity_dummies,
+    combine_land_use_intensity_columns,
+    create_bii_special_case_dummies,
+    create_interaction_terms,
+    create_land_use_dummies,
     filter_out_insufficient_data_studies,
 )
 from core.utils.general_utils import create_logger
@@ -22,7 +25,7 @@ configs = Box.from_yaml(filename=config_path)
 logger = create_logger(__name__)
 
 
-class AbundanceFeatureEngineeringTask:
+class AbundanceFeaturesTask:
     """
     Task to create dataframes for modelling based on total species abundance as
     the response variable. One file is generated for each level of taxonomic
@@ -46,7 +49,7 @@ class AbundanceFeatureEngineeringTask:
         """
         self.combined_data: str = configs.combined_data.combined_data_file
         self.cols_to_keep: list[str] = configs.feature_engineering.cols_to_keep
-        self.study_mean_cols: list[str] = configs.feature_engineering.study_mean_cols
+        self.continous_vars: list[str] = configs.feature_engineering.continous_vars
         self.land_use_col_order: list[str] = (
             configs.feature_engineering.land_use_col_order
         )
@@ -62,8 +65,11 @@ class AbundanceFeatureEngineeringTask:
         1. Read the combined data from the previous pipeline step.
         2. Filter out incomplete-data site observations.
         3. Calculate mean values for population and road density.
-        4. Combine land-use and intensity columns, generate dummy variables.
-        5. For each groupby key (different levels of granularity), calculate
+        4. Generate dummy variables for land-use, combined land-use and
+        intensity, as well as some special case dummies from BII.
+        5. Create interaction terms between the dummy columns from the previous
+        step and population and road density.
+        6. For each groupby key (different levels of granularity), calculate
         and scale abundance per site.
         """
         logger.info("Initiating feature pipeline for abundance.")
@@ -77,13 +83,19 @@ class AbundanceFeatureEngineeringTask:
         df = filter_out_insufficient_data_studies(df)
 
         # Calculate mean values for population and road density, per resolution
-        df = calculate_study_mean_densities(df, cols_to_incl=self.study_mean_cols)
+        df = calculate_study_mean_densities(df, cols_to_incl=self.continous_vars)
 
-        # Combine land use and intensity and create dummy variables from this
-        df = create_land_use_and_intensity_dummies(
+        # Create dummy variables for land-use related columns
+        df = create_land_use_dummies(df, land_use_col_order=self.land_use_col_order)
+        df = combine_land_use_intensity_columns(df, lui_col_order=self.lui_col_order)
+        df = create_bii_special_case_dummies(df)
+
+        # Generate interaction terms
+        df = create_interaction_terms(
             df,
-            land_use_col_order=self.land_use_col_order,
-            lui_col_order=self.lui_col_order,
+            land_use_cols=self.land_use_col_order,
+            lui_cols=self.lui_col_order,
+            continuous_vars=self.continous_vars,
         )
 
         # List of columns to group by. For each deeper level in the taxonomic

@@ -22,7 +22,7 @@ data_configs = Box.from_yaml(filename=data_config_path)
 logger = create_logger(__name__)
 
 
-class CombineDataSourcesTask:
+class CombineDataTask:
     """
     Task for creating a unified dataset from PREDICTS, population density and
     road density.

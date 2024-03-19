@@ -145,27 +145,24 @@ def calculate_study_mean_densities(
     return df_res
 
 
-def create_land_use_and_intensity_dummies(
-    df: pl.DataFrame, land_use_col_order: list[str], lui_col_order: list[str]
+def create_land_use_dummies(
+    df: pl.DataFrame,
+    land_use_col_order: list[str],
 ) -> pl.DataFrame:
     """
-    Creates a combined land-use and land-use intensity column to capture the
-    characteristics of the sampling site. From this column, a set of dummy
-    variables columns are created, that can be used in the model. Dummies are
-    also generated for the original land-use column.
+    Generates dummy columns for each value in the land-use column, to be used
+    as features in the model.
 
     Args:
-        df: Dataframe containing 'Predominant_land_use' and 'Use_intensity'
-            columns.
+        df: Dataframe containing 'Predominant_land_use' column.
         land_use_col_order: The order of the land-use dummy columns in the
             output df.
-        lui_col_order: The order of the combined dummies in the output df.
 
     Returns:
-        df_res: Updated df with combined and dummy columns added.
+        df_res: Updated df with dummy columns added.
 
     """
-    logger.info("Creating combined land use-intensity (LUI) dummy columns.")
+    logger.info("Creating land-use dummy columns.")
 
     # Make a copy of the dataframe
     df = df.clone()
@@ -186,6 +183,33 @@ def create_land_use_and_intensity_dummies(
 
     # Join the dummy columns with the original dataframe
     df_res = pl.concat([df, df_dummies_lu], how="horizontal")
+
+    logger.info("Finished creating LUI columns.")
+
+    return df_res
+
+
+def combine_land_use_intensity_columns(
+    df: pl.DataFrame, lui_col_order: list[str]
+) -> pl.DataFrame:
+    """
+    Creates a combined land-use and land-use intensity column to capture the
+    characteristics of the sampling site. From this column, a set of dummy
+    variables columns are created, that can be used in the model.
+
+    Args:
+        df: Dataframe containing 'Predominant_land_use' and 'Use_intensity'
+            columns.
+        lui_col_order: The order of the combined dummies in the output df.
+
+    Returns:
+        df_res: Updated df with combined and dummy columns added.
+
+    """
+    logger.info("Creating combined land use-intensity (LUI) dummy columns.")
+
+    # Make a copy of the dataframe
+    df = df.clone()
 
     # Create a column that combines land use type and intensity
     # Except for urban, where intensities are grouped together
@@ -215,11 +239,81 @@ def create_land_use_and_intensity_dummies(
     df_dummies_comb = df_dummies_comb[lui_col_order]
 
     # Join the dummy columns with the original dataframe
-    df_res = pl.concat([df_res, df_dummies_comb], how="horizontal")
+    df_res = pl.concat([df, df_dummies_comb], how="horizontal")
 
     logger.info("Finished creating LUI columns.")
 
     return df_res
+
+
+def create_bii_special_case_dummies(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Creates two extra columns to be able to replicate the covariates used in
+    the latest BII model in DePalma et al. (2021). These columns are a
+    combination of Cropland and Pasture with light / intense use.
+    """
+    logger.info("Creating BII special case dummies.")
+
+    df = df.clone()
+
+    df = df.with_columns(
+        pl.when(
+            (pl.col("Predominant_land_use") == "Cropland")
+            & (pl.col("Use_intesity").is_in(["Light", "Intense"]))
+        )
+        .then(1)
+        .otherwise(0)
+        .alias("Cropland_Light_Intense")
+    )
+
+    df = df.with_columns(
+        pl.when(
+            (pl.col("Predominant_land_use") == "Pasture")
+            & (pl.col("Use_intesity").is_in(["Light", "Intense"]))
+        )
+        .then(1)
+        .otherwise(0)
+        .alias("Pasture_Light_Intense")
+    )
+
+    logger.info("Finished creating BII special case dummies.")
+
+    return df
+
+
+def create_interaction_terms(
+    df: pl.DataFrame,
+    land_use_cols: list[str],
+    lui_cols: list[str],
+    continuous_vars: list[str],
+) -> pl.DataFrame:
+    """
+    Creates interaction terms between land-use related columns and road density
+    at different resolutions.
+
+    Args:
+        df: Dataframe containing population and road density and the dummy
+            columns for land-use and land-use intensity.
+
+    Returns:
+        df_res: Updated df with interaction terms added.
+
+    """
+    logger.info("Creating land-use and population / road density interaction terms.")
+
+    df = df.clone()
+
+    for col_1 in [
+        land_use_cols + lui_cols + ["Cropland_Light_Intense", "Pasture_Light_Intense"]
+    ]:
+        for col_2 in continuous_vars:
+            df = df.with_columns(
+                (pl.col(col_1) * pl.col(col_2)).alias(f"{col_1}_{col_2}")
+            )
+
+    logger.info("Finished creating interaction terms.")
+
+    return df
 
 
 def calculate_scaled_abundance(

@@ -49,7 +49,7 @@ feature_engineering:
     - Pop_density_10km
     - Pop_density_50km
 
-  study_mean_cols:
+  continuous_vars:
     - Road_density_1km
     - Road_density_10km
     - Road_density_50km
