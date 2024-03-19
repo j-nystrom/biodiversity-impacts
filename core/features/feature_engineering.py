@@ -259,7 +259,7 @@ def create_bii_special_case_dummies(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(
         pl.when(
             (pl.col("Predominant_land_use") == "Cropland")
-            & (pl.col("Use_intesity").is_in(["Light", "Intense"]))
+            & (pl.col("Use_intensity").is_in(["Light", "Intense"]))
         )
         .then(1)
         .otherwise(0)
@@ -269,7 +269,7 @@ def create_bii_special_case_dummies(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(
         pl.when(
             (pl.col("Predominant_land_use") == "Pasture")
-            & (pl.col("Use_intesity").is_in(["Light", "Intense"]))
+            & (pl.col("Use_intensity").is_in(["Light", "Intense"]))
         )
         .then(1)
         .otherwise(0)
@@ -303,9 +303,9 @@ def create_interaction_terms(
 
     df = df.clone()
 
-    for col_1 in [
+    for col_1 in (
         land_use_cols + lui_cols + ["Cropland_Light_Intense", "Pasture_Light_Intense"]
-    ]:
+    ):
         for col_2 in continuous_vars:
             df = df.with_columns(
                 (pl.col(col_1) * pl.col(col_2)).alias(f"{col_1}_{col_2}")

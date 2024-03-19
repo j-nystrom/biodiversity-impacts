@@ -49,7 +49,7 @@ class AbundanceFeaturesTask:
         """
         self.combined_data: str = configs.combined_data.combined_data_file
         self.cols_to_keep: list[str] = configs.feature_engineering.cols_to_keep
-        self.continous_vars: list[str] = configs.feature_engineering.continous_vars
+        self.continuous_vars: list[str] = configs.feature_engineering.continuous_vars
         self.land_use_col_order: list[str] = (
             configs.feature_engineering.land_use_col_order
         )
@@ -83,7 +83,7 @@ class AbundanceFeaturesTask:
         df = filter_out_insufficient_data_studies(df)
 
         # Calculate mean values for population and road density, per resolution
-        df = calculate_study_mean_densities(df, cols_to_incl=self.continous_vars)
+        df = calculate_study_mean_densities(df, cols_to_incl=self.continuous_vars)
 
         # Create dummy variables for land-use related columns
         df = create_land_use_dummies(df, land_use_col_order=self.land_use_col_order)
@@ -95,7 +95,7 @@ class AbundanceFeaturesTask:
             df,
             land_use_cols=self.land_use_col_order,
             lui_cols=self.lui_col_order,
-            continuous_vars=self.continous_vars,
+            continuous_vars=self.continuous_vars,
         )
 
         # List of columns to group by. For each deeper level in the taxonomic
