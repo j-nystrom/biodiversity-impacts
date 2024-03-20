@@ -32,7 +32,6 @@ mypy~=1.8.0
 pre-commit~=3.6.2
 isort~=5.13.2
 pyupgrade~=3.15.1
-bandit~=1.6.0
 
 # Notebooks
 jupyter~=1.0.0
@@ -40,3 +39,4 @@ ipykernel~=6.29.3
 
 # Other
 python-box~=7.1.1
+dill~=0.3.8
