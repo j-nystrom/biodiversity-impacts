@@ -28,7 +28,7 @@ class CombineDataTask:
     road density.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, run_folder_path: str) -> None:
         """
         Attributes:
             all_predicts_data: Path to file with concatenated PREDICTS data.
@@ -43,7 +43,6 @@ class CombineDataTask:
             pixel_resolution: The different resolutions of the population data.
             combined_data_file: Output path for the final combined file.
         """
-        # TODO: Create two config files for this particular task as workaround
         self.all_predicts_data: str = data_configs.predicts.all_predicts_data
         self.pop_density_data: list[str] = data_configs.geodata.pop_density.output_paths
         self.road_density_data: list[str] = data_configs.geodata.roads.road_density_data

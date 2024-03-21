@@ -9,10 +9,10 @@ from core.features.feature_engineering import (
     calculate_scaled_abundance,
     calculate_study_mean_densities,
     combine_land_use_intensity_columns,
-    create_bii_special_case_dummies,
-    create_interaction_terms,
     create_land_use_dummies,
     filter_out_insufficient_data_studies,
+    group_land_use_types_and_intensities,
+    transform_continuous_covariates,
 )
 from core.utils.general_utils import create_logger
 
@@ -32,7 +32,7 @@ class AbundanceFeaturesTask:
     granularity considered for the modelling.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, run_folder_path: str) -> None:
         """
         Attributes:
             combined_data: Path to file with combined PREDICTS and other data.
@@ -54,6 +54,9 @@ class AbundanceFeaturesTask:
             configs.feature_engineering.land_use_col_order
         )
         self.lui_col_order: list[str] = configs.feature_engineering.lui_col_order
+        self.secondary_veg_col_order: list[str] = (
+            configs.feature_engineering.secondary_veg_col_order
+        )
         self.taxonomic_levels: list[str] = configs.abundance.taxonomic_levels
         self.abundance_data: list[str] = configs.abundance.abundance_data
 
@@ -76,26 +79,26 @@ class AbundanceFeaturesTask:
         start = time.time()
 
         # Read PREDICTS data and keep only columns that we need
-        df = pl.read_parquet(self.combined_data)
-        df = df.select(self.cols_to_keep)
+        df = pl.read_parquet(self.combined_data, columns=self.cols_to_keep)
 
         # Filter out cases where land-use or intensity is missing
         df = filter_out_insufficient_data_studies(df)
 
-        # Calculate mean values for population and road density, per resolution
-        df = calculate_study_mean_densities(df, cols_to_incl=self.continuous_vars)
-
         # Create dummy variables for land-use related columns
-        df = create_land_use_dummies(df, land_use_col_order=self.land_use_col_order)
-        df = combine_land_use_intensity_columns(df, lui_col_order=self.lui_col_order)
-        df = create_bii_special_case_dummies(df)
+        df = create_land_use_dummies(df, col_order=self.land_use_col_order)
+        df = combine_land_use_intensity_columns(df, col_order=self.lui_col_order)
+        df = group_land_use_types_and_intensities(
+            df, col_order=self.secondary_veg_col_order
+        )
 
-        # Generate interaction terms
-        df = create_interaction_terms(
-            df,
-            land_use_cols=self.land_use_col_order,
-            lui_cols=self.lui_col_order,
-            continuous_vars=self.continuous_vars,
+        # Generate various transformations for all continuous variables
+        df, new_cols = transform_continuous_covariates(
+            df, continuous_vars=self.continuous_vars
+        )
+
+        # Calculate mean values for population and road density, per resolution
+        df = calculate_study_mean_densities(
+            df, cols_to_incl=self.continuous_vars + new_cols
         )
 
         # List of columns to group by. For each deeper level in the taxonomic

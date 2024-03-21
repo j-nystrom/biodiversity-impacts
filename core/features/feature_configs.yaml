@@ -93,7 +93,14 @@ feature_engineering:
     - Cropland_Minimal use
     - Cropland_Light use
     - Cropland_Intense use
-    - Urban_All use
+    - Urban_Minimal use
+    - Urban_Light use
+    - Urban_Intense use
+
+  secondary_veg_col_order:
+    - Secondary vegetation_Minimal use
+    - Secondary vegetation_Light use
+    - Secondary vegetation_Intense use
 
 abundance:
   taxonomic_levels:
