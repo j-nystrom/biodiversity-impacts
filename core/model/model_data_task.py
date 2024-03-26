@@ -27,6 +27,9 @@ class ModelDataTask:
     """
     Task to prepare data in a format suitable for model training and cross-
     validation. This step precedes both ModelTrainTask and CrossValidationTask.
+
+    NOTE: This task could be merged with the model training task. The final
+    structure will be decided when designing the cross validation task.
     """
 
     def __init__(self, run_folder_path: str) -> None:
