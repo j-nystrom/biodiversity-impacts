@@ -37,12 +37,16 @@ class AbundanceFeaturesTask:
         Attributes:
             combined_data: Path to file with combined PREDICTS and other data.
             cols_to_keep: Columns to keep from the original PREDICTS data.
+            continuous_vars: Continuous variables that should be transformed
+                for use in the model.
             study_mean_cols: Population and road density columns for which
                 within-study mean values should be calculated.
             land_use_col_order: The order of land-use dummy columns in the
                 final dataframe
             lui_col_order: The order of combined land-use and intensity dummy
                 columns in the final dataframe.
+            secondary_veg_col_order: The order of dummy variables created by
+                grouping different types of secondary vegetation.
             taxonomic_levels: The levels in the taxonomic hierarchy that should
                 be used as groupby columns when calculating abundance.
             abundance_data: Output path for the final dataframe.
@@ -67,11 +71,10 @@ class AbundanceFeaturesTask:
         response variable:
         1. Read the combined data from the previous pipeline step.
         2. Filter out incomplete-data site observations.
-        3. Calculate mean values for population and road density.
-        4. Generate dummy variables for land-use, combined land-use and
+        3. Generate dummy variables for land-use, combined land-use and
         intensity, as well as some special case dummies from BII.
-        5. Create interaction terms between the dummy columns from the previous
-        step and population and road density.
+        4. Transform continuous variables (road and population density)
+        5. Calculate mean values for population and road density.
         6. For each groupby key (different levels of granularity), calculate
         and scale abundance per site.
         """
