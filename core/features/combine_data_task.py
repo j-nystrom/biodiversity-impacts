@@ -25,7 +25,7 @@ logger = create_logger(__name__)
 class CombineDataTask:
     """
     Task for creating a unified dataset from PREDICTS, population density and
-    road density.
+    road density data that was generated in the data pipeline.
     """
 
     def __init__(self, run_folder_path: str) -> None:
@@ -35,12 +35,13 @@ class CombineDataTask:
             pop_density_data: List of paths to population data files, one for
                 each resolution (1, 10, 50 km).
             road_density_data: List of paths to road density data files, one
-                per UN region.
+                per UN region, with all resolutions.
             year_intervals: The year intervals that population data needs to be
                 interpolated between. The first year in PREDICTS is 1984 and
                 the last is 2018. Population data is available 2000, 2005, 2010,
                 2015 and 2020.
-            pixel_resolution: The different resolutions of the population data.
+            pixel_resolution: The different resolutions of the population and
+                road denisyt data.
             combined_data_file: Output path for the final combined file.
         """
         self.all_predicts_data: str = data_configs.predicts.all_predicts_data
