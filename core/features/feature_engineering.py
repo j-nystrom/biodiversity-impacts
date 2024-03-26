@@ -102,8 +102,10 @@ def filter_out_insufficient_data_studies(df: pl.DataFrame) -> pl.DataFrame:
 
     # Remove cases where land use or intensity is not known
     df = df.filter(
-        ~(pl.col("Predominant_land_use") == "Cannot decide")
-        | (pl.col("Use_intensity") == "Cannot decide")
+        ~(
+            (pl.col("Predominant_land_use") == "Cannot decide")
+            | (pl.col("Use_intensity") == "Cannot decide")
+        )
     )
 
     logger.info("Filtering completed.")
@@ -299,7 +301,7 @@ def group_land_use_types_and_intensities(
     df = df.with_columns(
         pl.when(
             (pl.col("Predominant_land_use") == "Cropland")
-            & (pl.col("Use_intensity").is_in(["Light", "Intense"]))
+            & (pl.col("Use_intensity").is_in(["Light use", "Intense use"]))
         )
         .then(1)
         .otherwise(0)
@@ -309,7 +311,7 @@ def group_land_use_types_and_intensities(
     df = df.with_columns(
         pl.when(
             (pl.col("Predominant_land_use") == "Pasture")
-            & (pl.col("Use_intensity").is_in(["Light", "Intense"]))
+            & (pl.col("Use_intensity").is_in(["Light use", "Intense use"]))
         )
         .then(1)
         .otherwise(0)
