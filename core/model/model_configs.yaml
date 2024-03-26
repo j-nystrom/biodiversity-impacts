@@ -35,8 +35,8 @@ scope:
     Family: []
 
 sampler_settings:
-  draws: 1000
-  tune: 1000
+  draws: 100
+  tune: 100
   cores: 4
   chains: 4
   target_accept: 0.99
@@ -67,7 +67,7 @@ model_1:
 
 
 bii_ref_model:
-  model_spec: abund_normal
+  model_spec: bii_abund_baseline
   pymc_key_var_names: [mu_beta, sigma_beta, beta]
   response_var: Max_scaled_abundance
   categorical_vars:
