@@ -22,7 +22,7 @@ configs = Box.from_yaml(filename=config_path)
 logger = create_logger(__name__)
 
 
-class CalculateRoadDensityTask:
+class RoadDensityTask:
     """
     Task for calculating the road density inside sampling site polygons with
     varying radius.

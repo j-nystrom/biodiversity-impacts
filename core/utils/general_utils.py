@@ -39,14 +39,14 @@ def create_logger(
     logger.setLevel(logging.DEBUG)
 
     # Create and configure file handler
-    filename = "_".join(
-        [module_name, "_logs_", datetime.datetime.now().strftime(filename_date_format)]
-    )
-    logging_path = "".join([output_path, filename, file_ending])
-    file_handler = logging.FileHandler(logging_path)
-    file_handler.setLevel(logging.DEBUG)
-    file_format = logging.Formatter(logger_format, datefmt=logger_date_format)
-    file_handler.setFormatter(file_format)
+    # filename = "_".join(
+    # [module_name, "_logs_", datetime.datetime.now().strftime(filename_date_format)]
+    # )
+    # logging_path = "".join([output_path, filename, file_ending])
+    # file_handler = logging.FileHandler(logging_path)
+    # file_handler.setLevel(logging.DEBUG)
+    # file_format = logging.Formatter(logger_format, datefmt=logger_date_format)
+    # file_handler.setFormatter(file_format)
 
     # Create and configure stream handler (printing to the console)
     stream_handler = logging.StreamHandler()
@@ -60,3 +60,12 @@ def create_logger(
     logger.addHandler(stream_handler)
 
     return logger
+
+
+def create_run_folder_path(base_path: str = configs.run_folder_path) -> str:
+    """Generates a new folder for the current run, based on current date and time."""
+    run_folder_name = "run_folder_" + datetime.datetime.now().strftime("%Y-%m-%d_%H.%M")
+    run_folder_path = os.path.join(base_path, run_folder_name)
+    os.makedirs(run_folder_path, exist_ok=True)
+
+    return run_folder_path

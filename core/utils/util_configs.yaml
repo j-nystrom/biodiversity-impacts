@@ -5,3 +5,5 @@ logger_objects:
   file_ending: .csv
   logger_format: "%(asctime)s | %(funcName)s | %(levelname)s | %(message)s"
   logger_date_format: "%d-%b-%y %H:%M:%S"
+
+run_folder_path: "../../../data/runs/"

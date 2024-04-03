@@ -1,7 +1,7 @@
 import argparse
 from typing import Type
 
-from core.utils.general_utils import create_logger
+from core.utils.general_utils import create_logger, create_run_folder_path
 
 logger = create_logger(__name__)
 
@@ -14,10 +14,11 @@ class BaseDAG:
 
     def __init__(self) -> None:
         self.tasks: list = []
+        self.run_folder_path = create_run_folder_path()
 
     def run_dag(self) -> None:
         for task in self.tasks:
-            task_instance = task()
+            task_instance = task(self.run_folder_path)
             task_instance.run_task()
 
 
