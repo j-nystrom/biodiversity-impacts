@@ -132,7 +132,10 @@ class AbundanceFeaturesTask:
             # Save output file for this level of aggregation
             df_res.write_parquet(path)
 
-            # Update the level used for grouping
+            # Update the level used for grouping. 'taxonomic_levels' is a list
+            # that contains 5 levels of the taxonomic hierarchy. We continue
+            # the loop until all levels in that list have been added to the
+            # groupby_cols list.
             if i < len(self.taxonomic_levels):
                 groupby_cols.append(self.taxonomic_levels[i])
             else:

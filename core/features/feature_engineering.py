@@ -38,13 +38,14 @@ def interpolate_population_density(
         ) / (end_year - start_year)
 
         # If there are NaN or inf values, fill with zeros
-        logger.warning(
-            f"NaN or inf values in growth rate for {start_year}-{end_year}. \
-                Setting growth rates to 0."
-        )
         if rates.is_nan().any() or rates.is_infinite().any():
+
             rates = (
                 pl.when(rates.is_nan() | rates.is_infinite()).then(0).otherwise(rates)
+            )
+            logger.warning(
+                f"NaN or inf values in growth rate for {start_year}-{end_year}. \
+                Setting growth rates to 0."
             )
 
         return rates
@@ -379,7 +380,9 @@ def calculate_scaled_abundance(
     )
 
     # Calculate the max abundance within each study at this grouping level
-    df_study_max = df_abundance.group_by("SS").agg(
+    # TODO: This should be SS + the level of taxonomic granularity considered
+    most_granular_group = groupby_cols[-1]
+    df_study_max = df_abundance.group_by(["SS", most_granular_group]).agg(
         pl.max("Abundance").alias("Study_max_abundance")
     )
 

@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.metrics import r2_score
 
 from core.utils.general_utils import create_logger
 
@@ -42,19 +41,27 @@ def calculate_performance_metrics(
     group_idx: np.array,
     group_code_map: dict[str, int],
 ) -> None:
-    """Add description in docstring."""
-    # Do back-transformation
+    """
+    Calculates and logs the conditional R^2 and accuracy (1 - sMAPE) scores on
+    the training set.
 
-    r2 = r2_score(y_true, y_pred)
+    Args:
+        y_true: The true observed values for the response variable.
+        y_pred: The corresponding model predictions.
+        group_idx: The hierarchical group identity for each observation.
+        group_code_map: A mapping of group names to group codes.
+    """
+
+    cond_r2 = np.var(y_pred) / np.var(y_true)
     smape = calculate_smape(y_true, y_pred)
 
-    logger.info(f"Overall R^2 score: {round(r2, 3)}")
+    logger.info(f"Overall conditional R^2 score: {round(cond_r2, 3)}")
     logger.info(f"Overall accuracy (1 - sMAPE): {round(smape, 2)}%")
 
     for name, code in group_code_map.items():
         idx = group_idx == code
-        r2 = r2_score(y_true[idx], y_pred[idx])
+        cond_r2 = np.var(y_pred[idx]) / np.var(y_true[idx])
         smape = calculate_smape(y_true[idx], y_pred[idx])
 
-        logger.info(f"R^2 score for {name}: {round(r2, 3)}")
+        logger.info(f"Conditional R^2 score for {name}: {round(cond_r2, 3)}")
         logger.info(f"Accuracy (1 - sMAPE) for {name}: {round(smape, 2)}%")
