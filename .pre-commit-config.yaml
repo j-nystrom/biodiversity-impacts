@@ -36,7 +36,6 @@ repos:
     rev: v1.8.0
     hooks:
       - id: mypy
-        #entry: scripts/mypy_precommit.sh
         additional_dependencies: [tokenize-rt==3.2.0]
 
   # pyupgrade for automatically upgrading syntax for newer python versions

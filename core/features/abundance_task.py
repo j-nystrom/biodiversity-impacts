@@ -105,8 +105,6 @@ class AbundanceFeaturesTask:
             df, cols_to_incl=self.density_vars + new_cols
         )
 
-        # Test
-
         # List of columns to group by. For each deeper level in the taxonomic
         # hierarchy, another column is added to the base list
         groupby_cols = ["SS", "SSB", "SSBS"]
