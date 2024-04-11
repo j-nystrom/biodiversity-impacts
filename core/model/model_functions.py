@@ -238,15 +238,21 @@ def format_data_for_model(
     """
     logger.info("Formatting data for PyMC model.")
 
-    # Extract all unique groups and create a mapping dictionary
+    # Sort dataframe for consistent operations below
+    df_scaled.sort(["SS", "SSB", "SSBS"])
+
+    # Extract all unique taxonomic groups and create a mapping dictionary
     # Use the mapping dictionary to create an array with numerical group id
-    groups = df_scaled.get_column(group_vars[-1]).unique().to_list()
-    group_code_map = {group: code for code, group in enumerate(groups)}
-    group_idx = (
-        df_scaled.get_column(group_vars[-1])
-        .map_elements(lambda x: group_code_map[x])
-        .to_numpy()
-    )
+    if group_vars[-1] != "SSBS":
+        taxa = df_scaled.get_column(group_vars[-1]).unique().to_list()
+        taxa_code_map = {taxon: code for code, taxon in enumerate(taxa)}
+        taxon_idx = (
+            df_scaled.get_column(group_vars[-1])
+            .map_elements(lambda x: taxa_code_map[x])
+            .to_numpy()
+        )
+    else:
+        taxa, taxa_code_map, taxon_idx = np.zeros(1), np.zeros(1), np.zeros(1)
 
     # Do the same for the study ID and block ID
     studies = df_scaled.get_column("SS").unique().to_list()
@@ -261,53 +267,72 @@ def format_data_for_model(
         df_scaled.get_column("SSB").map_elements(lambda x: block_code_map[x]).to_numpy()
     )
 
+    # Create an array with block-to-study indices
+    block_to_study_idx = (
+        df_scaled.select(["SS", "SSB"])
+        .unique()
+        .with_columns(
+            pl.col("SS").apply(lambda x: study_code_map[x]).alias("Study_idx")
+        )
+        .get_column("Study_idx")
+        .to_numpy()
+    )
+
     # Get a vector of output values
     if response_var_transform:
         y_col = response_var + "_" + response_var_transform
     else:
         y_col = response_var
-    print(y_col)
     y = df_scaled.get_column(y_col).to_numpy().flatten()
 
-    # Create the design matrix
+    # Create the fixed effects design matrix
     x = df_scaled.select(
         categorical_vars + continuous_vars + interaction_terms
     ).to_numpy()
 
-    # Create design matrix for study-level control variables
-    # w_study = df_scaled.select(controls).to_numpy()
+    # Create design matrix for study and block random effects
+    z_s = df_scaled.select(categorical_vars + continuous_vars).to_numpy()
+
+    z_b = df_scaled.select(categorical_vars + continuous_vars).to_numpy()
 
     # Create coordinate dictionary
     idx = np.arange(x.shape[0])
     coords = {
         "idx": idx,
-        "groups": groups,
-        "covariates": categorical_vars + continuous_vars + interaction_terms,
-        # "controls": controls,  # Temporaily removed
-        "blocks": blocks,
+        "x_var": categorical_vars + continuous_vars + interaction_terms,
+        "z_s_var": categorical_vars + continuous_vars,
+        "z_b_var": categorical_vars + continuous_vars,
         "studies": studies,
+        "blocks": blocks,
+        "taxa": taxa,
     }
 
     # Convert numpy array to the precision actually needed, and no more,
     # to increase sampling speed
     y = y.astype(np.float32)
     x = x.astype(np.float32)
-    # w_study = w_study.astype(np.float32)
-    group_idx = group_idx.astype(np.uint16)
+    z_s = z_s.astype(np.float32)
+    z_b = z_b.astype(np.float32)
+    if taxon_idx:
+        taxon_idx = taxon_idx.astype(np.uint16)
     study_idx = study_idx.astype(np.uint16)
     block_idx = block_idx.astype(np.uint16)
+    block_to_study_idx.astype(np.uint16)
     idx = idx.astype(np.uint32)
 
     logger.info("Data formatted for PyMC model.")
 
     return (
-        x,
         y,
+        x,
+        z_s,
+        z_b,
         coords,
-        group_idx,
-        group_code_map,
         study_idx,
         block_idx,
+        block_to_study_idx,
+        taxon_idx,
+        taxa_code_map,
     )
 
 
@@ -361,28 +386,42 @@ def summarize_sampling_statistics(
     logger.info(f"The mean acceptance rate was {round(accept_rate, 3)}")
 
     # R-hat statistics
-    r_hat = az.summary(idata, var_names=var_names, round_to=2)["r_hat"]
-    mean_r_hat = round(np.mean(r_hat), 3)
-    min_r_hat = round(np.min(r_hat), 3)
-    max_r_hat = round(np.max(r_hat), 3)
-    logger.info(
-        f"R-hat for {var_names} are: {mean_r_hat} (mean) | {min_r_hat} (min) | \
-              {max_r_hat} (max)"
-    )
+    for var in var_names:
+        try:
+            r_hat = az.summary(idata, var_names=var, round_to=2)["r_hat"]
+            mean_r_hat = round(np.mean(r_hat), 3)
+            min_r_hat = round(np.min(r_hat), 3)
+            max_r_hat = round(np.max(r_hat), 3)
+            logger.info(
+                f"R-hat for {var} are: {mean_r_hat} (mean) | {min_r_hat} (min) | \
+                    {max_r_hat} (max)"
+            )
+        except KeyError:
+            continue
 
     # ESS statistics
-    ess = az.summary(idata, var_names=var_names, round_to=2)["ess_bulk"]
-    mean_ess = round(np.mean(ess), 0)
-    min_ess = round(np.min(ess), 0)
-    max_ess = round(np.max(ess), 0)
-    logger.info(
-        f"ESS for {var_names} are: {int(mean_ess)} (mean) | {int(min_ess)} (min) | \
-            {int(max_ess)} (max)"
-    )
+    for var in var_names:
+        try:
+            ess = az.summary(idata, var_names=var_names, round_to=2)["ess_bulk"]
+            mean_ess = round(np.mean(ess), 0)
+            min_ess = round(np.min(ess), 0)
+            max_ess = round(np.max(ess), 0)
+            logger.info(
+                f"ESS for {var} are: {int(mean_ess)} (mean) | {int(min_ess)} (min) | \
+                    {int(max_ess)} (max)"
+            )
+        except KeyError:
+            continue
 
 
 def make_in_sample_predictions(
-    model: pm.Model, trace: az.InferenceData, x: np.array, y: np.array, idx: np.array
+    model: pm.Model,
+    trace: az.InferenceData,
+    y: np.array,
+    x: np.array,
+    z_s: np.array,
+    z_b: np.array,
+    idx: np.array,
 ) -> tuple[az.InferenceData, np.array]:
     """
     Makes in-sample predictions using the posterior distributions from the
@@ -400,13 +439,15 @@ def make_in_sample_predictions(
         p_pred: Predicted values.
 
     """
+    data_dict = {"x": x, "y": y}
+    # if z_s:
+    # data_dict["z_s"] = z_s
+    # if z_b:
+    # data_dict["z_b"] = z_b
 
     with model:
         pm.set_data(
-            {
-                "x_obs": x,
-                "y_obs": y,  # This is just a placeholder for prediced values
-            },
+            data_dict,
             coords={"idx": idx},
         )
         trace.extend(pm.sample_posterior_predictive(trace, predictions=False))

@@ -15,7 +15,7 @@ from core.model.model_functions import (
     run_sampling,
     summarize_sampling_statistics,
 )
-from core.model.models import bii_abund_baseline
+from core.model.models import bii_abund_corr_re, bii_abund_indep_re
 from core.utils.general_utils import create_logger
 
 # Load the config file into box object; ensure that it can be found regardless
@@ -58,11 +58,6 @@ class ModelTrainingTask:
         # General configs applicable to different models
         self.run_folder_path = run_folder_path
         self.sampler_settings = configs.sampler_settings
-
-        # Dictionary mapping model objects to names recognized in the config
-        self.model_dict = {
-            "bii_abund_baseline": bii_abund_baseline,
-        }
 
         # Taxonomic resolution specific configs
         self.taxonomic_resolution = configs.taxonomic_resolution
@@ -109,34 +104,60 @@ class ModelTrainingTask:
                 interaction_terms.append(f"{col_2} x {col_1}")
 
         # Format the data in a way that can be used by the PyMC model
-        x, y, coords, group_idx, group_code_map, study_idx, block_idx = (
-            format_data_for_model(
-                df,
-                group_vars=self.group_vars,
-                response_var=self.response_var,
-                response_var_transform=self.response_var_transform,
-                categorical_vars=self.categorical_vars,
-                continuous_vars=self.continuous_vars,
-                interaction_terms=interaction_terms,
-            )
+        (
+            y,
+            x,
+            z_s,
+            z_b,
+            coords,
+            study_idx,
+            block_idx,
+            block_to_study_idx,
+            taxon_idx,
+            taxa_code_map,
+        ) = format_data_for_model(
+            df,
+            group_vars=self.group_vars,
+            response_var=self.response_var,
+            response_var_transform=self.response_var_transform,
+            categorical_vars=self.categorical_vars,
+            continuous_vars=self.continuous_vars,
+            interaction_terms=interaction_terms,
         )
 
-        # Fetch the model object and instantiate it
-        model_object = self.model_dict[self.model_spec]
-        model = model_object(x, y, coords, group_idx, study_idx, block_idx)
+        # Instantiate the right model object
+        if self.model_spec == "bii_abund_indep_re":
+            model = bii_abund_indep_re(
+                y,
+                x,
+                coords,
+                study_idx,
+                block_idx,
+                block_to_study_idx,
+                z_s=None,
+                z_b=None,
+                s_intercept=True,
+                b_intercept=False,
+            )
+        elif self.model_spec == "bii_abund_corr_re":
+            model = bii_abund_corr_re(
+                y, x, z_s, z_b, coords, study_idx, block_idx, block_to_study_idx
+            )
 
         # Run the MCMC sampler on the model and summarize sampling statistics
         trace = run_sampling(model, self.sampler_settings)
         summarize_sampling_statistics(trace, var_names=self.pymc_key_var_names)
 
         # Make in-sample predictions and calculate performance metrics
-        trace, p_pred = make_in_sample_predictions(model, trace, x, y, group_idx)
+        trace, p_pred = make_in_sample_predictions(
+            model, trace, y, x, z_s, z_b, coords["idx"]
+        )
         if self.response_var_transform:  # TBD if this is necessary for train
             y = inverse_transform_response(y, method=self.response_var_transform)
             p_pred = inverse_transform_response(
                 p_pred, method=self.response_var_transform
             )
-        calculate_performance_metrics(y, p_pred, group_idx, group_code_map, plot=True)
+        calculate_performance_metrics(y, p_pred, taxon_idx, taxa_code_map)
 
         # Save the model and trace so they can be analyzed later
         # TODO: At some point this should be done in a more robust way:
@@ -145,9 +166,7 @@ class ModelTrainingTask:
             "model": model,
             "trace": trace,
             "pymc_var_names": self.pymc_key_var_names,
-            "covariates": self.categorical_vars + self.continuous_vars,
-            "group_mapping": group_code_map,
-            "group_idx": group_idx,
+            "x_var": self.categorical_vars + self.continuous_vars,
             "y_true": y,
             "y_pred": p_pred,
         }

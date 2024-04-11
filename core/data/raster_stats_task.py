@@ -47,14 +47,14 @@ class CalculateRasterStatsTask:
         be processed.
 
         The 'mode' argument determines the raster data sources to use, e.g. for
-        population density, elevation or bioclimatic variables. These
-        correspond to unique data paths in the 'data_configs.yaml' file.
+        population density or environmental variables. These correspond to
+        unique data paths in the 'data_configs.yaml' file.
         """
         assert mode in [
             "pop_density",
-            "elevation",
             "bioclimatic",
-        ], "'mode' needs to be one of ['pop_density', 'elevation', 'bioclimatic']"
+            "elevation_slope",
+        ], "'mode' needs to be one of ['pop_density', 'bioclimatic', 'elevation_slope']"
         logger.info("Starting raster data extraction.")
         start = time.time()
 
@@ -101,28 +101,26 @@ class CalculateRasterStatsTask:
 
 
 class PopulationDensityTask(CalculateRasterStatsTask):
-    def __init__(self) -> None:
+    def __init__(self, run_folder_path: str) -> None:
         super().__init__()
 
     def run_task(self) -> None:
         self.run_mode(mode="pop_density")
 
 
-class ElevationTask(CalculateRasterStatsTask):
-    """NOTE: Not implemented in config yet."""
+class BioclimaticFactorsTask(CalculateRasterStatsTask):
 
-    def __init__(self) -> None:
-        super().__init__()
-
-    def run_task(self) -> None:
-        self.run_mode(mode="elevation")
-
-
-class BioclimaticTask(CalculateRasterStatsTask):
-    """NOTE: Not implemented in config yet."""
-
-    def __init__(self) -> None:
+    def __init__(self, run_folder_path: str) -> None:
         super().__init__()
 
     def run_task(self) -> None:
         self.run_mode(mode="bioclimatic")
+
+
+class ElevationAndSlopeTask(CalculateRasterStatsTask):
+
+    def __init__(self, run_folder_path: str) -> None:
+        super().__init__()
+
+    def run_task(self) -> None:
+        self.run_mode(mode="elevation_slope")

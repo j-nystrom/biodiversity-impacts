@@ -380,8 +380,7 @@ def calculate_scaled_abundance(
     )
 
     # Calculate the max abundance within each study at this grouping level
-    most_granular_group = groupby_cols[-1]
-    df_study_max = df_abundance.group_by(["SS", most_granular_group]).agg(
+    df_study_max = df_abundance.group_by("SS").agg(
         pl.max("Abundance").alias("Study_max_abundance")
     )
 

@@ -6,7 +6,7 @@ abundance_data:
   Order: "../../../data/output/abundance/abundance_order.parquet"
   Family: "../../../data/output/abundance/abundance_family.parquet"
 
-taxonomic_resolution: Kingdom  # [All_species, Kingdom, Phylum, Class, Order, Family]
+taxonomic_resolution: All_species  # [All_species, Kingdom, Phylum, Class, Order, Family]
 
 group_vars:
   All_species: [SS, SSB, SSBS]
@@ -44,31 +44,9 @@ sampler_settings:
 
 selected_model: bii_ref_model
 
-model_1:
-  model_spec: abund_normal
-  pymc_key_var_names: [mu_beta, sigma_beta, beta]
-  response_var: Max_scaled_abundance
-  categorical_vars:
-    - Young secondary vegetation
-    - Intermediate secondary vegetation
-    - Mature secondary vegetation
-    - Secondary vegetation (indeterminate age)
-    - Plantation forest
-    - Pasture
-    - Cropland
-    - Urban
-  continuous_vars:
-    - Road_density_10km
-    - Pop_density_10km
-  study_control_vars:
-    - Mean_road_density_10km
-    - Mean_pop_density_10km
-  response_var_transform: None  # [adjust, square-root, logit, None]
-
-
 bii_ref_model:
-  model_spec: bii_abund_baseline
-  pymc_key_var_names: [mu_beta, sigma_beta, beta]
+  model_spec: bii_abund_indep_re  # bii_abund_indep_re, bii_abund_corr_re
+  pymc_key_var_names: [beta, gamma_s, gamma_b]
   response_var: Max_scaled_abundance
   categorical_vars:
     - Primary vegetation_Light use
@@ -89,4 +67,25 @@ bii_ref_model:
     - Pop_density_1km_log
     - Road_density_50km_cbrt
   study_control_vars: []
-  response_var_transform: sqrt  # [adjust, sqrt, logit, null]
+  response_var_transform: logit  # [adjust, sqrt, logit, null]
+
+model_1:
+  model_spec: abund_normal
+  pymc_key_var_names: [mu_beta, sigma_beta, beta]
+  response_var: Max_scaled_abundance
+  categorical_vars:
+    - Young secondary vegetation
+    - Intermediate secondary vegetation
+    - Mature secondary vegetation
+    - Secondary vegetation (indeterminate age)
+    - Plantation forest
+    - Pasture
+    - Cropland
+    - Urban
+  continuous_vars:
+    - Road_density_10km
+    - Pop_density_10km
+  study_control_vars:
+    - Mean_road_density_10km
+    - Mean_pop_density_10km
+  response_var_transform: None  # [adjust, square-root, logit, None]

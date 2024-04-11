@@ -58,10 +58,11 @@ def calculate_performance_metrics(
     logger.info(f"Overall conditional R^2 score: {round(cond_r2, 3)}")
     logger.info(f"Overall accuracy (1 - sMAPE): {round(smape, 2)}%")
 
-    for name, code in group_code_map.items():
-        idx = group_idx == code
-        cond_r2 = np.var(y_pred[idx]) / np.var(y_true[idx])
-        smape = calculate_smape(y_true[idx], y_pred[idx])
+    if group_idx:
+        for name, code in group_code_map.items():
+            idx = group_idx == code
+            cond_r2 = np.var(y_pred[idx]) / np.var(y_true[idx])
+            smape = calculate_smape(y_true[idx], y_pred[idx])
 
-        logger.info(f"Conditional R^2 score for {name}: {round(cond_r2, 3)}")
-        logger.info(f"Accuracy (1 - sMAPE) for {name}: {round(smape, 2)}%")
+            logger.info(f"Conditional R^2 score for {name}: {round(cond_r2, 3)}")
+            logger.info(f"Accuracy (1 - sMAPE) for {name}: {round(smape, 2)}%")

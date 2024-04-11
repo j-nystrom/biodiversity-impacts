@@ -48,14 +48,48 @@ feature_engineering:
     - Pop_density_1km
     - Pop_density_10km
     - Pop_density_50km
+    - Annual_mean_temp_1km
+    - Temp_seasonality_1km
+    - Max_temp_warmest_month_1km
+    - Min_temp_coldest_month_1km
+    - Annual_precip_1km
+    - Precip_wettest_month_1km
+    - Precip_driest_month_1km
+    - Precip_seasonality_1km
+    - Annual_mean_temp_10km
+    - Temp_seasonality_10km
+    - Max_temp_warmest_month_10km
+    - Min_temp_coldest_month_10km
+    - Annual_precip_10km
+    - Precip_wettest_month_10km
+    - Precip_driest_month_10km
+    - Precip_seasonality_10km
 
-  continuous_vars:
+  density_vars:
     - Road_density_1km
     - Road_density_10km
     - Road_density_50km
     - Pop_density_1km
     - Pop_density_10km
     - Pop_density_50km
+
+  bioclim_vars:
+    - Annual_mean_temp_1km
+    - Temp_seasonality_1km
+    - Max_temp_warmest_month_1km
+    - Min_temp_coldest_month_1km
+    - Annual_precip_1km
+    - Precip_wettest_month_1km
+    - Precip_driest_month_1km
+    - Precip_seasonality_1km
+    - Annual_mean_temp_10km
+    - Temp_seasonality_10km
+    - Max_temp_warmest_month_10km
+    - Min_temp_coldest_month_10km
+    - Annual_precip_10km
+    - Precip_wettest_month_10km
+    - Precip_driest_month_10km
+    - Precip_seasonality_10km
 
   land_use_col_order:
     - Primary vegetation

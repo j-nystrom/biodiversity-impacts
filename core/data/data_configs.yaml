@@ -125,27 +125,44 @@ geodata:
       - Pop_density_50km_2015
       - Pop_density_50km_2020
 
-  elevation:
-    site_polygon_paths:
-      - "../../../data/PREDICTS/site_coordinates/site_coord_buff_1km.shp"
-    raster_paths:
-      - "../../../data/WorldClim/Elevation/wc2.1_30s_elev.tif"
-    output_path:
-      - "../../../data/WorldClim/Elevation/output/elevation.parquet"
-    result_col_names:
-      - Elevation_1km
-
   bioclimatic:
     site_polygon_paths:
-      - "../../../data/PREDICTS/site_coordinates/site_coord_buff_1km.shp"
+      - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
+      - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
+      # - "../../../data/output/buff_polygons/glob_buff_polygons_50km.shp"
     raster_paths:
-      - ""
-      - ""
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_1.tif"
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_4.tif"
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_5.tif"
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_6.tif"
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_12.tif"
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_13.tif"
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_14.tif"
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_15.tif"
     output_paths:
-      - "../../../data/WorldClim/Bioclimatic/output/bioclimatic.parquet"
+      - "../../../data/output/environment/bioclimatic_1km.parquet"
+      - "../../../data/output/environment/bioclimatic_10km.parquet"
+      # - "../../../data/output/environment/bioclimatic_50km.parquet"
+    rasterstats_settings:
+      metrics: mean
+      include_all_pixels: True
     result_col_names:
-      - ""
-      - ""
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Max_temp_warmest_month_1km
+      - Min_temp_coldest_month_1km
+      - Annual_precip_1km
+      - Precip_wettest_month_1km
+      - Precip_driest_month_1km
+      - Precip_seasonality_1km
+      - Annual_mean_temp_10km
+      - Temp_seasonality_10km
+      - Max_temp_warmest_month_10km
+      - Min_temp_coldest_month_10km
+      - Annual_precip_10km
+      - Precip_wettest_month_10km
+      - Precip_driest_month_10km
+      - Precip_seasonality_10km
 
   roads:
     road_network_data:
