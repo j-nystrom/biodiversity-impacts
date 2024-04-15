@@ -322,6 +322,38 @@ def group_land_use_types_and_intensities(
     return df
 
 
+def combine_biogeographical_variables(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Combines the biome and realm columns into one column, as well as the biome,
+    realm and ecoregion columns into one column.
+
+    Args:
+        df: Dataframe containing 'Biome', 'Realm' and 'Ecoregion' columns.
+
+    Returns:
+        df: Updated df with the combined columns added.
+    """
+    logger.info("Combining biogeographical variables.")
+
+    # Combine biome and realm columns
+    df = df.with_columns(
+        pl.concat_str([pl.col("Biome"), pl.col("Realm")], separator="_").alias(
+            "Biome_Realm"
+        )
+    )
+
+    # Combine biome, realm and ecoregion columns
+    df = df.with_columns(
+        pl.concat_str(
+            [pl.col("Biome"), pl.col("Realm"), pl.col("Ecoregion")], separator="_"
+        ).alias("Biome_Realm_Ecoregion")
+    )
+
+    logger.info("Finished combining biogeographical variables.")
+
+    return df
+
+
 def transform_continuous_covariates(
     df: pl.DataFrame, continuous_vars: list[str]
 ) -> pl.DataFrame:

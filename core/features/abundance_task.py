@@ -8,6 +8,7 @@ from box import Box
 from core.features.feature_engineering import (
     calculate_scaled_abundance,
     calculate_study_mean_densities,
+    combine_biogeographical_variables,
     combine_land_use_intensity_columns,
     create_land_use_dummies,
     filter_out_insufficient_data_studies,
@@ -94,6 +95,9 @@ class AbundanceFeaturesTask:
         df = group_land_use_types_and_intensities(
             df, col_order=self.secondary_veg_col_order
         )
+
+        # Combine biogeographical variables (biome, realm and ecoregion)
+        df = combine_biogeographical_variables(df)
 
         # Generate various transformations for all continuous variables
         df, new_cols = transform_continuous_covariates(
