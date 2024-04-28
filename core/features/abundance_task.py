@@ -6,7 +6,9 @@ import polars as pl
 from box import Box
 
 from core.features.feature_engineering import (
-    calculate_scaled_abundance,
+    calculate_scaled_mean_abundance,
+    calculate_scaled_species_richness,
+    calculate_scaled_total_abundance,
     calculate_study_mean_densities,
     combine_biogeographical_variables,
     combine_land_use_intensity_columns,
@@ -114,7 +116,15 @@ class AbundanceFeaturesTask:
         groupby_cols = ["SS", "SSB", "SSBS"]
 
         for i, path in enumerate(self.abundance_data):
-            df_abund = calculate_scaled_abundance(df, groupby_cols=groupby_cols)
+            df_total_abund = calculate_scaled_total_abundance(
+                df, groupby_cols=groupby_cols
+            )
+            df_mean_abund = calculate_scaled_mean_abundance(
+                df, groupby_cols=groupby_cols
+            )
+            df_richness = calculate_scaled_species_richness(
+                df, groupby_cols=groupby_cols
+            )
 
             # Get the first instance of each SSBS for the specified covariates
             # Drop columns that relate to individual taxon measurements
@@ -128,7 +138,17 @@ class AbundanceFeaturesTask:
                 ]
             )
             df_first = df_first.drop(self.taxonomic_levels[i:])
-            df_res = df_abund.join(
+            df_res = df_total_abund.join(
+                df_mean_abund,
+                on=groupby_cols,
+                how="left",
+            )
+            df_res = df_res.join(
+                df_richness,
+                on=groupby_cols,
+                how="left",
+            )
+            df_res = df_res.join(
                 df_first,
                 on=groupby_cols,
                 how="left",

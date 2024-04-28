@@ -431,3 +431,145 @@ def calculate_scaled_abundance(
     logger.info("Abundance calculations finished.")
 
     return df_scaled
+
+
+def calculate_scaled_total_abundance(
+    df: pl.DataFrame, groupby_cols: list[str]
+) -> pl.DataFrame:
+    """
+    Calculates the total species abundance for each sampling site ('SSBS') at
+    a level of granularity defined by the grouping column input. This can range
+    from all species through Kingdom -> Phylum -> Class -> Order -> Family.
+    This abundance number is then scaled, by dividing with the maximum value
+    within that study.
+
+    Args:
+        df: Dataframe with all combined data from PREDICTS and other sources.
+        groupby_cols: The columns that together make up the groupby key.
+
+    Returns:
+        df_scaled: Updated df with abundance and scaled abundance columns.
+    """
+    logger.info("Calculating site-level scaled abundance numbers.")
+
+    # Filter dataframe to only contain abundance numbers
+    df = df.filter(pl.col("Diversity_metric_type") == "Abundance")
+
+    # Calculate abundance for this level of grouping
+    df_abundance = df.group_by(groupby_cols).agg(
+        pl.sum("Effort_corrected_measurement").alias("Abundance")
+    )
+
+    # Calculate the max abundance within each study at this grouping level
+    df_study_max = df_abundance.group_by("SS").agg(
+        pl.max("Abundance").alias("Study_max_abundance")
+    )
+
+    # Join the dataframes together
+    df_abundance = df_abundance.join(
+        df_study_max.select(["SS", "Study_max_abundance"]), on="SS", how="left"
+    )
+
+    # Perform max scaling
+    df_scaled = df_abundance.with_columns(
+        (pl.col("Abundance") / pl.col("Study_max_abundance")).alias(
+            "Max_scaled_abundance"
+        )
+    )
+
+    logger.info("Abundance calculations finished.")
+
+    return df_scaled
+
+
+def calculate_scaled_mean_abundance(
+    df: pl.DataFrame, groupby_cols: list[str]
+) -> pl.DataFrame:
+    """
+    Calculates the mean species abundance for each sampling site ('SSBS') at
+    a level of granularity defined by the grouping column input. This can range
+    from all species through Kingdom -> Phylum -> Class -> Order -> Family.
+    This abundance number is then scaled, by dividing with the maximum value
+    within that study.
+
+    Args:
+        df: Dataframe with all combined data from PREDICTS and other sources.
+        groupby_cols: The columns that together make up the groupby key.
+
+    Returns:
+        df_scaled: Updated df with mean abundance and scaled mean abundance
+            columns.
+    """
+    logger.info("Calculating site-level scaled mean abundance numbers.")
+
+    # Filter dataframe to only contain abundance numbers
+    df = df.filter(pl.col("Diversity_metric_type") == "Abundance")
+
+    # Calculate abundance for this level of grouping
+    df_abundance = df.group_by(groupby_cols).agg(
+        pl.mean("Effort_corrected_measurement").alias("Mean_abundance")
+    )
+
+    # Calculate the max abundance within each study at this grouping level
+    df_study_max = df_abundance.group_by("SS").agg(
+        pl.max("Mean_abundance").alias("Study_max_mean_abundance")
+    )
+
+    # Join the dataframes together
+    df_abundance = df_abundance.join(
+        df_study_max.select(["SS", "Study_max_mean_abundance"]), on="SS", how="left"
+    )
+
+    # Perform max scaling
+    df_scaled = df_abundance.with_columns(
+        (pl.col("Mean_abundance") / pl.col("Study_max_mean_abundance")).alias(
+            "Max_scaled_mean_abundance"
+        )
+    )
+
+    logger.info("Mean abundance calculations finished.")
+
+    return df_scaled
+
+
+def calculate_scaled_species_richness(
+    df: pl.DataFrame, groupby_cols: list[str]
+) -> pl.DataFrame:
+    """
+    Calculates the species richness for each sampling site ('SSBS') at
+    a level of granularity defined by the grouping column input. This can range
+    from all species through Kingdom -> Phylum -> Class -> Order -> Family.
+    This species richness number is then scaled, by dividing with the maximum
+    value within that study.
+
+    Args:
+        df: Dataframe with all combined data from PREDICTS and other sources.
+        groupby_cols: The columns that together make up the groupby key.
+
+    Returns:
+        df_scaled: Updated df with species richness and scaled species richness
+            columns.
+    """
+    logger.info("Calculating site-level scaled species richness numbers.")
+
+    df_richness = df.group_by(groupby_cols).agg(pl.len().alias("Species_richness"))
+
+    df_study_max = df_richness.group_by("SS").agg(
+        pl.max("Species_richness").alias("Study_max_richness")
+    )
+
+    # Join the dataframes together
+    df_richness = df_richness.join(
+        df_study_max.select(["SS", "Study_max_richness"]), on="SS", how="left"
+    )
+
+    # Perform max scaling
+    df_scaled = df_richness.with_columns(
+        (pl.col("Species_richness") / pl.col("Study_max_richness")).alias(
+            "Max_scaled_species_richness"
+        )
+    )
+
+    logger.info("Species richness calculations finished.")
+
+    return df_scaled
