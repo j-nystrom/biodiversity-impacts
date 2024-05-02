@@ -552,6 +552,7 @@ def calculate_scaled_species_richness(
     """
     logger.info("Calculating site-level scaled species richness numbers.")
 
+    df = df.filter(pl.col("Effort_corrected_measurement") > 0)
     df_richness = df.group_by(groupby_cols).agg(pl.len().alias("Species_richness"))
 
     df_study_max = df_richness.group_by("SS").agg(
