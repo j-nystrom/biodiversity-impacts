@@ -39,15 +39,15 @@ class RoadDensityTask:
             utm_site_polygons: Paths to site polygons in UTM format.
             un_regions: List of UN regions in the same order as the road data
                 files, to restrict the sampling sites used in calculations.
-            buffer_distances: Radii that were used in previous buffering.
+            polygon_sizes: Radii that were used in previous buffering.
             road_densities: Output paths for calculated densities per region.
         """
         self.all_site_coords: str = configs.predicts.all_site_coords
-        self.road_network_data: list[str] = configs.geodata.roads.road_network_data
-        self.utm_site_polygons: list[str] = configs.geodata.utm_site_polygons
-        self.un_regions: list[str] = configs.geodata.roads.un_regions
-        self.buffer_distances: list[int] = configs.geodata.buffer_distances
-        self.road_density_data: list[str] = configs.geodata.roads.road_density_data
+        self.road_network_data: list[str] = configs.roads.road_network_data
+        self.utm_site_polygons: list[str] = configs.roads.utm_site_polygons
+        self.un_regions: list[str] = configs.roads.un_regions
+        self.polygon_sizes: list[int] = configs.roads.polygon_sizes
+        self.road_density_data: list[str] = configs.roads.road_density_data
 
     def run_task(self) -> None:
         """
@@ -91,7 +91,7 @@ class RoadDensityTask:
             # Iterate through each buffer radius, load the corresponding site
             # polygons and intersect with the roads
             df_region_res = pd.DataFrame(df_sites_reg["SSBS"])
-            for dist, path in zip(self.buffer_distances, self.utm_site_polygons):
+            for dist, path in zip(self.polygon_sizes, self.utm_site_polygons):
                 gdf_all_sites = gpd.read_file(path)
                 site_polygons = gdf_all_sites.loc[gdf_all_sites["UN_region"] == region][
                     "geometry"

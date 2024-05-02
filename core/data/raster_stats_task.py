@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from datetime import timedelta
 
@@ -25,74 +26,87 @@ class CalculateRasterStatsTask:
     classes for specific raster datasets, that inherit from this class, are
     implemented further down.
 
-    TODO: Separate non-overlapping and overlapping polygons. Process the first
-    group using pygeoprocessing for increased speed. See:
+    Future improvement: Separate non-overlapping and overlapping polygons.
+    Process the first group using pygeoprocessing for increased speed. See:
     https://stackoverflow.com/questions/47471872/find-non-overlapping-polygons-in-geodataframe
     """
 
     def __init__(self) -> None:
         """
         Attributes:
-            all_site_coords:
-            buffer_distances:
+            all_site_coords: Geodataframe with coords of all sampling sites.
+            global_site_polygons: List of shapefiles with buffered site
+                polygons at 1, 10, 50 km scales.
         """
         self.all_site_coords: str = configs.predicts.all_site_coords
-        self.buffer_distances: list[int] = configs.geodata.buffer_distances
+        self.global_site_polygons: str = configs.predicts.global_site_polygons
 
     def run_mode(self, mode: str) -> None:
         """
         Runs the calculation / extraction of statistics from one or several
-        pair of overlapping raster datasets and polygon shapefiles. It's
-        assumed that every combination of raster paths and polygon paths should
-        be processed.
+        pair of raster datasets and polygon shapefiles that overlap spatially.
+        It's assumed that every combination of raster paths and polygon paths
+        should be processed.
 
         The 'mode' argument determines the raster data sources to use, e.g. for
-        population density or environmental variables. These correspond to
-        unique data paths in the 'data_configs.yaml' file.
+        population density or bioclimatic variables. These correspond to unique
+        input data paths in the 'data_configs.yaml' file.
         """
         assert mode in [
             "pop_density",
             "bioclimatic",
-            "elevation_slope",
-        ], "'mode' needs to be one of ['pop_density', 'bioclimatic', 'elevation_slope']"
-        logger.info("Starting raster data extraction.")
+            "elevation",
+            "slope",
+        ], "'mode' needs to be in ['pop_density', 'bioclimatic', 'elevation', 'slope]"
+        logger.info(f"Starting raster data extraction for mode {mode}.")
         start = time.time()
 
-        # Load the geodataframe that will hold the results
+        # Load the geodataframe that will hold the results, keeping the site id
         df_sites = pd.DataFrame(gpd.read_file(self.all_site_coords)["SSBS"])
 
-        # Get the specific configs for this particular mode
-        mode_configs = configs.geodata[mode]
-        polygon_paths = mode_configs.site_polygon_paths
-        raster_paths = mode_configs.raster_paths
-        result_col_names = mode_configs.result_col_names
-        metric = mode_configs.rasterstats_settings.metrics
-        include_all_pixels = mode_configs.rasterstats_settings.include_all_pixels
-        output_paths = mode_configs.output_paths
+        # Get the configs for this particular mode
+        mode_configs = configs.raster_data[mode]
+        self.polygon_sizes = mode_configs.polygon_sizes
+        self.raster_paths = mode_configs.raster_paths
+        self.result_col_names = mode_configs.result_col_names
+        self.agg_metrics = mode_configs.rasterstats_settings.metrics
+        self.include_all_pixels = mode_configs.rasterstats_settings.include_all_pixels
+        self.output_paths = mode_configs.output_paths
 
-        # Iterate through every combination of polygon and raster paths
+        # Keep only the polygon paths that match the desired scales
+        polygon_paths = []
+        for path in self.global_site_polygons:
+            for size in self.polygon_sizes:
+                if re.search(f"{size}km", path):
+                    polygon_paths.append(path)
+
+        # Iterate through every combination of polygon datasets (shapefiles)
+        # and raster datasets to extract the desired statistics
         i = 0
-        for polygon_path, output_path in zip(polygon_paths, output_paths):
+        for polygon_path, output_path in zip(polygon_paths, self.output_paths):
             df_result = df_sites.copy()
-            for raster_path in raster_paths:
+            for raster_path in self.raster_paths:
                 logger.info(
                     f"Processing polygon {polygon_path} and raster {raster_path}."
                 )
                 start_step = time.time()
 
+                # Calculate the statistics for the current polygon and raster
                 stats = calculate_raster_stats(
                     polygon_path,
                     raster_path,
-                    metric=metric,
-                    include_all_pixels=include_all_pixels,
+                    metric=self.agg_metrics,
+                    include_all_pixels=self.include_all_pixels,
                 )
-                df_result.loc[:, result_col_names[i]] = stats
+
+                # Add the results to the dataframe as a new column
+                df_result.loc[:, self.result_col_names[i]] = stats
                 i += 1
 
                 runtime_step = str(timedelta(seconds=int(time.time() - start_step)))
                 logger.info(f"Processing finished in {runtime_step}.")
 
-            # Save final dataframe for this polygon path (i.e. buffer radius)
+            # Save final dataframe for this polygon path (i.e. buffer size)
             df_result.to_parquet(output_path)
             logger.info(f"Saved results for polygon {polygon_path}.")
 
@@ -101,6 +115,8 @@ class CalculateRasterStatsTask:
 
 
 class PopulationDensityTask(CalculateRasterStatsTask):
+    """Population density data."""
+
     def __init__(self, run_folder_path: str) -> None:
         super().__init__()
 
@@ -109,6 +125,7 @@ class PopulationDensityTask(CalculateRasterStatsTask):
 
 
 class BioclimaticFactorsTask(CalculateRasterStatsTask):
+    """Bioclimatic factors data."""
 
     def __init__(self, run_folder_path: str) -> None:
         super().__init__()
@@ -117,10 +134,11 @@ class BioclimaticFactorsTask(CalculateRasterStatsTask):
         self.run_mode(mode="bioclimatic")
 
 
-class ElevationAndSlopeTask(CalculateRasterStatsTask):
+class TopographicFactorsTask(CalculateRasterStatsTask):
+    """Topographic factors data."""
 
     def __init__(self, run_folder_path: str) -> None:
         super().__init__()
 
     def run_task(self) -> None:
-        self.run_mode(mode="elevation_slope")
+        self.run_mode(mode="elevation")
