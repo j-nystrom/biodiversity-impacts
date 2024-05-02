@@ -49,6 +49,7 @@ class CombineDataTask:
         self.pop_density_data: list[str] = data_configs.geodata.pop_density.output_paths
         self.road_density_data: list[str] = data_configs.geodata.roads.road_density_data
         self.bioclimatic_data: list[str] = data_configs.geodata.bioclimatic.output_paths
+        self.topographic_data: list[str] = data_configs.geodata.topography.output_paths
         self.year_intervals: list[tuple[int, int]] = (
             configs.combined_data.year_intervals
         )
@@ -70,18 +71,18 @@ class CombineDataTask:
         logger.info("Starting process of merging different data sources.")
         start = time.time()
 
-        # Load PREDICTS and road density data
-        # NOTE: '__index_level_0__' is a pandas to polars artefact, should be
-        # fixed in the future
+        # Load PREDICTS data
         df_predicts = pl.read_parquet(self.all_predicts_data)
 
+        # Load road density data and concatenate
+        # NOTE: '__index_level_0__' is a pandas-polars artefact, to be removed
         df_road_density = pl.DataFrame()
         for path in self.road_density_data:
             df = pl.read_parquet(path).drop("__index_level_0__")
             df_road_density = pl.concat([df_road_density, df], how="vertical")
 
         # Join these two datasets together
-        df_predicts_roads = df_predicts.join(
+        df_combined = df_predicts.join(
             df_road_density, on="SSBS", how="left", validate="m:1"
         )
 
@@ -91,13 +92,27 @@ class CombineDataTask:
             df = pl.read_parquet(path)
             df = df.sort("SSBS")
 
+            # If not the first file, drop SSBS column to avoid duplicates
             if i > 0:
                 df = df.drop("SSBS")
-
             df_bioclimatic = pl.concat([df_bioclimatic, df], how="horizontal")
 
-        df_predicts_roads_bio = df_predicts_roads.join(
+        df_combined = df_combined.join(
             df_bioclimatic, on="SSBS", how="left", validate="m:1"
+        )
+
+        # Do the same for topographic features
+        df_topography = pl.DataFrame()
+        for i, path in enumerate(self.topographic_data):
+            df = pl.read_parquet(path)
+            df = df.sort("SSBS")
+
+            if i > 0:
+                df = df.drop("SSBS")
+            df_topography = pl.concat([df_topography, df], how="horizontal")
+
+        df_combined = df_combined.join(
+            df_topography, on="SSBS", how="left", validate="m:1"
         )
 
         # The population data requires more processing, specifically doing
@@ -116,7 +131,7 @@ class CombineDataTask:
             pop_density_dfs.append(df_interpol)
 
         # Convert first df to datetime format, for joining with population data
-        df_predicts_roads_bio = df_predicts_roads_bio.with_columns(
+        df_combined = df_combined.with_columns(
             pl.col("Sample_midpoint")
             .str.to_datetime("%Y-%m-%d")
             .dt.year()
@@ -124,9 +139,8 @@ class CombineDataTask:
         )
 
         # Join the population densities of the year matching the sample year
-        df_all = df_predicts_roads_bio.clone()
         for df in pop_density_dfs:
-            df_all = df_all.join(
+            df_combined = df_combined.join(
                 df,
                 how="left",
                 left_on=["SSBS", "Sample_year"],
@@ -134,7 +148,7 @@ class CombineDataTask:
             )
 
         # Write the final dataframe to file
-        df_all.write_parquet(self.combined_data_file)
+        df_combined.write_parquet(self.combined_data_file)
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Data merging finished in {runtime}.")
