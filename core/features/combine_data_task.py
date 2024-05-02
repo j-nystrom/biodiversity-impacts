@@ -46,10 +46,16 @@ class CombineDataTask:
             combined_data_file: Output path for the final combined file.
         """
         self.all_predicts_data: str = data_configs.predicts.all_predicts_data
-        self.pop_density_data: list[str] = data_configs.geodata.pop_density.output_paths
-        self.road_density_data: list[str] = data_configs.geodata.roads.road_density_data
-        self.bioclimatic_data: list[str] = data_configs.geodata.bioclimatic.output_paths
-        self.topographic_data: list[str] = data_configs.geodata.topography.output_paths
+        self.pop_density_data: list[str] = (
+            data_configs.raster_data.pop_density.output_paths
+        )
+        self.road_density_data: list[str] = data_configs.roads.road_density_data
+        self.bioclimatic_data: list[str] = (
+            data_configs.raster_data.bioclimatic.output_paths
+        )
+        self.topographic_data: list[str] = (
+            data_configs.raster_data.topography.output_paths
+        )
         self.year_intervals: list[tuple[int, int]] = (
             configs.combined_data.year_intervals
         )

@@ -39,7 +39,7 @@ class CalculateRasterStatsTask:
                 polygons at 1, 10, 50 km scales.
         """
         self.all_site_coords: str = configs.predicts.all_site_coords
-        self.global_site_polygons: str = configs.predicts.global_site_polygons
+        self.global_site_polygons: str = configs.raster_data.global_site_polygons
 
     def run_mode(self, mode: str) -> None:
         """
@@ -55,9 +55,8 @@ class CalculateRasterStatsTask:
         assert mode in [
             "pop_density",
             "bioclimatic",
-            "elevation",
-            "slope",
-        ], "'mode' needs to be in ['pop_density', 'bioclimatic', 'elevation', 'slope]"
+            "topography",
+        ], "'mode' needs to be in ['pop_density', 'bioclimatic', 'topography']"
         logger.info(f"Starting raster data extraction for mode {mode}.")
         start = time.time()
 
@@ -141,4 +140,4 @@ class TopographicFactorsTask(CalculateRasterStatsTask):
         super().__init__()
 
     def run_task(self) -> None:
-        self.run_mode(mode="elevation")
+        self.run_mode(mode="topography")
