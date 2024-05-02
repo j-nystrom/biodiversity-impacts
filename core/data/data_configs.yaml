@@ -2,11 +2,15 @@
 # PREDICTS data and processing -------------------
 
 predicts:
-  predicts_2016_p: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
+  # Paths to the two PREDICTS input data files
+  predicts_2016_path: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
   predicts_2022_path: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
+  # Output paths for the merged dataframe and dataframe with site coordinates
   all_predicts_data: "../../../data/output/predicts/all_predicts.parquet"
   all_site_coords: "../../../data/output/site_coords/all_site_coords.shp"
 
+  # The raw PREDICTS data is not organized in a logical way. This list
+  # specified the order of columns in the final dataframe
   target_col_order:
   - _id
   - Source_ID
@@ -80,35 +84,38 @@ predicts:
 # Geodata processing -------------------
 
 geodata:
-  buffer_distances: [1, 10, 50]
-  glob_site_polygons:
+  buffer_distances: [1, 10, 50]  # Size of buffered site polygons in km
+  glob_site_polygons:  # Output paths of buffered polygons in global projection
     - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
     - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
     - "../../../data/output/buff_polygons/glob_buff_polygons_50km.shp"
-  utm_site_polygons:
+  utm_site_polygons:  # Output paths of buffered polygons in local UTM format
     - "../../../data/output/buff_polygons/utm_buff_polygons_1km.shp"
     - "../../../data/output/buff_polygons/utm_buff_polygons_10km.shp"
     - "../../../data/output/buff_polygons/utm_buff_polygons_50km.shp"
 
+  # Each of the following sections specifies settings for processing a certain
+  # raster data set (.tif files). They all follow the same structure
+
+  # Population density data
   pop_density:
-    site_polygon_paths:
-      - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
-      - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
-      - "../../../data/output/buff_polygons/glob_buff_polygons_50km.shp"
-    raster_paths:
+    raster_paths:  # Raster data input paths
       - "../../../data/GPW/gpw_v4_2000_30_sec.tif"
       - "../../../data/GPW/gpw_v4_2005_30_sec.tif"
       - "../../../data/GPW/gpw_v4_2010_30_sec.tif"
       - "../../../data/GPW/gpw_v4_2015_30_sec.tif"
       - "../../../data/GPW/gpw_v4_2020_30_sec.tif"
-    output_paths:
+    output_paths:  # Output paths for processed data
       - "../../../data/output/pop_density/pop_density_1km.parquet"
       - "../../../data/output/pop_density/pop_density_10km.parquet"
       - "../../../data/output/pop_density/pop_density_50km.parquet"
     rasterstats_settings:
+      # Function for aggregating pixels under each site polygon
+      # Available values: https://pythonhosted.org/rasterstats/manual.html#statistics
       metrics: mean
+      # Include all pixels touched by the polygon, or only ones contained by it
       include_all_pixels: True
-    result_col_names:
+    result_col_names:  # Column names for the output data must be specified
       - Pop_density_1km_2000
       - Pop_density_1km_2005
       - Pop_density_1km_2010
@@ -125,6 +132,7 @@ geodata:
       - Pop_density_50km_2015
       - Pop_density_50km_2020
 
+  # Bioclimatic variables based on temepreature and precipitation
   bioclimatic:
     site_polygon_paths:
       - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
@@ -164,20 +172,48 @@ geodata:
       - Precip_driest_month_10km
       - Precip_seasonality_10km
 
+  # Topographic variables like elevation, slope, roughness
+  topography:
+    site_polygon_paths:
+      - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
+      - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
+    raster_paths:
+      - "../../../data/EarthEnv/topography/elevation_1KMmn_GMTEDmn.tif"
+      - "../../../data/EarthEnv/topography/slope_1KMmn_GMTEDmn.tif"
+      - "../../../data/EarthEnv/topography/roughness_1KMmn_GMTEDmn.tif"
+      - "../../../data/EarthEnv/topography/slope_1KMmn_GMTEDmn.tif"
+    output_paths:
+      - "../../../data/output/environment/topography_1km.parquet"
+      - "../../../data/output/environment/topography_10km.parquet"
+    rasterstats_settings:
+      metrics: mean
+      include_all_pixels: True
+    result_col_names:
+      - Elevation_1km
+      - Slope_1km
+      - Terrain_roughness_1km
+      - Terrain_ruggedness_index_1km
+      - Elevation_10km
+      - Slope_10km
+      - Terrain_roughness_10km
+      - Terrain_ruggedness_index_10km
+
+  # Road network data. This is based on shapefiles rather that raster data, so
+  # follows a different structure
   roads:
-    road_network_data:
+    road_network_data:  # Input paths for road network shapefiles
       - "../../../data/gROADS/oceania/groads-v1-oceania.shp"
       - "../../../data/gROADS/europe/groads-v1-europe.shp"
       - "../../../data/gROADS/africa/groads-v1-africa.shp"
       - "../../../data/gROADS/asia/groads-v1-asia.shp"
       - "../../../data/gROADS/americas/groads-v1-americas.shp"
-    road_density_data:
+    road_density_data:  # Output paths for density data
       - "../../../data/output/road_density/road_density_oceania.parquet"
       - "../../../data/output/road_density/road_density_europe.parquet"
       - "../../../data/output/road_density/road_density_africa.parquet"
       - "../../../data/output/road_density/road_density_asia.parquet"
       - "../../../data/output/road_density/road_density_americas.parquet"
-    un_regions:
+    un_regions:  # Each shapefile covers a UN region
       - Oceania
       - Europe
       - Africa
