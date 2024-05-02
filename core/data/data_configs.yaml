@@ -88,10 +88,6 @@ raster_data:
     - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
     - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
     - "../../../data/output/buff_polygons/glob_buff_polygons_50km.shp"
-  utm_site_polygons:  # Output paths of buffered polygons in local UTM format
-    - "../../../data/output/buff_polygons/utm_buff_polygons_1km.shp"
-    - "../../../data/output/buff_polygons/utm_buff_polygons_10km.shp"
-    - "../../../data/output/buff_polygons/utm_buff_polygons_50km.shp"
 
   # Each of the following sections specifies settings for processing a certain
   # raster data set (.tif files). They all follow the same structure
@@ -194,6 +190,11 @@ raster_data:
 
 # Road network data -------------------
 roads:
+  utm_site_polygons:  # Output paths of buffered polygons in local UTM format
+    - "../../../data/output/buff_polygons/utm_buff_polygons_1km.shp"
+    - "../../../data/output/buff_polygons/utm_buff_polygons_10km.shp"
+    - "../../../data/output/buff_polygons/utm_buff_polygons_50km.shp"
+  polygon_sizes: [1, 10, 50]
   road_network_data:  # Input paths for road network shapefiles
     - "../../../data/gROADS/oceania/groads-v1-oceania.shp"
     - "../../../data/gROADS/europe/groads-v1-europe.shp"
