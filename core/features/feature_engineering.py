@@ -267,6 +267,7 @@ def group_land_use_types_and_intensities(
         else:
             return row
 
+    # Including intensity split
     df = df.with_columns(
         pl.col("LU_type_intensity")
         .map_elements(lambda row: _secondary_veg_intensity(row))
@@ -317,6 +318,14 @@ def group_land_use_types_and_intensities(
         .then(1)
         .otherwise(0)
         .alias("Pasture_Light_Intense")
+    )
+
+    # Do the same to create a secondary vegetation column without intensities
+    df = df.with_columns(
+        pl.when(pl.col("Predominant_land_use").str.contains("(?i)secondary|plantation"))
+        .then(1)
+        .otherwise(0)
+        .alias("Secondary vegetation_All uses")
     )
 
     return df
