@@ -1,10 +1,13 @@
-from typing import Union
+import time
+from datetime import timedelta
+from typing import Any
 
 import arviz as az
 import numpy as np
 import polars as pl
 import pymc as pm
-from scipy.special import expit, logit
+from scipy.special import logit
+from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
 from core.utils.general_utils import create_logger
@@ -23,9 +26,9 @@ def filter_data_scope(
     groups specified in the config are included.
 
     Args:
-        taxonomic_resolution: Level in the taxonomy used in this model.
-        geographic_scope: Dictionary with biomes and geographic regions to
-            include.
+        taxonomic_resolution: Level of taxonomic granularity used in the model.
+        geographic_scope: Dictionary that contains which biomes and geographic
+            regions to include.
         species_scope: List of species groups to include for this level.
 
     Returns:
@@ -33,13 +36,53 @@ def filter_data_scope(
     """
     logger.info("Filtering data based on specified scope.")
 
+    # For each column in the geographic scope dictionary (Biome, UN_region),
+    # filter dataframe to only contain rows that are included in that list
     for col in geographic_scope.keys():
         df = df.filter(pl.col(col).is_in(geographic_scope[col]))
 
-    if species_scope:  # Check if the list is not empty
+    if species_scope:  # Check if the list is not empty (e.g. for All_species)
         df = df.filter(pl.col(taxonomic_resolution).is_in(species_scope))
 
     logger.info("Finished filtering data based on specified scope.")
+
+    return df
+
+
+def filter_out_small_groups(df: pl.DataFrame, threshold: int) -> pl.DataFrame:
+    """
+    Filters out biogeographic groups that are too small to be included in the
+    model. This is done for the biome-realm and ecoregion levels.
+
+    Args:
+        df: Dataframe with the species abundance data.
+
+    Returns:
+        df: Dataframe with the small groups removed.
+    """
+    logger.info(f"Filtering out groups with <{threshold} observations.")
+    original_len = len(df)
+
+    # Get list of biome-realm combinations below threshold and use as filter
+    df_realm_count = df.group_by("Biome_Realm").agg(pl.col("SSBS").count())
+    biome_realms = (
+        df_realm_count.filter(pl.col("SSBS") < threshold)
+        .get_column("Biome_Realm")
+        .to_list()
+    )
+    df = df.filter(~pl.col("Biome_Realm").is_in(biome_realms))
+
+    # Do the same operation for ecoregions
+    df_eco_count = df.group_by("Ecoregion").agg(pl.col("SSBS").count())
+    ecoregions = (
+        df_eco_count.filter(pl.col("SSBS") < threshold)
+        .get_column("Ecoregion")
+        .to_list()
+    )
+    df = df.filter(~pl.col("Ecoregion").is_in(ecoregions))
+
+    diff = original_len - len(df)
+    logger.info(f"Filtered out {diff} observations based on group size.")
 
     return df
 
@@ -48,7 +91,8 @@ def standardize_continuous_covariates(
     df: pl.DataFrame, vars_to_scale: list[str]
 ) -> pl.DataFrame:
     """
-    Standardizes the continuous covariates in the dataframe.
+    Standardizes the continuous covariates in the dataframe, by subtracting the
+    mean and dividing by the standard devation.
 
     Args:
         df: Dataframe containing the covariates.
@@ -56,7 +100,7 @@ def standardize_continuous_covariates(
             standardized.
 
     Returns:
-        df_res: Dataframe with the standardized continuous covariates.
+        df_res: Original dataframe with the standardized continuous covariates.
 
     """
     logger.info("Standardizing continuous covariates.")
@@ -65,7 +109,8 @@ def standardize_continuous_covariates(
     data_to_scale = df.select(vars_to_scale).to_numpy()
     df_scaled = pl.DataFrame(scaler.fit_transform(data_to_scale), schema=vars_to_scale)
 
-    # Check for NaN and infinite values
+    # Check for NaN and infinite values, report and replace with zeros
+    # Any such values are likely due to floating point precision issues
     for col in vars_to_scale:
         inf_sum = df_scaled.get_column(col).is_infinite().sum()
         nan_sum = df_scaled.get_column(col).is_nan().sum()
@@ -86,10 +131,10 @@ def create_interaction_terms(
     df: pl.DataFrame,
     categorical_vars: list[str],
     continuous_vars: list[str],
-) -> pl.DataFrame:
+) -> tuple[pl.DataFrame, list]:
     """
-    Creates interaction terms between land-use related columns and population
-    and road density at different resolutions.
+    Creates interaction terms between land-use related (categorical) columns
+    and population and road density (continuous) at different resolutions.
 
     Args:
         df: Dataframe containing population and road density and the dummy
@@ -97,70 +142,72 @@ def create_interaction_terms(
 
     Returns:
         df_res: Updated df with interaction terms added.
-
+        new_cols: List of the names of the new interaction columns.
     """
     logger.info("Creating specified interaction terms.")
 
+    new_cols = []
     for col_1 in continuous_vars:
         for col_2 in categorical_vars:
             df = df.with_columns(
                 (pl.col(col_1) * pl.col(col_2)).alias(f"{col_2} x {col_1}")
             )
+            new_cols.append(f"{col_2} x {col_1}")
 
     logger.info("Finished creating interaction terms.")
 
-    return df
+    return df, new_cols
 
 
-def transform_response_variable(df: pl.DataFrame, method: str) -> pl.DataFrame:
+def transform_response_variable(
+    df: pl.DataFrame, response_var: str, method: str
+) -> pl.DataFrame:
     """
     Makes adjustments and transformations to the response variable (max scaled
     abundance). The first adjustment is to avoid 0 and 1 values, which are not
-    supported by the Beta distribution. The second transformation is a square
-    root transformation. The third transformation is a logit transformation.
+    supported by the logit transformation (or the Beta distribution). The
+    second transformation is a square root transformation. The third
+    transformation is a logit transformation.
 
     Args:
         df: Dataframe containing the response variable.
+        response_var: Name of the response variable.
+        method: Transformation method to apply.
 
     Returns:
-        df: Updated df with the transformed response variable as new columns.
+        df: Updated df with the transformed response variable as new column.
     """
     logger.info("Transforming response variable.")
 
+    # Small adjustment to align with support for logit / Beta distribution
     adjust = 0.001
-    original_col_name = "Max_scaled_abundance"
-    transformed_col_name = original_col_name
-
-    # Small adjustment to align with support for Beta distribution
     if method == "adjust" or method == "logit":
         df = df.with_columns(
-            pl.when(pl.col(original_col_name) == 0)
-            .then(adjust)
-            .when(pl.col(original_col_name) == 1)
-            .then(1 - adjust)
-            .otherwise(pl.col(original_col_name))
-            .alias(original_col_name)
+            pl.when(pl.col(response_var) < adjust)
+            .then(adjust - pl.col(response_var))  # Add to reach 0.001
+            .when(pl.col(response_var) > (1 - adjust))
+            .then(1 - adjust)  # Subtract to reach 0.999
+            .otherwise(pl.col(response_var))
+            .alias(response_var)
         )
         if method == "logit":
-            transformed_col_name += "_logit"
+            transformed_col_name = response_var + "_logit"
             df = df.with_columns(
-                pl.col(original_col_name)
+                pl.col(response_var)
                 .map_elements(lambda x: logit(x))
                 .alias(transformed_col_name)
             )
 
     # Square root transformation
     elif method == "sqrt":
-        transformed_col_name += "_sqrt"
-        df = df.with_columns(
-            pl.col(original_col_name).sqrt().alias(transformed_col_name)
-        )
+        transformed_col_name = response_var + "_sqrt"
+        df = df.with_columns(pl.col(response_var).sqrt().alias(transformed_col_name))
 
     # Replace original column with transformed one, if the name has changed
-    if transformed_col_name != original_col_name:
-        original_col_index = df.columns.index(original_col_name)
+    if transformed_col_name != response_var:
+        original_col_index = df.columns.index(response_var)
         new_col = df.get_column(transformed_col_name)
-        df = df.drop([original_col_name, transformed_col_name])
+        df = df.drop([response_var, transformed_col_name])
         df = df.insert_column(index=original_col_index, column=new_col)
 
     logger.info("Finished transforming response variable.")
@@ -168,176 +215,198 @@ def transform_response_variable(df: pl.DataFrame, method: str) -> pl.DataFrame:
     return df
 
 
-def add_intercept(df: pl.DataFrame, response_var: str) -> pl.DataFrame:
-    """
-    Adds an intercept column to the dataframe.
-
-    Args:
-        df: Dataframe to which the intercept column should be added.
-
-    Returns:
-        df: Updated df with the intercept column added.
-    """
-    logger.info("Adding intercept column to the dataframe.")
-
-    response_var_idx = next(
-        (i for i, col in enumerate(df.columns) if response_var in col), None
-    )
-    if response_var_idx is not None:
-        df = df.insert_column(
-            index=response_var_idx + 1, column=pl.Series("Intercept", [1] * df.shape[0])
-        )
-    else:
-        logger.warning("Response variable not found in dataframe.")
-
-    logger.info("Intercept column added.")
-
-    return df
-
-
 def format_data_for_model(
-    df_scaled: pl.DataFrame,
-    group_vars: list[str],
+    df: pl.DataFrame,
     response_var: str,
-    response_var_transform: str,
     categorical_vars: list[str],
     continuous_vars: list[str],
     interaction_terms: list[str],
-) -> tuple[
-    np.array,
-    np.array,
-    dict[str, np.array],
-    np.array,
-    dict[str, int],
-    np.array,
-    np.array,
-]:
+    site_name_to_idx: dict[str, int],
+) -> dict[str, Any]:
     """
     Takes the dataframe and formats it in a way that can be used by the PyMC
     model. This includes creating a design matrix, a vector of output values,
-    observation indices on group, block and study levels, and a coordinate
-    dictionary.
+    indices for different groups and a coordinate dictionary. The output
+    supports a model hierarchy that is either based on the studies and spatial
+    blocks in the PREDICTS data, or one based on biomes, realms and ecoregions.
 
     Args:
-        df_scaled: Dataframe with the scaled covariates and response variable.
-        group_vars: List of group variables.
+        df: Dataframe with the scaled covariates and response variable.
         response_var: Name of the response variable.
-        response_var_transform: Transformation to apply to response variable.
         categorical_vars: List of categorical covariates.
         continuous_vars: List of continuous covariates.
-        interaction_terms: List of interaction terms to add to design matrix.
+        interaction_terms: List of interaction terms.
+        site_name_to_idx: Mapping of sites to their indices in dataframe.
 
     Returns:
-        x: Design matrix.
-        y: Vector of output values.
-        coords: Coordinate dictionary.
-        group_idx: Group indices.
-        group_code_map: Mapping dictionary for group indices.
-        study_idx: Study indices.
-        block_idx: Block indices.
+        output_dict: Dictionary that contains all the formatted data for the
+            PyMC model.
     """
     logger.info("Formatting data for PyMC model.")
 
     # Sort dataframe for consistent operations below
-    df_scaled.sort(["SS", "SSB", "SSBS"])
+    df = df.sort(["SS", "SSB", "SSBS"])
 
-    # Extract all unique taxonomic groups and create a mapping dictionary
-    # Use the mapping dictionary to create an array with numerical group id
-    if group_vars[-1] != "SSBS":
-        taxa = df_scaled.get_column(group_vars[-1]).unique().to_list()
-        taxa_code_map = {taxon: code for code, taxon in enumerate(taxa)}
-        taxon_idx = (
-            df_scaled.get_column(group_vars[-1])
-            .map_elements(lambda x: taxa_code_map[x])
-            .to_numpy()
-        )
-    else:
-        taxa, taxa_code_map, taxon_idx = np.zeros(1), np.zeros(1), np.zeros(1)
-
-    # Do the same for the study ID and block ID
-    studies = df_scaled.get_column("SS").unique().to_list()
-    study_code_map = {study: code for code, study in enumerate(studies)}
-    study_idx = (
-        df_scaled.get_column("SS").map_elements(lambda x: study_code_map[x]).to_numpy()
-    )
-
-    blocks = df_scaled.get_column("SSB").unique().to_list()
-    block_code_map = {block: code for code, block in enumerate(blocks)}
-    block_idx = (
-        df_scaled.get_column("SSB").map_elements(lambda x: block_code_map[x]).to_numpy()
-    )
+    # Extract studies and blocks as indices
+    studies = df.get_column("SS").unique().to_list()
+    study_idx = df.get_column("SS").cast(pl.Categorical).to_physical().to_numpy()
+    blocks = df.get_column("SSB").unique().to_list()
+    block_idx = df.get_column("SSB").cast(pl.Categorical).to_physical().to_numpy()
 
     # Create an array with block-to-study indices
     block_to_study_idx = (
-        df_scaled.select(["SS", "SSB"])
+        df.select(["SS", "SSB"])
         .unique()
-        .with_columns(
-            pl.col("SS").apply(lambda x: study_code_map[x]).alias("Study_idx")
-        )
-        .get_column("Study_idx")
+        .sort(["SS", "SSB"])
+        .get_column("SS")
+        .cast(pl.Categorical)
+        .to_physical()
+        .to_numpy()
+    )
+
+    # Do the same as above but for biomes, realms and ecoregions
+    df = df.sort(["Biome", "Biome_Realm", "Biome_Realm_Ecoregion"])
+
+    biomes = df.get_column("Biome").unique().to_list()
+    biome_idx = df.get_column("Biome").cast(pl.Categorical).to_physical().to_numpy()
+    biome_realm = df.get_column("Biome_Realm").unique().to_list()
+    biome_realm_idx = (
+        df.get_column("Biome_Realm").cast(pl.Categorical).to_physical().to_numpy()
+    )
+
+    biome_realm_eco = df.get_column("Biome_Realm_Ecoregion").unique().to_list()
+    biome_realm_eco_idx = (
+        df.get_column("Biome_Realm_Ecoregion")
+        .cast(pl.Categorical)
+        .to_physical()
+        .to_numpy()
+    )
+
+    realm_to_biome_idx = (
+        df.select(["Biome", "Biome_Realm"])
+        .unique()
+        .sort(["Biome", "Biome_Realm"])
+        .get_column("Biome")
+        .cast(pl.Categorical)
+        .to_physical()
+        .to_numpy()
+    )
+
+    eco_to_realm_idx = (
+        df.select(["Biome_Realm", "Biome_Realm_Ecoregion"])
+        .unique()
+        .sort(["Biome_Realm", "Biome_Realm_Ecoregion"])
+        .get_column("Biome_Realm")
+        .cast(pl.Categorical)
+        .to_physical()
         .to_numpy()
     )
 
     # Get a vector of output values
-    if response_var_transform:
-        y_col = response_var + "_" + response_var_transform
-    else:
-        y_col = response_var
-    y = df_scaled.get_column(y_col).to_numpy().flatten()
+    y = (
+        df.select([col for col in df.columns if response_var in col])
+        .to_numpy()
+        .flatten()
+    )
 
-    # Create the fixed effects design matrix
-    x = df_scaled.select(
-        categorical_vars + continuous_vars + interaction_terms
-    ).to_numpy()
+    # Create main design matrix that includes all covariates
+    x = df.select(categorical_vars + continuous_vars + interaction_terms).to_numpy()
 
-    # Create design matrix for study and block random effects
-    z_s = df_scaled.select(categorical_vars + continuous_vars).to_numpy()
-
-    z_b = df_scaled.select(categorical_vars + continuous_vars).to_numpy()
-
-    # Create coordinate dictionary
-    idx = np.arange(x.shape[0])
+    # Coordinate dictionary for PyMC model
+    idx = np.arange(len(y))
+    site_names = df.get_column("SSBS").to_list()
+    site_idx = np.array([site_name_to_idx[site] for site in site_names])
     coords = {
         "idx": idx,
-        "x_var": categorical_vars + continuous_vars + interaction_terms,
-        "z_s_var": categorical_vars + continuous_vars,
-        "z_b_var": categorical_vars + continuous_vars,
+        "x_vars": categorical_vars + continuous_vars + interaction_terms,
+        "x_vars_int": ["Intercept"]
+        + categorical_vars
+        + continuous_vars
+        + interaction_terms,
+        "biomes": biomes,
+        "biome_realm": biome_realm,
+        "biome_realm_eco": biome_realm_eco,
         "studies": studies,
         "blocks": blocks,
-        "taxa": taxa,
     }
 
-    # Convert numpy array to the precision actually needed, and no more,
-    # to increase sampling speed
-    y = y.astype(np.float32)
-    x = x.astype(np.float32)
-    z_s = z_s.astype(np.float32)
-    z_b = z_b.astype(np.float32)
-    if taxon_idx:
-        taxon_idx = taxon_idx.astype(np.uint16)
-    study_idx = study_idx.astype(np.uint16)
-    block_idx = block_idx.astype(np.uint16)
-    block_to_study_idx.astype(np.uint16)
-    idx = idx.astype(np.uint32)
+    output_dict = {
+        "coords": coords,
+        "y": y,
+        "x": x,
+        "biome_idx": biome_idx,
+        "biome_realm_idx": biome_realm_idx,
+        "realm_to_biome_idx": realm_to_biome_idx,
+        "biome_realm_eco_idx": biome_realm_eco_idx,
+        "eco_to_realm_idx": eco_to_realm_idx,
+        "study_idx": study_idx,
+        "block_idx": block_idx,
+        "block_to_study_idx": block_to_study_idx,
+        "site_idx": site_idx,
+    }
 
     logger.info("Data formatted for PyMC model.")
 
-    return (
-        y,
-        x,
-        z_s,
-        z_b,
-        coords,
-        study_idx,
-        block_idx,
-        block_to_study_idx,
-        taxon_idx,
-        taxa_code_map,
-    )
+    return output_dict
+
+
+def create_stratification_column(
+    df: pl.DataFrame, stratify_groups: list[str]
+) -> pl.DataFrame:
+    """
+    Create a new column for stratification by concatenating the
+    specified group columns.
+    """
+
+    if len(stratify_groups) > 1:
+        df = df.with_columns(
+            pl.concat_str(stratify_groups, separator="_").alias("Stratify_group")
+        )
+    else:
+        df = df.with_columns(df.get_column(stratify_groups[0]).alias("Stratify_group"))
+
+    return df
+
+
+def generate_kfolds(
+    df: pl.DataFrame,
+    k: int = 5,
+    stratify: bool = False,
+) -> tuple[list[pl.DataFrame], list[pl.DataFrame]]:
+
+    # Covert polars dataframe to pandas, since sklearn K-fold is not compatible
+    # with polars dataframes
+    df = df.to_pandas()
+
+    # Lists for storing the train and test datasets
+    df_train_list = []
+    df_test_list = []
+
+    # Set up stratified k-fold sampler object and sample using the
+    # stratify code (as the "y class label") for stratification
+    if stratify:
+        kfold = StratifiedKFold(n_splits=k, shuffle=True)
+        strat_col = df["Stratify_group"]
+    else:
+        kfold = KFold(n_splits=k, shuffle=True)
+        strat_col = None
+
+    for train_index, test_index in kfold.split(X=df, y=strat_col):
+        df_train, df_test = df.iloc[train_index], df.iloc[test_index]
+
+        # Recoversion to polars dataframes
+        df_train = pl.DataFrame(df_train)
+        df_test = pl.DataFrame(df_test)
+
+        # Store the data for this fold
+        df_train_list.append(df_train)
+        df_test_list.append(df_test)
+
+    return df_train_list, df_test_list
 
 
 def run_sampling(
-    model: pm.Model, sampler_settings: dict[str, Union[str, int, float]]
+    model: pm.Model, sampler_settings: dict[str, str | int | float]
 ) -> az.InferenceData:
     """
     Runs the NUTS sampler for the current model.
@@ -349,6 +418,9 @@ def run_sampling(
     Returns:
         trace: PyMC trace with posterior distributions information appended.
     """
+    logger.info("Running NUTS sampler.")
+    start = time.time()
+
     with model:
         trace = pm.sample(
             draws=sampler_settings["draws"],
@@ -357,44 +429,45 @@ def run_sampling(
             chains=sampler_settings["chains"],
             target_accept=sampler_settings["target_accept"],
             nuts_sampler=sampler_settings["nuts_sampler"],
+            idata_kwargs={"log_likelihood": True},  # Compute log likelihood
         )
+
+    runtime = str(timedelta(seconds=int(time.time() - start)))
+    logger.info(f"Finished sampling in {runtime}.")
 
     return trace
 
 
-def summarize_sampling_statistics(
-    trace: az.InferenceData, var_names: list[str]
-) -> None:
+def summarize_sampling_statistics(trace: az.InferenceData) -> None:
     """
-    Calcualtes and logs sampling statistics for the model to evaluate the
-    convergence of the sampling chains. This includes divergences, acceptance
-    rate, R-hat statistics and ESS statistics.
+    Calculates sampling statistics for the model to evaluate the convergence of
+    the sampling chains. This includes divergences, acceptance rate, R-hat
+    statistics and ESS statistics.
 
     Args:
         trace: The trace from the NUTS MCMC sampling.
-        var_names: List of variable names to summarize (the main parameters in
-            the model).
     """
-    idata = az.convert_to_dataset(trace)
+    var_names = list(trace.posterior.data_vars)
+    idata = az.convert_to_dataset(trace)  # Avoid doing conversion twice
 
     # Divergences
     divergences = np.sum(trace.sample_stats["diverging"].values)
-    logger.info(f"There are {divergences} divergences in the sampling chains.")
+    logger.warning(f"There are {divergences} divergences in the sampling chains.")
 
     # Acceptance rate
     accept_rate = np.mean(trace.sample_stats["acceptance_rate"].values)
-    logger.info(f"The mean acceptance rate was {round(accept_rate, 3)}")
+    logger.warning(f"The mean acceptance rate was {accept_rate:.3f}")
 
     # R-hat statistics
     for var in var_names:
         try:
             r_hat = az.summary(idata, var_names=var, round_to=2)["r_hat"]
-            mean_r_hat = round(np.mean(r_hat), 3)
-            min_r_hat = round(np.min(r_hat), 3)
-            max_r_hat = round(np.max(r_hat), 3)
+            mean_r_hat = np.mean(r_hat)
+            min_r_hat = np.min(r_hat)
+            max_r_hat = np.max(r_hat)
             logger.info(
-                f"R-hat for {var} are: {mean_r_hat} (mean) | {min_r_hat} (min) | \
-                    {max_r_hat} (max)"
+                f"R-hat for {var} are: {mean_r_hat:.3f} (mean) | "
+                f"{min_r_hat:.3f} (min) | {max_r_hat:.3f} (max)"
             )
         except KeyError:
             continue
@@ -402,77 +475,13 @@ def summarize_sampling_statistics(
     # ESS statistics
     for var in var_names:
         try:
-            ess = az.summary(idata, var_names=var_names, round_to=2)["ess_bulk"]
-            mean_ess = round(np.mean(ess), 0)
-            min_ess = round(np.min(ess), 0)
-            max_ess = round(np.max(ess), 0)
+            ess = az.summary(idata, var_names=var, round_to=2)["ess_bulk"]
+            mean_ess = np.mean(ess)
+            min_ess = np.min(ess)
+            max_ess = np.max(ess)
             logger.info(
-                f"ESS for {var} are: {int(mean_ess)} (mean) | {int(min_ess)} (min) | \
-                    {int(max_ess)} (max)"
+                f"ESS for {var} are: {int(mean_ess)} (mean) | {int(min_ess)} "
+                f"(min) | {int(max_ess)} (max)"
             )
         except KeyError:
             continue
-
-
-def make_in_sample_predictions(
-    model: pm.Model,
-    trace: az.InferenceData,
-    y: np.array,
-    x: np.array,
-    z_s: np.array,
-    z_b: np.array,
-    idx: np.array,
-) -> tuple[az.InferenceData, np.array]:
-    """
-    Makes in-sample predictions using the posterior distributions from the
-    trace generated by the MCMC sampling.
-
-    Args:
-        model: PyMC model object.
-        trace: PyMC trace from sampling.
-        x: Design matrix.
-        y: Vector of output values, only used as a placeholder.
-        idx: Index vector.
-
-    Returns:
-        trace: Updated PyMC trace with predicted values appended.
-        p_pred: Predicted values.
-
-    """
-    data_dict = {"x": x, "y": y}
-    # if z_s:
-    # data_dict["z_s"] = z_s
-    # if z_b:
-    # data_dict["z_b"] = z_b
-
-    with model:
-        pm.set_data(
-            data_dict,
-            coords={"idx": idx},
-        )
-        trace.extend(pm.sample_posterior_predictive(trace, predictions=False))
-
-    p_pred = trace.posterior_predictive["y_like"].mean(dim=["draw", "chain"]).values
-
-    return trace, p_pred
-
-
-def inverse_transform_response(y: np.array, method: str) -> np.array:
-    """
-    Back-transforms the response variable to the original scale.
-
-    Args:
-        y: The predicted data from the model.
-        method: The method used to originally transform the response variable.
-
-    Returns:
-        res: The back-transformed response variable.
-    """
-    if method == "logit":
-        res = expit(y)
-    elif method == "sqrt":
-        res = np.square(y)
-    else:
-        res = y
-
-    return res
