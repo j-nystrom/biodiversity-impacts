@@ -2,14 +2,13 @@ import os
 import time
 from datetime import timedelta
 
+import dill
 import polars as pl
 from box import Box
 
 from core.model.model_functions import (
-    add_intercept,
     create_interaction_terms,
     filter_data_scope,
-    standardize_continuous_covariates,
     transform_response_variable,
 )
 from core.utils.general_utils import create_logger
@@ -107,17 +106,17 @@ class ModelDataTask:
         # If specified in the config, the response variable is transformed
         df = transform_response_variable(df, method=self.response_var_transform)
 
-        # Continuous vars are standardized to have mean zero and unit variance
-        df = standardize_continuous_covariates(df, self.continuous_vars)
-
         # Create interaction terms between categorical and continuous vars
-        df = create_interaction_terms(df, self.categorical_vars, self.continuous_vars)
-
-        # Add an intercept term to the design matrix
-        df = add_intercept(df, response_var=self.response_var)
+        df, terms = create_interaction_terms(
+            df, self.categorical_vars, self.continuous_vars
+        )
 
         # Write the output to the run folder
         df.write_parquet(os.path.join(self.run_folder_path, "model_data.parquet"))
+        with open(
+            os.path.join(self.run_folder_path, "interaction_terms.pkl"), "wb"
+        ) as out_stream:
+            dill.dump(terms, out_stream)
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Model data preparation finished in {runtime}.")
