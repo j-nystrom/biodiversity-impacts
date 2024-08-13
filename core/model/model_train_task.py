@@ -173,8 +173,8 @@ class ModelTrainingTask:
         # Save interim model data to run folder for external consumption
         df.write_parquet(os.path.join(self.run_folder_path, "model_data.parquet"))
 
-        # Create a fixed mapping between site names and indices
-        # TODO: Check if this sorting is really needed for end results
+        # Create a fixed mapping between site names and indices, for consistent
+        # data manipulation across models
         site_names = df["SSBS"].unique().to_list()
         site_name_to_idx = {site_name: idx for idx, site_name in enumerate(site_names)}
 

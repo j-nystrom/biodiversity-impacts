@@ -99,7 +99,6 @@ def make_predictions(
             pm.set_data(
                 {
                     "x_obs": data["x"],
-                    "x_subset": data["x_subset"],
                     "y_obs": data["y"],
                     "biome_realm_idx": data["biome_realm_idx"],
                     "biome_realm_eco_idx": data["biome_realm_eco_idx"],
@@ -113,8 +112,6 @@ def make_predictions(
                     "y_like",
                     "alpha_eco_site",
                     "alpha_realm_site",
-                    "ref_pred_eco",
-                    "ref_pred_realm",
                 ],
                 predictions=True,
                 extend_inferencedata=True,  # Modify the existing trace
