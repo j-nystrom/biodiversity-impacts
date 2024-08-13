@@ -354,9 +354,17 @@ def create_stratification_column(
     df: pl.DataFrame, stratify_groups: list[str]
 ) -> pl.DataFrame:
     """
-    Create a new column for stratification by concatenating the
-    specified group columns.
+    Create a new column for stratification by concatenating the specified group
+    columns.
+
+    Args:
+        df: Dataframe with the data to stratify.
+        stratify_groups: List of column names to concatenate into one
+            stratification column.
+    Returns:
+        df: Dataframe including the new stratification column.
     """
+    logger.info("Creating stratification column for k-folds.")
 
     if len(stratify_groups) > 1:
         df = df.with_columns(
@@ -364,6 +372,8 @@ def create_stratification_column(
         )
     else:
         df = df.with_columns(df.get_column(stratify_groups[0]).alias("Stratify_group"))
+
+    logger.info("Finished creating stratification column.")
 
     return df
 
@@ -373,6 +383,21 @@ def generate_kfolds(
     k: int = 5,
     stratify: bool = False,
 ) -> tuple[list[pl.DataFrame], list[pl.DataFrame]]:
+    """
+    Create indices corresponding to the train and test sets for k-fold cross-
+    validation, and split the data accordingly. Stratification on a specific
+    column is optional.
+
+    Args:
+        df: Dataframe with the data to split.
+        k: Number of folds for the cross-validation.
+        stratify: Whether to stratify the data based on a specific column.
+
+    Returns:
+        df_train_list: List of dataframes for the training sets.
+        df_test_list: List of dataframes for the test sets.
+    """
+    logger.info("Generating k-folds for cross-validation.")
 
     # Covert polars dataframe to pandas, since sklearn K-fold is not compatible
     # with polars dataframes
@@ -394,13 +419,15 @@ def generate_kfolds(
     for train_index, test_index in kfold.split(X=df, y=strat_col):
         df_train, df_test = df.iloc[train_index], df.iloc[test_index]
 
-        # Recoversion to polars dataframes
+        # Reconversion to polars dataframes
         df_train = pl.DataFrame(df_train)
         df_test = pl.DataFrame(df_test)
 
         # Store the data for this fold
         df_train_list.append(df_train)
         df_test_list.append(df_test)
+
+    logger.info("Finished generating k-folds for cross-validation.")
 
     return df_train_list, df_test_list
 

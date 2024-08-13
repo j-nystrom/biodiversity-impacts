@@ -37,7 +37,7 @@ logger = create_logger(__name__)
 
 class ModelTrainingTask:
     """
-    Task for training and evaluating a hiearchical Bayesian model. The PyMC
+    Task for training and evaluating a hierachical Bayesian model. The PyMC
     models are specified in the 'hierarchical_models.py' module and fetched
     based on the specified model in the config.
     """
@@ -130,6 +130,9 @@ class ModelTrainingTask:
         )
         start = time.time()
 
+        # TODO: First 4 steps violate DRY (don't repeat yourself), since they
+        # are identical to the steps in the cross-validation task.
+
         # Get feature dataframe for this taxonomic granularity
         df = pl.read_parquet(self.feature_data)
 
@@ -171,7 +174,7 @@ class ModelTrainingTask:
         df.write_parquet(os.path.join(self.run_folder_path, "model_data.parquet"))
 
         # Create a fixed mapping between site names and indices
-        # TODO: Check if this is really needed. If yes, explain why
+        # TODO: Check if this sorting is really needed for end results
         site_names = df["SSBS"].unique().to_list()
         site_name_to_idx = {site_name: idx for idx, site_name in enumerate(site_names)}
 
