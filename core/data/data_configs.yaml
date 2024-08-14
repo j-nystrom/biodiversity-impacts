@@ -168,10 +168,10 @@ raster_data:
   topography:
     polygon_sizes: [1, 10]
     raster_paths:
-      - "../../../data/EarthEnv/topography/elevation_1KMmn_GMTEDmn.tif"
-      - "../../../data/EarthEnv/topography/slope_1KMmn_GMTEDmn.tif"
-      - "../../../data/EarthEnv/topography/roughness_1KMmn_GMTEDmn.tif"
-      - "../../../data/EarthEnv/topography/slope_1KMmn_GMTEDmn.tif"
+      - "../../../data/EarthEnv/topography/elevation_1KMmn_GMTEDmd.tif"
+      - "../../../data/EarthEnv/topography/slope_1KMmn_GMTEDmd.tif"
+      - "../../../data/EarthEnv/topography/roughness_1KMmn_GMTEDmd.tif"
+      - "../../../data/EarthEnv/topography/slope_1KMmn_GMTEDmd.tif"
     output_paths:
       - "../../../data/output/environment/topography_1km.parquet"
       - "../../../data/output/environment/topography_10km.parquet"

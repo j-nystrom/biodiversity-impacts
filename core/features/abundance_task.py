@@ -58,6 +58,7 @@ class AbundanceFeaturesTask:
         self.cols_to_keep: list[str] = configs.feature_engineering.cols_to_keep
         self.density_vars: list[str] = configs.feature_engineering.density_vars
         self.bioclim_vars: list[str] = configs.feature_engineering.bioclim_vars
+        self.topographic_vars: list[str] = configs.feature_engineering.topographic_vars
         self.land_use_col_order: list[str] = (
             configs.feature_engineering.land_use_col_order
         )
