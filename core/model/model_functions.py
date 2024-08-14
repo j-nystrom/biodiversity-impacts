@@ -203,6 +203,9 @@ def transform_response_variable(
         transformed_col_name = response_var + "_sqrt"
         df = df.with_columns(pl.col(response_var).sqrt().alias(transformed_col_name))
 
+    else:
+        transformed_col_name = response_var
+
     # Replace original column with transformed one, if the name has changed
     if transformed_col_name != response_var:
         original_col_index = df.columns.index(response_var)

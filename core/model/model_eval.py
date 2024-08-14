@@ -77,7 +77,7 @@ def make_predictions(
         trace: The trace object from the fitted model.
         mode: Whether to make predictions on the training or test data.
         data: The data to make predictions on. If mode is "train", there is no
-            need to pass data for the predictions.
+            additional effect of passing in this data.
 
     Returns:
         y_pred: The predicted values from the model.
@@ -100,7 +100,7 @@ def make_predictions(
                 {
                     "x_obs": data["x"],
                     "y_obs": data["y"],
-                    "biome_realm_idx": data["biome_realm_idx"],
+                    # "biome_realm_idx": data["biome_realm_idx"],
                     "biome_realm_eco_idx": data["biome_realm_eco_idx"],
                     "site_idx": data["site_idx"],
                 },
@@ -111,7 +111,6 @@ def make_predictions(
                 var_names=[
                     "y_like",
                     "alpha_eco_site",
-                    "alpha_realm_site",
                 ],
                 predictions=True,
                 extend_inferencedata=True,  # Modify the existing trace

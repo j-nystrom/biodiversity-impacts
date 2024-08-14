@@ -98,7 +98,7 @@ class ModelTrainingTask:
         }
 
         # Model specific configs
-        selected_model: str = configs.selected_model
+        selected_model: str = configs.model_settings.selected_model
         model_config = configs[selected_model]
         self.response_var: str = model_config.response_var
         self.response_var_transform: str = model_config.response_var_transform

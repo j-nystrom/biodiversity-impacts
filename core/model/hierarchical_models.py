@@ -116,6 +116,12 @@ class BiomeRealmEcoSlopeModel:
                 + pt.sum(x_obs * beta_eco[biome_realm_eco_idx], axis=1),
             )
 
+            # Ecoregion intercepts at the site level
+            # Used for final scaling of outputs (dividing prediction by intercept)
+            alpha_eco_site = pm.Deterministic(  # noqa: F841
+                "alpha_eco_site", alpha_eco[biome_realm_eco_idx]
+            )
+
             # Likelihood function
             y_like = pm.Normal(  # noqa: F841
                 "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"

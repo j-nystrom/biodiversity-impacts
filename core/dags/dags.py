@@ -62,6 +62,7 @@ class CrossValidationDAG(BaseDAG):
 
 
 # Mapping of DAG command line names to their corresponding classes
+# E.g. running python dags.py predicts will trigger the PredictsProcessingDAG
 dag_mapping = {
     "predicts": PredictsProcessingDAG,
     "population": PopulationDensityDAG,
