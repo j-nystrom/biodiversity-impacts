@@ -13,7 +13,7 @@ from core.data.data_processing import (
 )
 from core.utils.general_utils import create_logger
 
-# Load config file and set up logger
+# Load config file
 script_dir = os.path.dirname(os.path.abspath(__file__))
 configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
