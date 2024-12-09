@@ -36,6 +36,7 @@ class CombineDataTask:
                 each resolution (1, 10, 50 km).
             road_density_data: List of paths to road density data files, one
                 per UN region, with all resolutions.
+            bioclimatic_data:
             year_intervals: The year intervals that population data needs to be
                 interpolated between. The first year in PREDICTS is 1984 and
                 the last is 2018. Population data is available 2000, 2005, 2010,
@@ -45,8 +46,16 @@ class CombineDataTask:
             combined_data_file: Output path for the final combined file.
         """
         self.all_predicts_data: str = data_configs.predicts.all_predicts_data
-        self.pop_density_data: list[str] = data_configs.geodata.pop_density.output_paths
-        self.road_density_data: list[str] = data_configs.geodata.roads.road_density_data
+        self.pop_density_data: list[str] = (
+            data_configs.raster_data.pop_density.output_paths
+        )
+        self.road_density_data: list[str] = data_configs.roads.road_density_data
+        self.bioclimatic_data: list[str] = (
+            data_configs.raster_data.bioclimatic.output_paths
+        )
+        self.topographic_data: list[str] = (
+            data_configs.raster_data.topography.output_paths
+        )
         self.year_intervals: list[tuple[int, int]] = (
             configs.combined_data.year_intervals
         )
@@ -68,19 +77,48 @@ class CombineDataTask:
         logger.info("Starting process of merging different data sources.")
         start = time.time()
 
-        # Load PREDICTS and road density data
-        # NOTE: '__index_level_0__' is a pandas to polars artefact, should be
-        # fixed in the future
+        # Load PREDICTS data
         df_predicts = pl.read_parquet(self.all_predicts_data)
 
+        # Load road density data and concatenate
+        # NOTE: '__index_level_0__' is a pandas-polars artefact, to be removed
         df_road_density = pl.DataFrame()
         for path in self.road_density_data:
             df = pl.read_parquet(path).drop("__index_level_0__")
             df_road_density = pl.concat([df_road_density, df], how="vertical")
 
         # Join these two datasets together
-        df_predicts_roads = df_predicts.join(
+        df_combined = df_predicts.join(
             df_road_density, on="SSBS", how="left", validate="m:1"
+        )
+
+        # Load bioclimatic variables and join with the rest
+        df_bioclimatic = pl.DataFrame()
+        for i, path in enumerate(self.bioclimatic_data):
+            df = pl.read_parquet(path)
+            df = df.sort("SSBS")
+
+            # If not the first file, drop SSBS column to avoid duplicates
+            if i > 0:
+                df = df.drop("SSBS")
+            df_bioclimatic = pl.concat([df_bioclimatic, df], how="horizontal")
+
+        df_combined = df_combined.join(
+            df_bioclimatic, on="SSBS", how="left", validate="m:1"
+        )
+
+        # Do the same for topographic features
+        df_topography = pl.DataFrame()
+        for i, path in enumerate(self.topographic_data):
+            df = pl.read_parquet(path)
+            df = df.sort("SSBS")
+
+            if i > 0:
+                df = df.drop("SSBS")
+            df_topography = pl.concat([df_topography, df], how="horizontal")
+
+        df_combined = df_combined.join(
+            df_topography, on="SSBS", how="left", validate="m:1"
         )
 
         # The population data requires more processing, specifically doing
@@ -99,7 +137,7 @@ class CombineDataTask:
             pop_density_dfs.append(df_interpol)
 
         # Convert first df to datetime format, for joining with population data
-        df_predicts_roads = df_predicts_roads.with_columns(
+        df_combined = df_combined.with_columns(
             pl.col("Sample_midpoint")
             .str.to_datetime("%Y-%m-%d")
             .dt.year()
@@ -107,9 +145,8 @@ class CombineDataTask:
         )
 
         # Join the population densities of the year matching the sample year
-        df_all = df_predicts_roads.clone()
         for df in pop_density_dfs:
-            df_all = df_all.join(
+            df_combined = df_combined.join(
                 df,
                 how="left",
                 left_on=["SSBS", "Sample_year"],
@@ -117,7 +154,7 @@ class CombineDataTask:
             )
 
         # Write the final dataframe to file
-        df_all.write_parquet(self.combined_data_file)
+        df_combined.write_parquet(self.combined_data_file)
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Data merging finished in {runtime}.")
