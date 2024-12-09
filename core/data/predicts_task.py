@@ -11,11 +11,9 @@ from core.data.data_processing import (
 )
 from core.utils.general_utils import create_logger
 
-# Load the config file into box object; ensure that it can be found regardless
-# of where the module is loaded / run from
+# Load config file and set up logger
 script_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(script_dir, "data_configs.yaml")
-configs = Box.from_yaml(filename=config_path)
+configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
 logger = create_logger(__name__)
 
@@ -46,10 +44,11 @@ class PredictsProcessingTask:
         Orchestrate the processing of PREDICTS data, incl. loading,
         concatenating, generating site coordinates and saving dataframes.
 
-        This function performs the following steps: Loads the PREDICTS datasets
-        for 2016 and 2022; concatenates the datasets together; generates a
-        geodataframe with coordinates for each sampling site; and saves both
-        dataframes to disk.
+        This function performs the following steps
+        - Loads the PREDICTS datasets for 2016 and 2022
+        - Concatenates the datasets together
+        - Generates a geodataframe with coordinates for each sampling site
+        - Saves both dataframes to disk.
 
         TODO: Add asserts that check that the length of the generated frames
         are correct.

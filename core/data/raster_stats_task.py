@@ -10,11 +10,9 @@ from box import Box
 from core.data.data_processing import calculate_raster_stats
 from core.utils.general_utils import create_logger
 
-# Load the config file into box object; ensure that it can be found regardless
-# of where the module is loaded / run from
+# Load config file and set up logger
 script_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(script_dir, "data_configs.yaml")
-configs = Box.from_yaml(filename=config_path)
+configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
 logger = create_logger(__name__)
 
@@ -29,6 +27,8 @@ class CalculateRasterStatsTask:
     Future improvement: Separate non-overlapping and overlapping polygons.
     Process the first group using pygeoprocessing for increased speed. See:
     https://stackoverflow.com/questions/47471872/find-non-overlapping-polygons-in-geodataframe
+
+    TODO: Refactor to use polars instead of pandas
     """
 
     def __init__(self) -> None:
@@ -36,15 +36,15 @@ class CalculateRasterStatsTask:
         Attributes:
             all_site_coords: Geodataframe with coords of all sampling sites.
             global_site_polygons: List of shapefiles with buffered site
-                polygons at 1, 10, 50 km scales.
+                polygons at previously buffered scales.
         """
         self.all_site_coords: str = configs.predicts.all_site_coords
         self.global_site_polygons: str = configs.raster_data.global_site_polygons
 
     def run_mode(self, mode: str) -> None:
         """
-        Runs the calculation / extraction of statistics from one or several
-        pair of raster datasets and polygon shapefiles that overlap spatially.
+        Run the calculation / extraction of statistics from one or several
+        pairs of raster datasets and polygon shapefiles that overlap spatially.
         It's assumed that every combination of raster paths and polygon paths
         should be processed.
 
@@ -55,8 +55,8 @@ class CalculateRasterStatsTask:
         assert mode in [
             "pop_density",
             "bioclimatic",
-            "topography",
-        ], "'mode' needs to be in ['pop_density', 'bioclimatic', 'topography']"
+            "topographic",
+        ], "'mode' needs to be in ['pop_density', 'bioclimatic', 'topographic']"
         logger.info(f"Starting raster data extraction for mode {mode}.")
         start = time.time()
 
@@ -140,4 +140,4 @@ class TopographicFactorsTask(CalculateRasterStatsTask):
         super().__init__()
 
     def run_task(self) -> None:
-        self.run_mode(mode="topography")
+        self.run_mode(mode="topographic")

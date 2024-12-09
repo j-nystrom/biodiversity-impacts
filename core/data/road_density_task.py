@@ -13,11 +13,9 @@ from core.data.data_processing import (
 )
 from core.utils.general_utils import create_logger
 
-# Load the config file into box object; ensure that it can be found regardless
-# of where the module is loaded / run from
+# Load config file and set up logger
 script_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(script_dir, "data_configs.yaml")
-configs = Box.from_yaml(filename=config_path)
+configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
 logger = create_logger(__name__)
 
@@ -27,7 +25,8 @@ class RoadDensityTask:
     Task for calculating the road density inside sampling site polygons with
     varying radius.
 
-    NOTE: Should change pandas to polars at some point.
+    TODO: Refactor to use polars instead of pandas. Should also merge the
+    Oceania files here instead of in a separate notebook.
     """
 
     def __init__(self) -> None:
@@ -51,12 +50,14 @@ class RoadDensityTask:
 
     def run_task(self) -> None:
         """
-        Calculates the length of the intersection between each site polygon and
-        any adjacent road segments. Each shapefile with regional data on roads
-        is loaded; any MultiLineString is slit into individual LineStrings;
-        these are projected into local UTM format; the intersection between
-        sites in that region and all roads are calculated; and finally, one
-        file with road densities (lengths) per region is saved.
+        Calculate the length of the intersection between each site polygon and
+        any adjacent road segments:
+        - Each shapefile with regional data on roads is loaded
+        - Any MultiLineStrings are slit into individual LineStrings
+        - These are projected into local UTM format
+        - The intersection between sites in that region and all roads are
+            calculated
+        - Finally, one file with road densities (lengths) per region is saved.
         """
         logger.info("Starting road density calculation process.")
         start = time.time()

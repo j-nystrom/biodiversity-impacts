@@ -163,7 +163,7 @@ raster_data:
       - Precip_seasonality_10km
 
   # Topographic variables like elevation, slope, roughness
-  topography:
+  topographic:
     polygon_sizes: [1, 10]
     raster_paths:
       - "../../../data/EarthEnv/topography/elevation_1KMmn_GMTEDmd.tif"

@@ -8,11 +8,9 @@ from box import Box
 from core.data.data_processing import Projections, buffer_points_in_utm
 from core.utils.general_utils import create_logger
 
-# Load the config file into box object; ensure that it can be found regardless
-# of where the module is loaded / run from
+# Load config file and set up logger
 script_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(script_dir, "data_configs.yaml")
-configs = Box.from_yaml(filename=config_path)
+configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
 logger = create_logger(__name__)
 
@@ -39,11 +37,11 @@ class ProjectAndBufferTask:
 
     def run_task(self) -> None:
         """
-        Runs a sequence of functions to create polygons of different sizes from
-        point coordinates representing different sampling sites. Coordinates
-        are first projected from global EPSG:4326 to local UTM format. They are
-        then buffered into polygons. Finally, the polygon coordinates are
-        reprojected into the global format.
+        Run a sequence of functions to create polygons of different sizes from
+        point coordinates representing different sampling sites.
+        - Coordinates are projected from global EPSG:4326 to local UTM format.
+        - They are then buffered into polygons
+        - Finally, the polygon coordinates are reprojected into global format.
         """
         logger.info("Starting projection-buffering-reprojection of site coordinates.")
         start = time.time()
@@ -66,12 +64,11 @@ class ProjectAndBufferTask:
         logger.info("Finished local projections.")
 
         # Buffer polygons for each specified radius and append as new columns
-        # The list of distances are in km, hence the 1000 multiplication
         for dist in self.buffer_distances:
             gdf[f"utm_{dist}km"] = buffer_points_in_utm(
                 gdf["utm_coord"],
                 dist,
-                polygon_type="square",
+                polygon_type="square",  # TODO: Move this setting to config
             )
 
         # Reproject the polygons to global coordinate format

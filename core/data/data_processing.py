@@ -11,11 +11,9 @@ from shapely import LineString, MultiLineString, Point, Polygon
 
 from core.utils.general_utils import create_logger
 
-# Load the config file into box object; ensure that it can be found regardless
-# of where the module is loaded / run from
+# Load config file and set up logger
 script_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(script_dir, "data_configs.yaml")
-configs = Box.from_yaml(filename=config_path)
+configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
 logger = create_logger(__name__)
 
@@ -27,14 +25,14 @@ class Projections:
 
     The reason they are defined within a class unlike the rest of the data
     processing functions, is that already created transformer objects are
-    stored in instance attributes to speed up the processing.
+    stored as instance attributes to speed up the processing.
     """
 
     def __init__(self) -> None:
         """
         Attributes:
             utm_transformer_dict: For every new UTM zone code, the transformer
-                object for local projection is stored for future re-use when a
+                object for local projection is stored, for future re-use when a
                 new site in that zone is encountered.
             global_transformer_dict: Same, but for the reprojections.
         """
@@ -47,7 +45,8 @@ class Projections:
         """
         Calculates the local UTM zone for a Point or LineString that is given
         in the global EPSG:4326 format, and then transforms the geometry
-        coordinates into from global to local UTM format.
+        coordinates from global to local UTM format. Input coordinates must be
+        in EPSG:4326 format.
 
         Args:
             geometry: Coordinates of e.g. a sampling site or road segment.
@@ -61,6 +60,8 @@ class Projections:
         assert isinstance(
             geometry, (Point, LineString)
         ), "geometry should be a Point or LineString"
+
+        # TODO: Add check that input coordinates are in EPSG:4326 format  # noqa
 
         # Get the coordinate values (based on first point for Linestrings)
         first_point = geometry.coords[0]
@@ -93,7 +94,7 @@ class Projections:
 
     def reproject_to_global(self, polygon: Polygon, epsg_code: str) -> Polygon:
         """
-        Takes a Polygon defined by local UTM coordinates and reprojects it to
+        Take a Polygon defined by local UTM coordinates and reproject it to
         global EPSG:4326 coordinates.
 
         Args:
@@ -129,7 +130,7 @@ def buffer_points_in_utm(
     points: gpd.GeoSeries, buffer_dist: int, polygon_type: str = "square"
 ) -> gpd.GeoSeries:
     """
-    Creates a Polygon from Point coordinates, by buffering according to the
+    Create a Polygon from Point coordinates, by buffering according to the
     specified radius.
 
     Args:
@@ -142,7 +143,10 @@ def buffer_points_in_utm(
     Returns:
         utm_coords_buff: Polygons consisting of the buffered points.
     """
-    logger.info(f"Buffering Points into Polygons with radius {buffer_dist} km.")
+    logger.info(
+        f"Buffering Points into {polygon_type} Polygons"
+        f"with radius {buffer_dist} km."
+    )
     assert polygon_type in [
         "square",
         "round",
@@ -192,10 +196,9 @@ def concatenate_predicts_datasets(
     df_2022 = df_2022.select(df_2016.columns)
 
     # Append new data to old and then sort the columns in the right order
-    df_concat = pl.concat([df_2016, df_2022], how="vertical")
-
     # Ensure 'col_order' contains all columns present in the dataframe
     # and that 'col_order' doesn't contain any extra columns
+    df_concat = pl.concat([df_2016, df_2022], how="vertical")
     missing_cols = set(df_concat.columns) - set(col_order)
     if missing_cols:
         raise ValueError(f"Missing columns in 'col_order': {missing_cols}")
@@ -216,7 +219,7 @@ def concatenate_predicts_datasets(
 def create_site_coord_geometries(df_concat: pl.DataFrame) -> gpd.GeoDataFrame:
     """
     Generate a geodataframe with Point geometries for each unique site
-    based on longitude and latitude, and adds UN region information for
+    based on longitude and latitude, and add UN region information for
     filtering in other tasks.
 
     Args:
@@ -271,17 +274,17 @@ def create_site_coord_geometries(df_concat: pl.DataFrame) -> gpd.GeoDataFrame:
 def calculate_raster_stats(
     polygon_path: str,
     raster_path: str,
-    metric: list[str] = ["mean"],
+    metrics: list[str] = ["mean"],
     include_all_pixels: bool = True,
 ) -> list[float]:
     """
-    Computes statistical metrics for raster pixels that overlap with polygons
-    (representing sampling sites) that should be analyzed.
+    Compute statistical metrics for raster pixels that overlap with the
+    polygons (representing sampling sites) that should be analyzed.
 
     Args:
         polygon_path: Path to polygon shapefile with sampling sites.
         raster_path: Path to raster file containing data for extraction.
-        metric: Statistical metrics to compute.
+        metrics: Statistical metrics to compute. Defaults to 'mean'.
         include_all_pixels: Whether to include all pixels that touch the
             polygon boundaries, or just pixels with center points within it.
 
@@ -293,23 +296,23 @@ def calculate_raster_stats(
     stats = rasterstats.zonal_stats(
         vectors=polygon_path,
         raster=raster_path,
-        stats=metric,
+        stats=metrics,
         all_touched=include_all_pixels,
     )
 
     # Extract stats from each dictionary in the output list
-    result = [x[metric] for x in stats]
+    result = [x[metrics] for x in stats]
 
     return result
 
 
-def split_multi_line_strings(road_linestrings: gpd.GeoSeries) -> gpd.GeoDataFrame:
+def split_multi_line_strings(linestrings: gpd.GeoSeries) -> gpd.GeoDataFrame:
     """
     Checks a set of geometries that are expected to be Linestrings, and if
     necessary splits any geometries that turn out to be MultiLineStrings.
 
     Args:
-        road_linestrings: A set of geometries that can be a mix of Linestrings
+        linestrings: A set of geometries that can be a mix of Linestrings
             and MultiLineStrings.
 
     Returns:
@@ -318,7 +321,7 @@ def split_multi_line_strings(road_linestrings: gpd.GeoSeries) -> gpd.GeoDataFram
     """
 
     result = []
-    for geometry in road_linestrings:
+    for geometry in linestrings:
         if isinstance(geometry, MultiLineString):
             split_string = [LineString(string) for string in geometry.geoms]
             result += split_string
