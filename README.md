@@ -87,6 +87,71 @@ set PYTHONPATH=
 
 The project is currently set up to use local file storage on disk. For the code to run out of the box, it's important that the input and output data follow the structure shown below:
 
+```
+└── bayesian-biodiversity (*this is where the code is located*)
+└── data (*main data directory at the same level as the code*)
+    ├── PREDICTS
+    │   ├── PREDICTS_2016
+    │   │   ├── data.csv
+    │   ├── PREDICTS_2022
+    │   │   ├── data.csv
+    ├── EarthEnv
+    │   └── topography
+    │       ├── elevation_1KMmn_GMTEDmd.tif
+    │       ├── roughness_1KMmn_GMTEDmd.tif
+    │       ├── sdata201840.pdf
+    │       ├── slope_1KMmn_GMTEDmd.tif
+    │       └── tri_1KMmn_GMTEDmd.tif
+    ├── WorldClim
+    │   ├── Bioclimatic
+    │   │   ├── wc2.1_30s_bio_1.tif
+    │   │   ├── wc2.1_30s_bio_10.tif
+    │   │   ├── wc2.1_30s_bio_11.tif
+    │   │   ├── wc2.1_30s_bio_12.tif
+    │   │   ├── wc2.1_30s_bio_13.tif
+    │   │   ├── wc2.1_30s_bio_14.tif
+    │   │   ├── wc2.1_30s_bio_15.tif
+    │   │   ├── wc2.1_30s_bio_16.tif
+    │   │   ├── wc2.1_30s_bio_17.tif
+    │   │   ├── wc2.1_30s_bio_18.tif
+    │   │   ├── wc2.1_30s_bio_19.tif
+    │   │   ├── wc2.1_30s_bio_2.tif
+    │   │   ├── wc2.1_30s_bio_3.tif
+    │   │   ├── wc2.1_30s_bio_4.tif
+    │   │   ├── wc2.1_30s_bio_5.tif
+    │   │   ├── wc2.1_30s_bio_6.tif
+    │   │   ├── wc2.1_30s_bio_7.tif
+    │   │   ├── wc2.1_30s_bio_8.tif
+    │   │   └── wc2.1_30s_bio_9.tif
+    │   └── Elevation
+    │       └── wc2.1_30s_elev.tif
+    ├── GPW
+    │   ├── gpw_v4_2000_30_sec.tif
+    │   ├── gpw_v4_2005_30_sec.tif
+    │   ├── gpw_v4_2010_30_sec.tif
+    │   ├── gpw_v4_2015_30_sec.tif
+    │   ├── gpw_v4_2020_30_sec.tif
+    ├── gROADS
+    │   ├── africa
+    │   │   ├── gROADS-v1-africa.shp
+    │   ├── americas
+    │   │   ├── gROADS-v1-americas.shp
+    │   ├── asia
+    │   │   ├── gROADS-v1-asia.shp
+    │   ├── europe
+    │   │   ├── gROADS-v1-europe.shp
+    │   ├── oceania
+    │   │   ├── groads-v1-oceania.shp (note: merged outside of main code)
+    │   ├── oceania-east
+    │   │   ├── gROADS-v1-oceania-east.shp
+    │   ├── oceania-west
+    │   │   ├── gROADS-v1-oceania-west.shp
+    ├── output
+    ├── runs
+
+´´´
+
+
 ### Data sources
 
 *To be added*

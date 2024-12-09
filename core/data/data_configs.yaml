@@ -2,8 +2,8 @@
 # PREDICTS data and processing -------------------
 
 predicts:
-  predicts_2016_p: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
-  predicts_2022_path: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
+  predicts_2016: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
+  predicts_2022: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
   all_predicts_data: "../../../data/output/predicts/all_predicts.parquet"
   all_site_coords: "../../../data/output/site_coords/all_site_coords.shp"
 
