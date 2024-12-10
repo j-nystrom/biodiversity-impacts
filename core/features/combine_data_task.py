@@ -8,11 +8,9 @@ from box import Box
 from core.features.feature_engineering import interpolate_population_density
 from core.utils.general_utils import create_logger
 
-# Load the config file into box object; ensure that it can be found regardless
-# of where the module is loaded / run from
+# Load config file
 script_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(script_dir, "feature_configs.yaml")
-configs = Box.from_yaml(filename=config_path)
+configs = Box.from_yaml(filename=os.path.join(script_dir, "feature_configs.yaml"))
 
 # For this task we also need to access the 'data_configs.yaml' file
 project_dir = os.path.dirname(script_dir)  # Navigate up to the project root
@@ -24,8 +22,9 @@ logger = create_logger(__name__)
 
 class CombineDataTask:
     """
-    Task for creating a unified dataset from PREDICTS, population density and
-    road density data that was generated in the data pipeline.
+    Task for creating a unified dataset from PREDICTS, population density,
+    road density, bioclimatic variables and topographic variables that were
+    generated in the data pipeline.
     """
 
     def __init__(self, run_folder_path: str) -> None:
@@ -33,16 +32,18 @@ class CombineDataTask:
         Attributes:
             all_predicts_data: Path to file with concatenated PREDICTS data.
             pop_density_data: List of paths to population data files, one for
-                each resolution (1, 10, 50 km).
+                each resolution.
             road_density_data: List of paths to road density data files, one
                 per UN region, with all resolutions.
-            bioclimatic_data:
+            bioclimatic_data: List of paths to bioclimatic data files, one for
+                each resolution.
+            topegraphic_data: Same but for topographic factors.
             year_intervals: The year intervals that population data needs to be
                 interpolated between. The first year in PREDICTS is 1984 and
-                the last is 2018. Population data is available 2000, 2005, 2010,
-                2015 and 2020.
+                the last is 2018. Population data is available 2000, 2005,
+                2010, 2015 and 2020.
             pixel_resolution: The different resolutions of the population and
-                road denisyt data.
+                road density data.
             combined_data_file: Output path for the final combined file.
         """
         self.all_predicts_data: str = data_configs.predicts.all_predicts_data
@@ -64,15 +65,17 @@ class CombineDataTask:
 
     def run_task(self) -> None:
         """
-        Runs a sequence of steps to create the unified dataset:
-        1. PREDICTS data is loaded.
-        2. Road density data for each region is loaded and concatenated, then
-        joined with the PREDICTS data using site id ('SSBS') as key.
-        3. Population data for each resolution is loaded, and in-between years
-        are interpolated.
-        4. This is joined with the first dataframe using 'SSBS' and the
-        sampling year as join keys. This implies each site will have population
-        data matching the sampling year for that site / study.
+        Run a sequence of steps to create the unified dataset:
+        - PREDICTS data is loaded.
+        - Road density data for each region is loaded and concatenated, then
+            joined with the PREDICTS data using site id ('SSBS') as key.
+        - Bioclimatic and topographic data is loaded and joined to the
+            dataframe based on the site id.
+        - Population data for each resolution is loaded, and in-between years
+            are interpolated.
+        - This is joined with the first dataframe using 'SSBS' and the
+            sampling year as join keys. This implies each site will have
+            population data matching the sampling year for that site / study.
         """
         logger.info("Starting process of merging different data sources.")
         start = time.time()

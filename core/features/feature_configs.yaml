@@ -160,7 +160,6 @@ abundance:
     - Phylum
     - Class
     - Order
-    - Family
 
   abundance_data:
     - "../../../data/output/abundance/abundance_all_species.parquet"
@@ -168,4 +167,3 @@ abundance:
     - "../../../data/output/abundance/abundance_phylum.parquet"
     - "../../../data/output/abundance/abundance_class.parquet"
     - "../../../data/output/abundance/abundance_order.parquet"
-    - "../../../data/output/abundance/abundance_family.parquet"

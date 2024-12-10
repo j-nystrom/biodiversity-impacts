@@ -89,31 +89,6 @@ def interpolate_population_density(
     return df
 
 
-def filter_out_insufficient_data_studies(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Filters out observations where land-use or land-use intensity is not known.
-
-    Args:
-        df: Dataframe with all combined data from PREDICTS and other sources.
-
-    Returns:
-        df: Filtered version of the same dataframe.
-    """
-    logger.info("Filtering out n/a land-use and intensity.")
-
-    # Remove cases where land use or intensity is not known
-    df = df.filter(
-        ~(
-            (pl.col("Predominant_land_use") == "Cannot decide")
-            | (pl.col("Use_intensity") == "Cannot decide")
-        )
-    )
-
-    logger.info("Filtering completed.")
-
-    return df
-
-
 def calculate_study_mean_densities(
     df: pl.DataFrame, cols_to_incl: list[str]
 ) -> pl.DataFrame:
@@ -393,7 +368,7 @@ def transform_continuous_covariates(
     return df, new_cols
 
 
-def calculate_scaled_abundance(
+def calculate_total_abundance(
     df: pl.DataFrame, groupby_cols: list[str]
 ) -> pl.DataFrame:
     """
@@ -442,64 +417,16 @@ def calculate_scaled_abundance(
     return df_scaled
 
 
-def calculate_scaled_total_abundance(
-    df: pl.DataFrame, groupby_cols: list[str]
-) -> pl.DataFrame:
-    """
-    Calculates the total species abundance for each sampling site ('SSBS') at
-    a level of granularity defined by the grouping column input. This can range
-    from all species through Kingdom -> Phylum -> Class -> Order -> Family.
-    This abundance number is then scaled, by dividing with the maximum value
-    within that study.
-
-    Args:
-        df: Dataframe with all combined data from PREDICTS and other sources.
-        groupby_cols: The columns that together make up the groupby key.
-
-    Returns:
-        df_scaled: Updated df with abundance and scaled abundance columns.
-    """
-    logger.info("Calculating site-level scaled abundance numbers.")
-
-    # Filter dataframe to only contain abundance numbers
-    df = df.filter(pl.col("Diversity_metric_type") == "Abundance")
-
-    # Calculate abundance for this level of grouping
-    df_abundance = df.group_by(groupby_cols).agg(
-        pl.sum("Effort_corrected_measurement").alias("Abundance")
-    )
-
-    # Calculate the max abundance within each study at this grouping level
-    df_study_max = df_abundance.group_by("SS").agg(
-        pl.max("Abundance").alias("Study_max_abundance")
-    )
-
-    # Join the dataframes together
-    df_abundance = df_abundance.join(
-        df_study_max.select(["SS", "Study_max_abundance"]), on="SS", how="left"
-    )
-
-    # Perform max scaling
-    df_scaled = df_abundance.with_columns(
-        (pl.col("Abundance") / pl.col("Study_max_abundance")).alias(
-            "Max_scaled_abundance"
-        )
-    )
-
-    logger.info("Abundance calculations finished.")
-
-    return df_scaled
-
-
-def calculate_scaled_mean_abundance(
-    df: pl.DataFrame, groupby_cols: list[str]
-) -> pl.DataFrame:
+def calculate_mean_abundance(df: pl.DataFrame, groupby_cols: list[str]) -> pl.DataFrame:
     """
     Calculates the mean species abundance for each sampling site ('SSBS') at
     a level of granularity defined by the grouping column input. This can range
     from all species through Kingdom -> Phylum -> Class -> Order -> Family.
     This abundance number is then scaled, by dividing with the maximum value
     within that study.
+
+    Note that this definition of mean abundance is different from the MSA
+    metric used in the GLOBIO model (which is a beta diversity metric).
 
     Args:
         df: Dataframe with all combined data from PREDICTS and other sources.
@@ -541,7 +468,7 @@ def calculate_scaled_mean_abundance(
     return df_scaled
 
 
-def calculate_scaled_species_richness(
+def calculate_species_richness(
     df: pl.DataFrame, groupby_cols: list[str]
 ) -> pl.DataFrame:
     """
@@ -581,5 +508,83 @@ def calculate_scaled_species_richness(
     )
 
     logger.info("Species richness calculations finished.")
+
+    return df_scaled
+
+
+def calculate_shannon_index(df: pl.DataFrame, groupby_cols: list[str]) -> pl.DataFrame:
+    """
+    Calculates the Shannon diversity indecx for each sampling site ('SSBS') at
+    a level of granularity defined by the grouping column input. This can range
+    from all species through Kingdom -> Phylum -> Class -> Order -> Family.
+    This abundance number is then scaled, by dividing with the maximum value
+    within that study.
+
+    The formula for the Shannon index is: H = -sum(p_i * ln(p_i)), where p_i
+    is the proportion of species i at the site.
+
+    Args:
+        df: Dataframe with all combined data from PREDICTS and other sources.
+        groupby_cols: The columns that together make up the groupby key.
+
+    Returns:
+        df_scaled: Updated df with mean abundance and scaled mean abundance
+            columns.
+    """
+    logger.info("Calculating site-level Shannon index numbers.")
+
+    # Filter dataframe to only contain abundance numbers
+    df = df.filter(pl.col("Diversity_metric_type") == "Abundance")
+
+    # Calculate abundance for this level of grouping
+    df_abundance = df.group_by(groupby_cols).agg(
+        pl.sum("Effort_corrected_measurement").alias("Site_abundance"),
+        pl.n_unique("Taxon_name_entered").alias("Taxon_count"),
+    )
+
+    # Calculating relative abundance
+    df_rel_abundance = df_abundance.with_columns(
+        pl.when(pl.col("Site_abundance") == 0)
+        .then(0)
+        .otherwise(pl.col("Effort_corrected_measurement") / pl.col("Site_abundance"))
+        .alias("Relative_abundance")
+    )
+
+    # Calculating Shannon component per species with explicit handling for
+    # single-taxon sites
+    df_rel_abundance = df_rel_abundance.with_columns(
+        pl.when(pl.col("Taxon_count") == 1)  # Explicitly handle single-taxon sites
+        .then(0)
+        .when(pl.col("Relative_abundance") == 0)
+        .then(0)
+        .otherwise(
+            -pl.col("Relative_abundance")
+            * pl.col("Relative_abundance").log().fill_nan(0)
+        )
+        .alias("Shannon_component")
+    )
+
+    # Sum up the Shannon components to get the index for each site
+    df_shannon = df_rel_abundance.group_by(["SS", "SSBS"]).agg(
+        pl.sum("Shannon_component").alias("Shannon_index")
+    )
+
+    df_study_max = df_shannon.group_by("SS").agg(
+        pl.max("Shannon_index").alias("Study_max_Shannon")
+    )
+
+    # Join the dataframes together
+    df_shannon = df_shannon.join(
+        df_study_max.select(["SS", "Study_max_Shannon"]), on="SS", how="left"
+    )
+
+    # Perform max scaling
+    df_scaled = df_shannon.with_columns(
+        (pl.col("Shannon_index") / pl.col("Study_max_Shannon")).alias(
+            "Max_scaled_Shannon_index"
+        )
+    )
+
+    logger.info("Shannon index calculations finished.")
 
     return df_scaled
