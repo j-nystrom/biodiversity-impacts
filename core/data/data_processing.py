@@ -162,68 +162,17 @@ def buffer_points_in_utm(
     return utm_coords_buffered
 
 
-def concatenate_predicts_datasets(
-    df_2016: pl.DataFrame, df_2022: pl.DataFrame, col_order: list[str]
-) -> pl.DataFrame:
-    """
-    Concatenate the two PREDICTS datasets, ensuring identical column
-    structures and specified order.
-
-    Args:
-        df_2016: Dataframe with the PREDICTS dataset from 2016.
-        df_2022: Dataframe with the PREDICTS dataset from 2022.
-        col_order: Column order in the concatenated dataframe.
-
-    Returns:
-        df_concat: Concatenated dataframe with ordered columns.
-
-    Raises:
-        ValueError: If 'col_order' has extra or missing columns from the
-            concatenated dataframe.
-    """
-    logger.info("Concatenating the PREDICTS datasets.")
-
-    # Find out if there are any columns that are not overlapping
-    unique_cols_2016 = list(set(df_2016.columns) - set(df_2022.columns))
-    unique_cols_2022 = list(set(df_2022.columns) - set(df_2016.columns))
-    all_unique_cols = unique_cols_2016 + unique_cols_2022
-
-    # Drop non-overlapping columns from both dataframes
-    df_2016 = df_2016.drop(all_unique_cols)
-    df_2022 = df_2022.drop(all_unique_cols)
-
-    # Make sure we have the same column order in both
-    df_2022 = df_2022.select(df_2016.columns)
-
-    # Append new data to old and then sort the columns in the right order
-    # Ensure 'col_order' contains all columns present in the dataframe
-    # and that 'col_order' doesn't contain any extra columns
-    df_concat = pl.concat([df_2016, df_2022], how="vertical")
-    missing_cols = set(df_concat.columns) - set(col_order)
-    if missing_cols:
-        raise ValueError(f"Missing columns in 'col_order': {missing_cols}")
-
-    extra_cols = set(col_order) - set(df_concat.columns)
-    if extra_cols:
-        raise ValueError(f"Extra columns in 'col_order': {extra_cols}")
-
-    # Reorder the columns according to 'col_order', and sort data by 'SSBS'
-    df_concat = df_concat.select(col_order)
-    df_concat = df_concat.sort("SSBS", descending=False)
-
-    logger.info("Finished concatenating datasets.")
-
-    return df_concat
-
-
-def create_site_coord_geometries(df_concat: pl.DataFrame) -> gpd.GeoDataFrame:
+def create_site_coord_geometries(self, df: pl.DataFrame) -> gpd.GeoDataFrame:
     """
     Generate a geodataframe with Point geometries for each unique site
     based on longitude and latitude, and add UN region information for
     filtering in other tasks.
 
+    NOTE: This must be made more generic if expanding data to GBIF.
+
     Args:
-        df_concat: The concatenated PREDICTS data.
+        df: Dataframe with sampling data containing longitude and latitude
+            of sampling sites.
 
     Returns:
         gdf_site_coords: Geodataframe with Point coordinates and region
@@ -232,10 +181,10 @@ def create_site_coord_geometries(df_concat: pl.DataFrame) -> gpd.GeoDataFrame:
     logger.info("Creating Point geometries for sampling site coordinates.")
 
     # Get the coordinates for each unique site in the dataset
-    df_long_lat = df_concat.groupby("SSBS").agg(
+    df_long_lat = df.group_by("SSBS").agg(
         [
-            pl.col("Longitude").first().alias("Longitude"),
-            pl.col("Latitude").first().alias("Latitude"),
+            pl.first("Longitude"),
+            pl.first("Latitude"),
         ]
     )
 
@@ -245,27 +194,28 @@ def create_site_coord_geometries(df_concat: pl.DataFrame) -> gpd.GeoDataFrame:
         df_long_lat.get_column("Latitude").to_list(),
     )
 
-    # Create shapely Point geometries for all coordinates
+    # Create Point geometries for coordinates and put into dataframe
     geometry = [Point(x, y) for x, y in coordinates]
-
-    # Create a geodataframe containing site id and coordinates
     gdf_site_coords = gpd.GeoDataFrame(
         {"SSBS": df_long_lat.get_column("SSBS"), "geometry": geometry}
     )
-    gdf_site_coords.crs = "EPSG:4326"
+    gdf_site_coords.crs = self.site_coords_crs
 
     # Add the UN region to enable filtering when working with the geodata
     df_region = (
-        df_concat.groupby("SSBS").agg(pl.col("UN_region").first()).to_pandas()
+        df.group_by("SSBS").agg(pl.first("UN_region")).to_pandas()
     )  # Need to convert to pandas to be compatible with geopandas
 
-    # Make sure column 'SSBS' is a string, then merge the dataframes, and
-    # finally sort it
-    gdf_site_coords = gdf_site_coords.merge(
-        df_region, on="SSBS", how="left", validate="1:1"
+    # Join the dataframes on the SSBS column and sort by SSBS
+    gdf_site_coords = gdf_site_coords.join(
+        df_region.set_index("SSBS"), on="SSBS", how="left", validate="1:1"
     )
-    gdf_site_coords = gdf_site_coords.sort_values("SSBS", ascending=True)
+    gdf_site_coords["SSBS"] = gdf_site_coords["SSBS"].astype(str)
+    gdf_site_coords = gdf_site_coords.sort_values("SSBS", ascending=True).reset_index(
+        drop=True
+    )
 
+    logger.info(f"Shape of GeoDataFrame: {gdf_site_coords.shape}")
     logger.info("Finished creating Point geometries.")
 
     return gdf_site_coords

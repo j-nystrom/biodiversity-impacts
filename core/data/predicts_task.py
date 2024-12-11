@@ -14,7 +14,7 @@ configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 logger = create_logger(__name__)
 
 
-class PredictsProcessingTask:
+class PredictsConcatenationTask:
     """
     Task for loading and concatenating the two PREDICTS datasets from 2016 and
     2022 and ensuring consistency between them.
@@ -22,8 +22,8 @@ class PredictsProcessingTask:
     Potential (unit) tests (to be implemented):
     - Check that the concatenated dataframe has the same number of rows as
         the sum of the two original dataframes.
-    - Test the consistent column logic
-    - Check that rows in the geodataframe match the number of unique sites
+    - Test the consistent column logic.
+    - Check that rows in the geodataframe match the number of unique sites.
     """
 
     def __init__(self, run_folder_path: str) -> None:
@@ -78,7 +78,7 @@ class PredictsProcessingTask:
         Args:
             df_2016: Dataframe with the PREDICTS dataset from 2016.
             df_2022: Dataframe with the PREDICTS dataset from 2022.
-            col_order: Column order in the final concatenated dataframe.
+            col_order: Desired column order in concatenated dataframe.
 
         Returns:
             df_concat: Concatenated dataframe with ordered columns.
