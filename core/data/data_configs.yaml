@@ -1,4 +1,9 @@
 
+# Configuration file for the Tasks and methods in the data processing pipeline
+# This includes all the scripts in the 'data' folder
+# The output file paths are also used in the feature engineering pipeline
+# (scripts in the 'features' folder)
+
 # PREDICTS data processing --------------------------------------
 
 predicts:
@@ -153,7 +158,7 @@ raster_data:
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_15.tif"  # Precipitation Seasonality
     output_paths:
       - "../../../data/output/environment/bioclimatic_1km.parquet"
-      - "../../../data/output/environment/bioclimatic_5km.parquet"
+      #- "../../../data/output/environment/bioclimatic_5km.parquet"
       - "../../../data/output/environment/bioclimatic_10km.parquet"
     agg_settings:
       metrics: mean
@@ -194,7 +199,7 @@ raster_data:
       - "../../../data/EarthEnv/topography/tri_1KMmn_GMTEDmd.tif"  # Terrain ruggedness index
     output_paths:
       - "../../../data/output/environment/topography_1km.parquet"
-      - "../../../data/output/environment/topography_5km.parquet"
+      #- "../../../data/output/environment/topography_5km.parquet"
       - "../../../data/output/environment/topography_10km.parquet"
     agg_settings:
       metrics: mean
@@ -215,6 +220,7 @@ raster_data:
 
 
 # Road network data processing --------------------------------------
+
 road_density:
   polygon_sizes_km: [1, 10, 50]
   input_shapefile_paths:  # Input paths for road network shapefiles

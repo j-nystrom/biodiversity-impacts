@@ -18,18 +18,12 @@ class PredictsConcatenationTask:
     """
     Task for loading and concatenating the two PREDICTS datasets from 2016 and
     2022 and ensuring consistency between them.
-
-    Potential (unit) tests (to be implemented):
-    - Check that the concatenated dataframe has the same number of rows as
-        the sum of the two original dataframes.
-    - Test the consistent column logic.
-    - Check that rows in the geodataframe match the number of unique sites.
     """
 
     def __init__(self, run_folder_path: str) -> None:
         """
         Attributes:
-            run_folder_path: Folder where logs and certain outputs are stored.
+            run_folder_path: Folder for storing logs and certain outputs.
             predicts_2016_path: Path to the PREDICTS 2016 data.
             predicts_2022_path: Path to the PREDICTS 2022 data.
             output_col_order: Desired column order in concatenated dataframe.
