@@ -21,10 +21,10 @@ predicts:
   - Block
   - Site_number
   - Site_name
-  - SS
+  - SS  # Study
   - SSS
-  - SSB
-  - SSBS
+  - SSB  # Study and spatial block
+  - SSBS  # Study, spatial block and site
   - Longitude
   - Latitude
   - Coordinates_method
@@ -88,7 +88,7 @@ predicts:
 site_geodata:
   polygon_sizes_km: [1, 5, 10, 50] # Must match ALL buffer sizes below
   polygon_type: square  # Type of site polygon, either 'square' or 'circle'
-  site_coords_crs: "EPSG:4326"  # Reference system of site coordinates 
+  site_coords_crs: "EPSG:4326"  # Reference system of site coordinates
   site_coords_path: "../../../data/output/site_coords/all_site_coords.shp"
   global_polygon_paths:  # Output paths of buffered polygons in global format
     - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
@@ -110,7 +110,7 @@ raster_data:
 
   # Population density data
   pop_density:
-    polygon_sizes_km: [1, 10, 50] 
+    polygon_sizes_km: [1, 10, 50]
     input_raster_paths:  # Raster data input paths
       - "../../../data/GPW/gpw_v4_2000_30_sec.tif"  # Year 2000
       - "../../../data/GPW/gpw_v4_2005_30_sec.tif"  # Year 2005
@@ -152,7 +152,7 @@ raster_data:
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_4.tif"  # Temperature Seasonality
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_5.tif"  # Max Temperature of Warmest Month
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_6.tif"  # Min Temperature of Coldest Month
-      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_12.tif"  # Annual Precipitation 
+      - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_12.tif"  # Annual Precipitation
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_13.tif"  # Precipitation of Wettest Month
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_14.tif"  # Precipitation of Driest Month
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_15.tif"  # Precipitation Seasonality

@@ -44,3 +44,14 @@ repos:
     hooks:
       - id: pyupgrade
         args: ["--py38-plus"]
+
+# pytest for running tests
+  #- repo: local
+    #hooks:
+      #- id: pytest
+        #name: pytest
+        #entry: pytest
+        #language: system
+        #types: [python]
+        #pass_filenames: false
+        #always_run: true

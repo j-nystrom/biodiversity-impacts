@@ -3,16 +3,23 @@ import time
 from datetime import timedelta
 from typing import Union
 
-import polars as pl
 import geopandas as gpd
+import polars as pl
 import shapely
+from box import Box
 from pyproj import CRS, Transformer
 from shapely import LineString, Point, Polygon
-from box import Box
 
+from core.tests.data.validate_data import (
+    validate_site_coordinate_data,
+    validate_site_geometry_output,
+)
+from core.tests.shared.validate_shared import (
+    validate_input_files,
+    validate_output_files,
+)
 from core.utils.general_utils import create_logger
 
-# Load config file
 script_dir = os.path.dirname(os.path.abspath(__file__))
 configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
@@ -27,24 +34,25 @@ class SiteBufferingTask:
     achieve equal-sized polygons around each site, later used for extracting
     various features from raster data and shapefiles.
 
-    Note: This can be applied to other input data than PREDICTS, as long as
+    NOTE: This can be applied to other input data than PREDICTS, as long as
     it contains site coordinates in a specified reference format.
     """
 
-    def __init__(self, run_folder_path) -> None:
+    def __init__(self, run_folder_path: str) -> None:
         """
         Attributes:
-            run_folder_path: Folder where logs and certain outputs are stored.
-            predicts_data_path: Path to the concatenated PREDICTS dataset.
-            polygon_sizes_km: List of polygon sizes (radius, in km) that should
-                be used in buffering.
-            site_coords_crs: Reference system for site coordinates in df above.
-            site_coords_path: Output path for site coordinates (non-buffered).
-            global_polygon_paths: Output paths of polygons in global format.
-            utm_polygon_paths: Output paths of polygons in UTM format.
+            - run_folder_path: Folder for storing logs and certain outputs.
+            - predicts_data_path: Path to the concatenated PREDICTS dataset.
+            - polygon_sizes_km: List of polygon sizes (radius, in km) that
+                should be used in buffering.
+            - site_coords_crs: Reference system for coordinates in df above.
+            - site_coords_path: Output path for site coordinates (non-buffered)
+                which is an interim output in this step.
+            - global_polygon_paths: Output paths of polygons in global format.
+            - utm_polygon_paths: Output paths of polygons in UTM format.
 
         Raises:
-            ValueError: If the site_coords_crs is not EPSG:4326.
+             - ValueError: If the site_coords_crs is not EPSG:4326.
         """
         self.run_folder_path = run_folder_path
         self.predicts_data_path: str = configs.predicts.merged_data_path
@@ -60,21 +68,25 @@ class SiteBufferingTask:
 
     def run_task(self) -> None:
         """
-        The following key processing steps are performed:
-        - Sampling site coordinates are extracted from the concatenated
-            PREDICTS dataframe, and saved as an interim output.
-        - Coordinates are projected from global EPSG:4326 to local UTM format.
-        - They are then buffered into polygons based on the specified polygon
-            sizes in 'polygon_sizes_km'.
-        - Finally, the polygon coordinates are reprojected into global format.
+        Perform the following processing steps:
+            - Sampling site coordinates are extracted from the concatenated
+                PREDICTS dataframe, and saved as an interim output.
+            - Coords are projected from global EPSG:4326 to local UTM format.
+            - They are then buffered into polygons based on the specified
+                polygon sizes in 'polygon_sizes_km'.
+            - The polygon coordinates are reprojected into global format.
         """
         logger.info("Starting projection-buffering-reprojection of site coordinates.")
         start = time.time()
 
-        # Read df with sites, extract site coordinates and save interim data
+        # Read df with sites and extract site coordinates
+        validate_input_files(file_paths=[self.predicts_data_path])
         df_with_sites = pl.read_parquet(self.predicts_data_path)
-        gdf_coords = self.create_site_coord_geometries(
-            df_with_sites, crs=self.site_coords_crs
+        gdf_coords = self.create_site_coord_geometries(df_with_sites)
+
+        # Save the site coordinates to file
+        validate_output_files(
+            file_paths=[self.site_coords_path], files=[gdf_coords], allow_overwrite=True
         )
         gdf_coords.to_file(self.site_coords_path)
 
@@ -98,7 +110,7 @@ class SiteBufferingTask:
         for dist in self.polygon_sizes_km:
             gdf_coords[f"utm_{dist}km"] = self.buffer_points_in_utm(
                 gdf_coords["utm_coords"],
-                buffer_dist=dist,
+                polygon_size=dist,
                 polygon_type=self.polygon_type,
             )
         logger.info("Finished buffering.")
@@ -118,72 +130,62 @@ class SiteBufferingTask:
         # Save one shapefile for each buffer distance in UTM and global formats
         for dist, path in zip(self.polygon_sizes_km, self.global_polygon_paths):
             gdf_res = gpd.GeoDataFrame(
-                gdf_coords[["SSBS", "UN_region", f"glob_{dist}km"]],
+                gdf_coords[["SSBS", f"glob_{dist}km"]],
                 geometry=f"glob_{dist}km",
             )
             # Save to file, using Fiona engine to avoid issues with missing CRS
             # This is not an issue as files are only used internally, and there
             # is no easy way of setting this for the UTM files
+            validate_output_files(
+                file_paths=[path], files=[gdf_res], allow_overwrite=True
+            )
             gdf_res.to_file(path, engine="fiona")
 
         for dist, path in zip(self.polygon_sizes_km, self.utm_polygon_paths):
             gdf_res = gpd.GeoDataFrame(
-                gdf_coords[["SSBS", "UN_region", f"utm_{dist}km"]],
+                gdf_coords[["SSBS", f"utm_{dist}km"]],
                 geometry=f"utm_{dist}km",
+            )
+            validate_output_files(
+                file_paths=[path], files=[gdf_res], allow_overwrite=True
             )
             gdf_res.to_file(path, engine="fiona")
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Projection-buffering-reprojection finished in {runtime}.")
 
-    def create_site_coord_geometries(
-        self, df: pl.DataFrame, crs: str
-    ) -> gpd.GeoDataFrame:
+    def create_site_coord_geometries(self, df: pl.DataFrame) -> gpd.GeoDataFrame:
         """
         Generate a geodataframe with Point geometries for each unique site
-        based on longitude and latitude, and add UN region information for
-        filtering in other tasks.
+        based on longitude and latitude.
 
         NOTE: This should be made more generic if expanding data to GBIF.
 
         Args:
-            df: Dataframe with sampling data containing longitude and latitude
-                of sampling sites.
-            crs: Reference system for site coordinates in the dataframe.
+            - df: Dataframe with sampling data containing longitude and
+                latitude of sampling sites.
 
         Returns:
-            gdf_site_coords: Geodataframe with Point coordinates and region
-                information for each sampling site.
+            - gdf_site_coords: Geodataframe with point coordinates for each
+                sampling site.
 
         Raises:
-            ValueError: If the input dataframe is missing required columns or
+            - ValueError: If the input dataframe is missing required columns or
                 has rows with missing coordinates.
         """
         logger.info("Creating Point geometries for sampling site coordinates.")
 
         # Check that the input data is valid
-        required_columns = ["SSBS", "Longitude", "Latitude", "UN_region"]
-        missing_cols = set(required_columns) - set(df.columns)
-        if missing_cols:
-            raise ValueError(f"Missing required columns in input data: {missing_cols}")
-        invalid_coords = df.filter(
-            pl.col("Longitude").is_null() | pl.col("Latitude").is_null()
-        )
-        if not invalid_coords.is_empty():
-            raise ValueError(
-                f"Input DataFrame contains rows with missing coordinates. "
-                f"Invalid rows: {invalid_coords}"
-            )
+        required_columns = ["SSBS", "Longitude", "Latitude"]
+        validate_site_coordinate_data(df, required_columns)
 
-        # Get the coordinates for each unique site in the dataset
+        # Get the coordinates for each unique site and generate coord tuples
         df_long_lat = df.group_by("SSBS").agg(
             [
                 pl.first("Longitude"),
                 pl.first("Latitude"),
             ]
         )
-
-        # Generate coordinate tuples from the long-lat columns
         coordinates = zip(
             df_long_lat.get_column("Longitude").to_list(),
             df_long_lat.get_column("Latitude").to_list(),
@@ -191,60 +193,53 @@ class SiteBufferingTask:
 
         # Create Point geometries for coordinates and put into dataframe
         geometry = [Point(x, y) for x, y in coordinates]
-        gdf_coords = gpd.GeoDataFrame(
-            {"SSBS": df_long_lat.get_column("SSBS"), "geometry": geometry}
-        ).set_crs(crs)
-
-        # Add the UN region to enable filtering when working with the geodata
-        # TODO: Should be moved to where it's actually used
-        df_region = (
-            df.group_by("SSBS").agg(pl.first("UN_region")).to_pandas()
-        )  # Need to convert to pandas to be compatible with geopandas
-
-        # Join the dataframes on the SSBS column and sort by SSBS
-        gdf_coords = gdf_coords.join(
-            df_region.set_index("SSBS"), on="SSBS", how="left", validate="1:1"
-        )
-        gdf_coords["SSBS"] = gdf_coords["SSBS"].astype(str)
-        gdf_coords = gdf_coords.sort_values("SSBS", ascending=True).reset_index(
-            drop=True
+        gdf_coords = (
+            gpd.GeoDataFrame(
+                {"SSBS": df_long_lat.get_column("SSBS"), "geometry": geometry}
+            )
+            .set_crs(self.site_coords_crs)
+            .sort_values("SSBS", ascending=True)
+            .reset_index(drop=True)
         )
 
-        logger.info(f"Shape of GeoDataFrame: {gdf_coords.shape}")
+        # Validate the output GeoDataFrame
+        validate_site_geometry_output(gdf_coords, self.site_coords_crs)
+
         logger.info("Finished creating Point geometries.")
 
         return gdf_coords
 
     def buffer_points_in_utm(
-        self, points: gpd.GeoSeries, buffer_dist: int, polygon_type: str = "square"
+        self, points: gpd.GeoSeries, polygon_size: int, polygon_type: str = "square"
     ) -> gpd.GeoSeries:
         """
         Create a Polygon from Point coordinates, by creating a buffer around it
         according to the specified radius.
 
         Args:
-            points: A GeoSeries with all the points that should be buffered into
-                Polygons.
-            buffer_dist: Buffer radius expressed in kilometers.
-            polygon_type: The shape of the buffered Polygon. Can be any of
+            - points: Geoseries with points to be buffered into polygons.
+            - polygon_size: The radius of the current buffer in km.
+            - polygon_type: The shape of the buffered Polygon. Can be any of
                 ['square', 'round', 'flat']. Defaults to 'square'.
 
         Returns:
-            utm_coords_buff: Polygons consisting of the buffered points.
+            - utm_coords_buff: Polygons consisting of the buffered points.
 
         Raises:
-            ValueError: If polygon_type is not one of the specified options.
+            - ValueError: If polygon_type is not one of the specified options.
         """
         logger.info(
-            f"Buffering Points into {polygon_type} Polygons"
-            f"with radius {buffer_dist} km."
+            f"Buffering Points into {polygon_type} polygons "
+            f"with radius {polygon_size} km."
         )
         if polygon_type not in ["square", "round", "flat"]:
-            raise ValueError("polygon_type must be one of ['square', 'round', 'flat']")
+            raise ValueError(
+                "'polygon_type' must be one of ['square', 'round', 'flat']"
+            )
 
         # Buffer array of Points into the chosen size and type
         utm_coords_buffered = shapely.buffer(
-            points, buffer_dist * 1000, cap_style=polygon_type
+            points, polygon_size * 1000, cap_style=polygon_type
         )
         logger.info("Finished buffering points.")
 
@@ -261,10 +256,10 @@ class Projections:
     stored as instance attributes to speed up the processing.
     """
 
-    def __init__(self, input_crs) -> None:
+    def __init__(self, input_crs: str) -> None:
         """
         Attributes:
-            input_crs: Reference system for site coordinates being processed.
+            - input_crs: Reference system for site coordinates being processed.
             utm_transformer_dict: For every new UTM zone code, the transformer
                 object for local projection is stored, for future re-use when a
                 new site in that zone is encountered.
