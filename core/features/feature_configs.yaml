@@ -80,7 +80,7 @@ feature_generation:
     - Terrain_roughness_10km
     - Terrain_ruggedness_index_10km
 
-  density_vars:  # Columns related to population and road density 
+  density_vars:  # Columns related to population and road density
     - Pop_density_1km
     - Pop_density_10km
     - Pop_density_50km
@@ -116,7 +116,7 @@ feature_generation:
     - Terrain_roughness_10km
     - Terrain_ruggedness_index_10km
 
-  land_use_col_order:  # Desired order of land use types, least to most disturbed 
+  land_use_col_order:  # Desired order of land use types, least to most disturbed
     - Primary vegetation
     - Young secondary vegetation
     - Intermediate secondary vegetation
@@ -156,7 +156,7 @@ feature_generation:
     - Urban_Light use
     - Urban_Intense use
 
-  secondary_veg_col_order:  # Same, but for grouping all secondary vegetation types 
+  secondary_veg_col_order:  # Same, but for grouping all secondary vegetation types
     - Secondary vegetation_Minimal use
     - Secondary vegetation_Light use
     - Secondary vegetation_Intense use
@@ -171,7 +171,7 @@ diversity_metrics:
   # All diversity metrics are calculated at the site level, hence the first set
   # of groupby columns. For each of the taxonomic levels below, one dataframe
   # is created (i.e. each frame has a different level of granularity)
-  groupby_cols: [SS, SSB, SSBS]  
+  groupby_cols: [SS, SSB, SSBS]
   taxonomic_levels:
     - Kingdom
     - Phylum
@@ -190,4 +190,4 @@ diversity_metrics:
     - "../../../data/output/beta_diversity/beta_kingdom.parquet"
     - "../../../data/output/beta_diversity/beta_phylum.parquet"
     - "../../../data/output/beta_diversity/beta_class.parquet"
-    - "../../../data/output/beta_diversity/beta_order.parquet"    
+    - "../../../data/output/beta_diversity/beta_order.parquet"
