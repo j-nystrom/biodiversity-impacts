@@ -4,7 +4,8 @@
 # The output file paths are also used in the feature engineering pipeline
 # (scripts in the 'features' folder)
 
-# PREDICTS data processing --------------------------------------
+
+# PredictsConcatenationTask --------------------------------------
 
 predicts:
   predicts_2016_path: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
@@ -83,7 +84,7 @@ predicts:
   - Years_since_fragmentation_or_conversion
 
 
-# Site geodata processing --------------------------------------
+# SiteBufferingTask --------------------------------------
 
 site_geodata:
   polygon_sizes_km: [1, 5, 10, 50] # Must match ALL buffer sizes below
@@ -102,13 +103,13 @@ site_geodata:
     - "../../../data/output/buff_polygons/utm_buff_polygons_50km.shp"
 
 
-# Raster data processing --------------------------------------
+# CalculateRasterStatsTask --------------------------------------
 
+# Each of the following sections specifies settings for processing a certain
+# raster data set (.tif files). They all follow the same structure
 raster_data:
-  # Each of the following sections specifies settings for processing a certain
-  # raster data set (.tif files). They all follow the same structure
 
-  # Population density data
+  # Mode: Population density data
   pop_density:
     polygon_sizes_km: [1, 10, 50]
     input_raster_paths:  # Raster data input paths
@@ -144,7 +145,7 @@ raster_data:
       - Pop_density_50km_2015
       - Pop_density_50km_2020
 
-  # Bioclimatic variables based on temperature and precipitation
+  # Mode: Bioclimatic variables based on temperature and precipitation
   bioclimatic:
     polygon_sizes_km: [1, 5, 10]
     input_raster_paths:
@@ -189,7 +190,7 @@ raster_data:
       - Precip_driest_month_10km
       - Precip_seasonality_10km
 
-  # Topographic variables like elevation, slope, roughness
+  # Mode: Topographic variables like elevation, slope, roughness
   topographic:
     polygon_sizes_km: [1, 5, 10]
     input_raster_paths:
@@ -219,7 +220,7 @@ raster_data:
       - Terrain_ruggedness_index_10km
 
 
-# Road network data processing --------------------------------------
+# RoadDensityTask --------------------------------------
 
 road_density:
   polygon_sizes_km: [1, 10, 50]

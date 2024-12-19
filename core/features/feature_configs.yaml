@@ -1,8 +1,11 @@
 
 # Configuration file for the Tasks and methods in the feature pipeline
 # This includes all the scripts in the 'features' folder
+# The output file paths are also used in the model pipeline (scripts in the
+# 'model' folder)
 
-# Combining input data --------------------------------------
+
+# CombineDataTask --------------------------------------
 
 combine_data:
   year_intervals:  # Intervals for which population data should be interpolated
@@ -13,7 +16,8 @@ combine_data:
     - [2015, 2020]
   combined_data_path: "../../../data/output/combined/combined_data.parquet"
 
-# Feature generation steps --------------------------------------
+
+# GenerateFeaturesTask --------------------------------------
 
 feature_generation:
   cols_to_keep:  # Non-essential columns are dropped to reduce dataframe size
@@ -165,7 +169,8 @@ feature_generation:
   feature_data_path: "../../../data/output/features/feature_data.parquet"
 
 
-# Alpha / beta diversity calculations --------------------------------------
+# AlphaDiversityTask --------------------------------------
+# BetaDiversityTask --------------------------------------
 
 diversity_metrics:
   # All diversity metrics are calculated at the site level, hence the first set
@@ -178,16 +183,17 @@ diversity_metrics:
     - Class
     - Order
 
-  alpha_data_paths:
-    - "../../../data/output/alpha_diversity/alpha_all_species.parquet"
-    - "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
-    - "../../../data/output/alpha_diversity/alpha_phylum.parquet"
-    - "../../../data/output/alpha_diversity/alpha_class.parquet"
-    - "../../../data/output/alpha_diversity/alpha_order.parquet"
+  output_data_paths:
+    alpha:
+      All_species: "../../../data/output/alpha_diversity/alpha_all_species.parquet"
+      Kingdom: "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
+      Phylum: "../../../data/output/alpha_diversity/alpha_phylum.parquet"
+      Class: "../../../data/output/alpha_diversity/alpha_class.parquet"
+      Order: "../../../data/output/alpha_diversity/alpha_order.parquet"
 
-  beta_data_paths:
-    - "../../../data/output/beta_diversity/beta_all_species.parquet"
-    - "../../../data/output/beta_diversity/beta_kingdom.parquet"
-    - "../../../data/output/beta_diversity/beta_phylum.parquet"
-    - "../../../data/output/beta_diversity/beta_class.parquet"
-    - "../../../data/output/beta_diversity/beta_order.parquet"
+    beta:
+      All_species: "../../../data/output/beta_diversity/beta_all_species.parquet"
+      Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
+      Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
+      Class: "../../../data/output/beta_diversity/beta_class.parquet"
+      Order: "../../../data/output/beta_diversity/beta_order.parquet"

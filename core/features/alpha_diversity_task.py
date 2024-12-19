@@ -55,7 +55,9 @@ class AlphaDiversityTask:
         self.feature_data_path: str = configs.feature_generation.feature_data_path
         self.groupby_cols: list[str] = configs.diversity_metrics.groupby_cols
         self.taxonomic_levels: list[str] = configs.diversity_metrics.taxonomic_levels
-        self.output_data_paths: list[str] = configs.diversity_metrics.alpha_data_paths
+        self.output_data_paths: list[str] = (
+            configs.diversity_metrics.output_data_paths.alpha
+        )
 
     def run_task(self) -> None:
         """
