@@ -24,6 +24,7 @@ feature_generation:
     - SS  # Original PREDICTS columns
     - SSB
     - SSBS
+    - Block
     - Longitude
     - Latitude
     - Country
@@ -34,6 +35,8 @@ feature_generation:
     - Ecoregion
     - Wilderness_area
     - Hotspot
+    - Study_common_taxon
+    - Rank_of_study_common_taxon
     - Sample_midpoint
     - Sampling_method
     - Sampling_effort

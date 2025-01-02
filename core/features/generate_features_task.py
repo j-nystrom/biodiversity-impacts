@@ -89,9 +89,6 @@ class GenerateFeaturesTask:
         df = self.combine_land_use_intensity_columns(df)
         df = self.group_land_use_types_and_intensities(df)
 
-        # Combine biogeographical variables (biome, realm and ecoregion)
-        df = GenerateFeaturesTask.combine_biogeographical_variables(df)
-
         # Generate non-linear transformations for population and road density
         # NOTE: Consider doing this for bioclimatic and topographic variables
         df, new_cols = self.transform_continuous_covariates(df)
@@ -307,38 +304,6 @@ class GenerateFeaturesTask:
         logger.info("Finished creating transformations.")
 
         return df, new_cols
-
-    @staticmethod
-    def combine_biogeographical_variables(df: pl.DataFrame) -> pl.DataFrame:
-        """
-        Combines the biome and realm columns into one column, as well as the
-        biome, realm and ecoregion columns into one column.
-
-        Args:
-            - df: Dataframe containing 'Biome', 'Realm', 'Ecoregion' columns.
-
-        Returns:
-            - df_res: Updated df with the combined columns added.
-        """
-        logger.info("Combining biogeographical variables.")
-
-        # Combine biome and realm columns
-        df_res = df.with_columns(
-            pl.concat_str([pl.col("Biome"), pl.col("Realm")], separator="_").alias(
-                "Biome_Realm"
-            )
-        )
-
-        # Combine biome, realm and ecoregion columns
-        df_res = df_res.with_columns(
-            pl.concat_str(
-                [pl.col("Biome"), pl.col("Realm"), pl.col("Ecoregion")], separator="_"
-            ).alias("Biome_Realm_Ecoregion")
-        )
-
-        logger.info("Finished combining biogeographical variables.")
-
-        return df
 
     @staticmethod
     def calculate_study_mean_densities(

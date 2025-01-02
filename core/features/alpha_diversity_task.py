@@ -55,7 +55,7 @@ class AlphaDiversityTask:
         self.feature_data_path: str = configs.feature_generation.feature_data_path
         self.groupby_cols: list[str] = configs.diversity_metrics.groupby_cols
         self.taxonomic_levels: list[str] = configs.diversity_metrics.taxonomic_levels
-        self.output_data_paths: list[str] = (
+        self.output_data_paths: dict[str, str] = (
             configs.diversity_metrics.output_data_paths.alpha
         )
 
@@ -72,7 +72,7 @@ class AlphaDiversityTask:
 
         # Iterate through all taxonomic levels, starting with all species
         # In the first iteration, 'SS', 'SSB' and 'SSBS' is used for grouping
-        for i, path in enumerate(self.output_data_paths):
+        for i, path in enumerate(self.output_data_paths.values()):
             logger.info(
                 f"Calculating at the following aggregation level: {self.groupby_cols}"
             )
@@ -138,7 +138,7 @@ class AlphaDiversityTask:
                 break
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
-        logger.info(f"Abundance calculations finished in {runtime}.")
+        logger.info(f"Alpha diversity calculations finished in {runtime}.")
 
     def calculate_total_abundance(self, df: pl.DataFrame) -> pl.DataFrame:
         """Calculate the sum of the abundance of all species in each group."""
@@ -352,7 +352,7 @@ class AlphaDiversityTask:
             .otherwise(
                 pl.col(diversity_metric) / pl.col(f"Study_max_{diversity_metric}")
             )
-            .alias(f"Max_scaled_{diversity_metric}")
+            .alias(f"Scaled_{diversity_metric}")
         )
 
         logger.info(f"Finished scaling {diversity_metric}.")
