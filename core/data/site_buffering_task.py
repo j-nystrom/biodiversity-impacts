@@ -43,12 +43,16 @@ class SiteBufferingTask:
         Attributes:
             - run_folder_path: Folder for storing logs and certain outputs.
             - predicts_data_path: Path to the concatenated PREDICTS dataset.
+            - site_required_cols: Required columns to create site coords df.
             - polygon_sizes_km: List of polygon sizes (radius, in km) that
-                should be used in buffering.
+                should be used for buffering.
+            - polygon_type: The shape of the buffered polygons. Can be any of
+                ['square', 'round', 'flat'].
             - site_coords_crs: Reference system for coordinates in df above.
             - site_coords_path: Output path for site coordinates (non-buffered)
                 which is an interim output in this step.
-            - global_polygon_paths: Output paths of polygons in global format.
+            - global_polygon_paths: Output paths of buffered polygons in global
+                format.
             - utm_polygon_paths: Output paths of polygons in UTM format.
 
         Raises:
@@ -56,6 +60,7 @@ class SiteBufferingTask:
         """
         self.run_folder_path = run_folder_path
         self.predicts_data_path: str = configs.predicts.merged_data_path
+        self.site_required_cols: list[str] = configs.site_geodata.site_required_cols
         self.polygon_sizes_km: list[int] = configs.site_geodata.polygon_sizes_km
         self.polygon_type: str = configs.site_geodata.polygon_type
         self.site_coords_crs: str = configs.site_geodata.site_coords_crs
@@ -159,7 +164,8 @@ class SiteBufferingTask:
         Generate a geodataframe with Point geometries for each unique site
         based on longitude and latitude.
 
-        NOTE: This should be made more generic if expanding data to GBIF.
+        NOTE: This should be made more generic if expanding data to GBIF. This
+        mainly concerns consistent, generic column names.
 
         Args:
             - df: Dataframe with sampling data containing longitude and
@@ -176,8 +182,7 @@ class SiteBufferingTask:
         logger.info("Creating Point geometries for sampling site coordinates.")
 
         # Check that the input data is valid
-        required_columns = ["SSBS", "Longitude", "Latitude"]
-        validate_site_coordinate_data(df, required_columns)
+        validate_site_coordinate_data(df, required_columns=self.site_required_cols)
 
         # Get the coordinates for each unique site and generate coord tuples
         df_long_lat = df.group_by("SSBS").agg(
@@ -203,7 +208,7 @@ class SiteBufferingTask:
         )
 
         # Validate the output GeoDataFrame
-        validate_site_geometry_output(gdf_coords, self.site_coords_crs)
+        validate_site_geometry_output(gdf_coords, expected_crs=self.site_coords_crs)
 
         logger.info("Finished creating Point geometries.")
 

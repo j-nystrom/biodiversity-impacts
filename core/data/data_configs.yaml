@@ -87,6 +87,7 @@ predicts:
 # SiteBufferingTask --------------------------------------
 
 site_geodata:
+  site_required_cols: [SSBS, Longitude, Latitude]  # Columns required for site data
   polygon_sizes_km: [1, 5, 10, 50] # Must match ALL buffer sizes below
   polygon_type: square  # Type of site polygon, either 'square' or 'circle'
   site_coords_crs: "EPSG:4326"  # Reference system of site coordinates

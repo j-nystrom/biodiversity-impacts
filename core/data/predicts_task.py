@@ -23,6 +23,9 @@ class PredictsConcatenationTask:
     """
     Task for loading and concatenating the two PREDICTS datasets from 2016 and
     2022 and ensuring consistency between them.
+
+    NOTE: To streamline model analysis, it would make sense to save key
+    information about each site in a separate dataframe.
     """
 
     def __init__(self, run_folder_path: str) -> None:
@@ -43,15 +46,16 @@ class PredictsConcatenationTask:
     def run_task(self) -> None:
         """
         Perform the following processing steps:
-            - Load the PREDICTS datasets for 2016 and 2022
+            - Load the PREDICTS datasets for 2016 and 2022.
             - Concatenate the datasets together, ensuring that all columns are
-                consistent and in the correct order
-            - Save dataframe as a parquet file
+                consistent and in the correct order.
+            - Save dataframe as a parquet file.
         """
         logger.info("Starting processing of PREDICTS data.")
         start = time.time()
 
-        # Number of rows to read to infer schema, to speed up reading
+        # Number of rows used to infer the schema, to speed up reading
+        # This was implmented as there were some issues reading the files
         read_kwargs = {"infer_schema_length": 100000, "null_values": ["NA"]}
 
         # Read and concatenate the two PREDICTS datasets
@@ -87,15 +91,11 @@ class PredictsConcatenationTask:
         structures and specified order.
 
         Args:
-            df_2016: Dataframe with the PREDICTS dataset from 2016.
-            df_2022: Dataframe with the PREDICTS dataset from 2022.
+            - df_2016: Dataframe with the PREDICTS dataset from 2016.
+            - df_2022: Dataframe with the PREDICTS dataset from 2022.
 
         Returns:
-            df_concat: Concatenated dataframe with ordered columns.
-
-        Raises:
-            ValueError: If 'col_order' has extra or missing columns compared to
-                the concatenated dataframe.
+            - df_concat: Concatenated dataframe with ordered columns.
         """
         logger.info("Concatenating the PREDICTS datasets.")
 
@@ -112,6 +112,7 @@ class PredictsConcatenationTask:
             df_2016 = df_2016.drop(all_unique_cols, strict=False)  # Ignore missing cols
             df_2022 = df_2022.drop(all_unique_cols, strict=False)
 
+        # Use 2016 columns as reference for which columns to pick
         df_2022 = df_2022.select(df_2016.columns)
 
         # Append new data to the old df, then sort columns in the right order
