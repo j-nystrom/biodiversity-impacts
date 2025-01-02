@@ -1,5 +1,5 @@
 import argparse
-from typing import Type
+from typing import Optional, Type
 
 from core.utils.general_utils import create_logger, create_run_folder_path
 
@@ -12,13 +12,22 @@ class BaseDAG:
     that runs all the Tasks of a DAG in sequence.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, mode: Optional[str] = None) -> None:
+        """
+        Args:
+            mode: Optional mode to pass to tasks (e.g., "training", "crossval").
+        """
         self.tasks: list = []
         self.run_folder_path = create_run_folder_path()
+        self.mode = mode
 
     def run_dag(self) -> None:
         for task in self.tasks:
-            task_instance = task(self.run_folder_path)
+            # Pass `mode` to tasks if they expect it
+            if self.mode:
+                task_instance = task(self.run_folder_path, mode=self.mode)
+            else:
+                task_instance = task(self.run_folder_path)
             task_instance.run_task()
 
 
