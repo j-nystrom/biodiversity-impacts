@@ -10,9 +10,8 @@ from core.data.site_buffering_task import SiteBufferingTask
 from core.features.alpha_diversity_task import AlphaDiversityTask
 from core.features.combine_data_task import CombineDataTask
 from core.features.generate_features_task import GenerateFeaturesTask
-from core.model.crossval_task import CrossValidationTask
 from core.model.model_data_task import ModelDataTask
-from core.model.training_task import ModelTrainingTask
+from core.model.training_crossval_task import CrossValidationTask, ModelTrainingTask
 
 
 class PredictsProcessingDAG(BaseDAG):
