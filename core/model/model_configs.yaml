@@ -63,8 +63,8 @@ model_settings:
 # Refer to PyMC documentation for all settings:
 # https://www.pymc.io/projects/docs/en/stable/api/generated/pymc.sample.html
 sampler_settings:
-  draws: 1000
-  tune: 10000
+  draws: 500
+  tune: 1000
   cores: 4
   chains: 4
   target_accept: 0.99
@@ -160,7 +160,7 @@ model_2:
   interaction_cols:
     - Pop_density_50km_log
     - Road_density_50km_cbrt
-  response_var_transform: null  # [adjust, sqrt, logit, null]
+  response_var_transform: sqrt  # [adjust, sqrt, logit, null]
 
 # Simplified land-use variables (no distinction between intensities)
 model_3:
