@@ -203,15 +203,20 @@ def calculate_performance_metrics(
     if pred_type == "state":
         # Observed values
         y_true = df.get_column("Observed").to_numpy()
+        y_true_trans = df.get_column("Observed_transformed").to_numpy()
 
         # Predicted values
         if model_type == "bayesian":
             y_pred = df.get_column("Predicted").to_numpy()
+            y_pred_trans = df.get_column("Predicted_transformed").to_numpy()
         elif model_type == "lmm" and mode == "training":
             y_pred = df.get_column("Predicted_RE").to_numpy()
+            y_pred_trans = df.get_column("Predicted_RE_transformed").to_numpy()
         elif model_type == "lmm" and mode == "crossval":
             y_pred = df.get_column("Predicted_FE").to_numpy()
+            y_pred_trans = df.get_column("Predicted_FE_transformed").to_numpy()
             y_pred_re = df.get_column("Predicted_RE").to_numpy()
+            y_pred_trans_re = df.get_column("Predicted_RE_transformed").to_numpy()
 
     elif pred_type == "change":
         # Observed changes
@@ -236,10 +241,21 @@ def calculate_performance_metrics(
 
     # Calculate overall metrics
     r2_std = r2_score(y_true, y_pred)
+    if pred_type == "state":
+        r2_std_trans = r2_score(y_true_trans, y_pred_trans)
+
     if model_type == "lmm" and mode == "crossval":
         r2_var = np.var(y_pred) / (np.var(y_pred_re) + np.var(y_true - y_pred))
+        if pred_type == "state":
+            r2_var_trans = np.var(y_pred_trans) / (
+                np.var(y_pred_trans_re) + np.var(y_true_trans - y_pred_trans)
+            )
     else:
         r2_var = np.var(y_pred) / (np.var(y_pred) + np.var(y_true - y_pred))
+        if pred_type == "state":
+            r2_var_trans = np.var(y_pred_trans) / (
+                np.var(y_pred_trans) + np.var(y_true_trans - y_pred_trans)
+            )
 
     mean_abs_error = mean_absolute_error(y_true, y_pred)
     median_abs_error = median_absolute_error(y_true, y_pred)
@@ -257,6 +273,12 @@ def calculate_performance_metrics(
         f" - Spearman rank correlation: {spearman_corr:.3f}\n"
         f" - Bias ratio (pred/obs): {bias_metrics['overall_bias_ratio']:.3f}\n"
     )
+    if pred_type == "state":
+        logger.info(
+            "\n"
+            f" - R2 (std, not back-transformed): {r2_std_trans:.3f}\n"
+            f" - R2 (var expl, not back-transformed): {r2_var_trans:.3f}\n"
+        )
 
     # Metrics for bottom quartile
     bottom_quartile_true = y_true[bottom_indices]
