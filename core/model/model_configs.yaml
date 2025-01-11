@@ -1,188 +1,242 @@
-# Geographical and taxonomic scope -------------------
 
-# Taxonomic granularity per survey site. All_species implies one aggregate
-# number / row per site, otherwise there are multiple rows per site
-taxonomic_resolution: All_species  # [All_species, Kingdom, Phylum, Class, Order, Family]
-abundance_data:
-  All_species: "../../../data/output/abundance/abundance_all_species.parquet"
-  Kingdom: "../../../data/output/abundance/abundance_kingdom.parquet"
-  Phylum: "../../../data/output/abundance/abundance_phylum.parquet"
-  Class: "../../../data/output/abundance/abundance_class.parquet"
-  Order: "../../../data/output/abundance/abundance_order.parquet"
-  Family: "../../../data/output/abundance/abundance_family.parquet"
+# Configuration file for the Tasks and methods in the model pipeline(s)
+# This includes all the scripts in the 'model' folder and subfolders
 
-# TODO: Remove if not needed
-group_vars:
-  - SS
-  - SSB
-  - SSBS
-  - Biome
-  - Realm
-  - Ecoregion
-  - Biome_Realm
-  - Biome_Realm_Ecoregion
+# Data type and scope -------------------
 
-# These columns are added as grouping variables, depending on taxonomic scope
-# (need to include the levels above the chosen one)
-taxonomic_vars:
-  All_species: []
-  Kingdom: [Kingdom]
-  Phylum: [Kingdom, Phylum]
-  Class: [Kingdom, Phylum, Class]
-  Order: [Kingdom, Phylum, Class, Order]
-  Family: [Kingdom, Phylum, Class, Order, Family]
+diversity_type: alpha  # [alpha, beta]
+data_scope:  # Biogeographic and taxonomic scope on which to train model
+  biogeographic:
+    include_all: True  # True if global scope, False if non-global
+    filtering_logic: include  # Either include or exclude biomes listed below
+    filtering_dicts:  # Only applicable if global is False
+      Biome:  # Include / exclude the following biomes
+        - Tropical & Subtropical Moist Broadleaf Forests
+        - Tropical & Subtropical Dry Broadleaf Forests
+        - Tropical & Subtropical Coniferous Forests
 
-# Biomes, regions and taxa need to be listed explicitly, matching the scope
-# TODO: Make species part more automated if more granular scopes are to be used
-scope:
-  geographic:
-    Biome:
-      - Tropical & Subtropical Moist Broadleaf Forests
-      - Tropical & Subtropical Dry Broadleaf Forests
-      - Tropical & Subtropical Coniferous Forests
-    UN_region: [Americas, Asia, Europe, Oceania, Africa]  # Americas, Asia, Europe, Oceania, Africa
-  species:
-    All_species: []  # No need to specify groups for all species
-    Kingdom:
-      - Animalia
-      - Plantae
-      - Fungi
-    Phylum: []
-    Class: []
-    Order: []
-    Family: []
+  taxonomic:
+    include_all: True  # True if all species in scope, False if not
+    filtering_logic: include
+    filtering_dicts:
+      All_species: []  # No need to specify groups for 'All_species'
+      Kingdom:  # Include / exclude the following species groups
+        - Animalia
+        - Plantae
+        - Fungi
+      Phylum: []  # Must be specified if building a model at these levels
+      Class: []
+      Order: []
+      Family: []
 
-# Model specification and sampler settings -------------------
+# Run and model structure settings -------------------
 
-# Chosen model configuration from the options listed below
-model_settings:
-  selected_model: model_2  # [bii_ref_model, model_1, model_2, model_3]
-  model_spec: biome_realm_eco_slope  # Model object in hierarchical_models.py
-  group_size_threshold: 10  # Minimum observations per group (e.g. ecoregion)
+run_settings:
+  model_type: lmm  # [bayesian, lmm]
+  model_variables: bii_ref_model  # See below for model configurations
+  group_size_threshold: 10  # If 0 there is no filtering by group size
+  threshold_on_groups: [Biome, Realm, Ecoregion]
 
-# Refer to PyMC documentation for all settings:
-# https://www.pymc.io/projects/docs/en/stable/api/generated/pymc.sample.html
-sampler_settings:
-  draws: 1000
-  tune: 10000
-  cores: 4
-  chains: 4
-  target_accept: 0.99
-  nuts_sampler: "numpyro"  # [numpyro, pymc], numpyro is faster
+  # Structural settings for Bayesian hierarchical models
+  bayesian:
+    likelihood: gaussian  # [gaussian, beta]
+    hierarchical_levels: 3  # Number of hierarchical levels: [1, 2, 3]
+    most_granular_slope_level: 3  # Lowest level at which varying slopes are estimated
+    hierarchy:  # Columns that define hierarchy; levels below the nb above are ignored
+      level_1: [Biome]
+      level_2: [Realm]
+      level_3: [Ecoregion]
+    taxonomic_resolution: All_species  # Must match lowest taxonomic level in hierarchy
 
-cross_validation:
+    prior_values:  # See model definition for where they are used
+      intercept_hyperprior_mean: 0.3
+      coef_prior_var: 0.1
+      gaussian_noise: 0.1
+      alpha_var_param: 2
+      beta_var_param: 2
+
+    sampler:  # Refer to PyMC documentation for all settings
+      draws: 50
+      tune: 50
+      cores: 4
+      chains: 4
+      target_accept: 0.99
+      nuts_sampler: numpyro  # [numpyro, pymc], numpyro is generally faster
+
+  # Structural settings for linear mixed models
+  lmm:
+    taxonomic_resolution: All_species  # BII model always uses 'All_species'
+    random_effects_type: correlated  # [independent, correlated]
+
+    study_effects:  # Random effects at the study level
+      type: slope  # [intercept, slope]
+      slopes:
+        - Primary vegetation_Light use
+        - Primary vegetation_Intense use
+        - Secondary vegetation_Minimal use
+        - Secondary vegetation_Light use
+        - Secondary vegetation_Intense use
+        - Cropland_Minimal use
+        - Cropland_Light_Intense
+        - Pasture_Minimal use
+        - Pasture_Light_Intense
+        - Urban_All uses
+
+    block_effects:  # Random effects at the block level
+      type: intercept  # [intercept, slope]
+      slopes: []
+
+    solver:
+      conf_int: Wald  # [boot, Wald]
+      nsim: 100  # Number of simulations for bootstrapping
+      summary: False  # Print summary of model fit and statistics
+      REML: True  # Fit using restricted maximum likelihood
+
+# Cross-validation settings -------------------
+
+cv_settings:
+  random_seed: 42  # Seed for reproducibility
   k: 5  # Number of folds
-  stratify: True  # Use stratified sampling for k-folds
-  stratify_groups: [Biome_Realm_Ecoregion]  # Variable to stratify on
+  strategy: random  # [random, spatial, environmental]
+  stratify_groups:  # Variable to stratify on
+    - Biome
+    - Realm
+    - Ecoregion
+  clustering_method: kmeans  # Only relevant if strategy != random; [kmeans, gmm]
+  clustering_vars:
+    spatial:  # For spatial cross-validation
+      - Longitude
+      - Latitude
+    environmental:  # For environmental cross-validation
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_10km
+      - Terrain_roughness_1km
 
-# Model config that matches LMM implementation in DePalma et al 2021
-bii_ref_model:
-  response_var: Max_scaled_abundance
-  categorical_vars:
-    - Primary vegetation_Light use
-    - Primary vegetation_Intense use
-    - Secondary vegetation_Minimal use
-    - Secondary vegetation_Light use
-    - Secondary vegetation_Intense use
-    - Cropland_Minimal use
-    - Cropland_Light_Intense
-    - Pasture_Minimal use
-    - Pasture_Light_Intense
-    - Urban_All uses
-  continuous_vars:
-    - Pop_density_1km_log
-    - Road_density_50km_cbrt
-    - Mean_pop_density_1km_log
-  interaction_cols:
-    - Pop_density_1km_log
-    - Road_density_50km_cbrt
-  response_var_transform: null  # [adjust, sqrt, logit, null]
+# Candidate model configurations -------------------
 
-# Bioclimatic and topographic variables added to the reference model
-model_1:
-  response_var: Max_scaled_abundance
-  filter_small_groups: True
-  categorical_vars:
-    - Primary vegetation_Light use
-    - Primary vegetation_Intense use
-    - Secondary vegetation_Minimal use
-    - Secondary vegetation_Light use
-    - Secondary vegetation_Intense use
-    - Cropland_Minimal use
-    - Cropland_Light_Intense
-    - Pasture_Minimal use
-    - Pasture_Light_Intense
-    - Urban_All uses
-  continuous_vars:
-    - Pop_density_1km_log
-    - Pop_density_50km_log
-    - Road_density_1km_cbrt
-    - Road_density_50km_cbrt
-    - Annual_mean_temp_1km
-    - Temp_seasonality_1km
-    - Annual_precip_1km
-    - Precip_seasonality_1km
-    - Elevation_10km
-    - Terrain_roughness_1km
-  interaction_cols:
-    - Pop_density_50km_log
-    - Road_density_50km_cbrt
-  response_var_transform: sqrt  # [adjust, sqrt, logit, null]
+model_variables:
 
-# More granular land-use categories (no grouping of light and intense use)
-model_2:
-  response_var: Max_scaled_abundance
-  filter_small_groups: True
-  categorical_vars:
-    - Primary vegetation_Light use
-    - Primary vegetation_Intense use
-    - Secondary vegetation_Minimal use
-    - Secondary vegetation_Light use
-    - Secondary vegetation_Intense use
-    - Cropland_Minimal use
-    - Cropland_Light use
-    - Cropland_Intense use
-    - Pasture_Minimal use
-    - Pasture_Light use
-    - Pasture_Intense use
-    - Urban_All uses
-  continuous_vars:
-    - Pop_density_1km_log
-    - Pop_density_50km_log
-    - Road_density_1km_cbrt
-    - Road_density_50km_cbrt
-    - Annual_mean_temp_1km
-    - Temp_seasonality_1km
-    - Annual_precip_1km
-    - Precip_seasonality_1km
-    - Elevation_10km
-    - Terrain_roughness_1km
-  interaction_cols:
-    - Pop_density_50km_log
-    - Road_density_50km_cbrt
-  response_var_transform: null  # [adjust, sqrt, logit, null]
+  # BII reference model, based on DePalma et al 2021
+  bii_ref_model:
+    response_var: Scaled_Total_abundance
+    response_var_transform: sqrt  # [adjust, sqrt, logit, null]
+    requires_intensity_data: True
+    categorical_vars:
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_Minimal use
+      - Secondary vegetation_Light use
+      - Secondary vegetation_Intense use
+      - Cropland_Minimal use
+      - Cropland_Light_Intense
+      - Pasture_Minimal use
+      - Pasture_Light_Intense
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_1km_log
+      - Road_density_50km_cbrt
+      - Mean_pop_density_1km_log
+    interaction_cols:
+      - Pop_density_1km_log
+      - Road_density_50km_cbrt
 
-# Simplified land-use variables (no distinction between intensities)
-model_3:
-  response_var: Max_scaled_abundance
-  filter_small_groups: True
-  categorical_vars:
-    - Secondary vegetation_All uses
-    - Cropland
-    - Pasture
-    - Urban_All uses
-  continuous_vars:
-    - Pop_density_1km_log
-    - Pop_density_50km_log
-    - Road_density_1km_cbrt
-    - Road_density_50km_cbrt
-    - Annual_mean_temp_1km
-    - Temp_seasonality_1km
-    - Annual_precip_1km
-    - Precip_seasonality_1km
-    - Elevation_10km
-    - Terrain_roughness_1km
-  interaction_cols:
-    - Pop_density_50km_log
-    - Road_density_50km_cbrt
-  response_var_transform: sqrt  # [adjust, sqrt, logit, null]
+  # Bayesian hierarchical reference model
+  bayesian_thesis_ref_model:
+    response_var: Scaled_Total_abundance
+    response_var_transform: null  # [adjust, sqrt, logit, null]
+    requires_intensity_data: True
+    categorical_vars:
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_Minimal use
+      - Secondary vegetation_Light use
+      - Secondary vegetation_Intense use
+      - Cropland_Minimal use
+      - Cropland_Light use
+      - Cropland_Intense use
+      - Pasture_Minimal use
+      - Pasture_Light use
+      - Pasture_Intense use
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_1km_log
+      - Pop_density_50km_log
+      - Road_density_1km_cbrt
+      - Road_density_50km_cbrt
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_10km
+      - Terrain_roughness_1km
+    interaction_cols:
+      - Pop_density_50km_log
+      - Road_density_50km_cbrt
+
+  # Bayesian hierarchical base model
+  bayesian_base_model:
+    response_var: Scaled_modified_Shannon_index
+    response_var_transform: null  # [adjust, sqrt, logit, null]
+    requires_intensity_data: False
+    categorical_vars:
+      - Secondary vegetation_All uses
+      - Cropland
+      - Pasture
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_1km_log
+      - Pop_density_50km_log
+      - Road_density_1km_cbrt
+      - Road_density_50km_cbrt
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_10km
+      - Terrain_roughness_1km
+    interaction_cols:
+      - Pop_density_50km_log
+      - Road_density_50km_cbrt
+
+# Data grouping variables -------------------
+
+group_vars:
+  basic:
+    - SS
+    - SSB
+    - SSBS
+  biogeographic:
+    - Biome
+    - Realm
+    - Ecoregion
+  taxonomic:
+    All_species: []
+    Kingdom: [Kingdom]
+    Phylum: [Kingdom, Phylum]
+    Class: [Kingdom, Phylum, Class]
+    Order: [Kingdom, Phylum, Class, Order]
+    Family: [Kingdom, Phylum, Class, Order, Family]
+
+# Site-level information to include in output -------------------
+
+site_info_vars:
+  - Block
+  - Longitude
+  - Latitude
+  - Country
+  - UN_region
+  - UN_subregion
+  - Wilderness_area
+  - Hotspot
+  - Study_common_taxon
+  - Rank_of_study_common_taxon
+  - Sampling_method
+  - Rescaled_sampling_effort
+  - Predominant_land_use
+  - Use_intensity
+  - Habitat_patch_area_square_metres
+  - Km_to_nearest_edge_of_habitat
+  - Years_since_fragmentation_or_conversion

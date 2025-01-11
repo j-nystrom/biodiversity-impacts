@@ -1,18 +1,30 @@
-combined_data:
-  year_intervals:
+
+# Configuration file for the Tasks and methods in the feature pipeline
+# This includes all the scripts in the 'features' folder
+# The output file paths are also used in the model pipeline (scripts in the
+# 'model' folder)
+
+
+# CombineDataTask --------------------------------------
+
+combine_data:
+  year_intervals:  # Intervals for which population data should be interpolated
     - [1984, 2000]
     - [2000, 2005]
     - [2005, 2010]
     - [2010, 2015]
     - [2015, 2020]
-  pixel_resolutions: [1km, 10km, 50km]
-  combined_data_file: "../../../data/output/combined/combined_data.parquet"
+  combined_data_path: "../../../data/output/combined/combined_data.parquet"
 
-feature_engineering:
-  cols_to_keep:
-    - SS
+
+# GenerateFeaturesTask --------------------------------------
+
+feature_generation:
+  cols_to_keep:  # Non-essential columns are dropped to reduce dataframe size
+    - SS  # Original PREDICTS columns
     - SSB
     - SSBS
+    - Block
     - Longitude
     - Latitude
     - Country
@@ -23,6 +35,8 @@ feature_engineering:
     - Ecoregion
     - Wilderness_area
     - Hotspot
+    - Study_common_taxon
+    - Rank_of_study_common_taxon
     - Sample_midpoint
     - Sampling_method
     - Sampling_effort
@@ -42,7 +56,7 @@ feature_engineering:
     - Habitat_patch_area_square_metres
     - Km_to_nearest_edge_of_habitat
     - Years_since_fragmentation_or_conversion
-    - Road_density_1km
+    - Road_density_1km  # Added columns from other sources
     - Road_density_10km
     - Road_density_50km
     - Pop_density_1km
@@ -73,15 +87,15 @@ feature_engineering:
     - Terrain_roughness_10km
     - Terrain_ruggedness_index_10km
 
-  density_vars:
-    - Road_density_1km
-    - Road_density_10km
-    - Road_density_50km
+  density_vars:  # Columns related to population and road density
     - Pop_density_1km
     - Pop_density_10km
     - Pop_density_50km
+    - Road_density_1km
+    - Road_density_10km
+    - Road_density_50km
 
-  bioclim_vars:
+  bioclimatic_vars:  # Columns related to bioclimatic information
     - Annual_mean_temp_1km
     - Temp_seasonality_1km
     - Max_temp_warmest_month_1km
@@ -99,7 +113,7 @@ feature_engineering:
     - Precip_driest_month_10km
     - Precip_seasonality_10km
 
-  topographic_vars:
+  topographic_vars:  # Columns related to topographic information
     - Elevation_1km
     - Slope_1km
     - Terrain_roughness_1km
@@ -109,7 +123,7 @@ feature_engineering:
     - Terrain_roughness_10km
     - Terrain_ruggedness_index_10km
 
-  land_use_col_order:
+  land_use_col_order:  # Desired order of land use types, least to most disturbed
     - Primary vegetation
     - Young secondary vegetation
     - Intermediate secondary vegetation
@@ -120,7 +134,7 @@ feature_engineering:
     - Cropland
     - Urban
 
-  lui_col_order:
+  lui_col_order:  # Same, but also including use intensity
     - Primary vegetation_Minimal use
     - Primary vegetation_Light use
     - Primary vegetation_Intense use
@@ -149,23 +163,40 @@ feature_engineering:
     - Urban_Light use
     - Urban_Intense use
 
-  secondary_veg_col_order:
+  secondary_veg_col_order:  # Same, but for grouping all secondary vegetation types
     - Secondary vegetation_Minimal use
     - Secondary vegetation_Light use
     - Secondary vegetation_Intense use
 
-abundance:
+  # Path for the output dataframe after feature generation
+  feature_data_path: "../../../data/output/features/feature_data.parquet"
+
+
+# AlphaDiversityTask --------------------------------------
+# BetaDiversityTask --------------------------------------
+
+diversity_metrics:
+  # All diversity metrics are calculated at the site level, hence the first set
+  # of groupby columns. For each of the taxonomic levels below, one dataframe
+  # is created (i.e. each frame has a different level of granularity)
+  groupby_cols: [SS, SSB, SSBS]
   taxonomic_levels:
     - Kingdom
     - Phylum
     - Class
     - Order
-    - Family
 
-  abundance_data:
-    - "../../../data/output/abundance/abundance_all_species.parquet"
-    - "../../../data/output/abundance/abundance_kingdom.parquet"
-    - "../../../data/output/abundance/abundance_phylum.parquet"
-    - "../../../data/output/abundance/abundance_class.parquet"
-    - "../../../data/output/abundance/abundance_order.parquet"
-    - "../../../data/output/abundance/abundance_family.parquet"
+  output_data_paths:
+    alpha:
+      All_species: "../../../data/output/alpha_diversity/alpha_all_species.parquet"
+      Kingdom: "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
+      Phylum: "../../../data/output/alpha_diversity/alpha_phylum.parquet"
+      Class: "../../../data/output/alpha_diversity/alpha_class.parquet"
+      Order: "../../../data/output/alpha_diversity/alpha_order.parquet"
+
+    beta:
+      All_species: "../../../data/output/beta_diversity/beta_all_species.parquet"
+      Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
+      Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
+      Class: "../../../data/output/beta_diversity/beta_class.parquet"
+      Order: "../../../data/output/beta_diversity/beta_order.parquet"

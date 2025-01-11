@@ -19,7 +19,7 @@ rasterstats>=0.19.0
 pymc>=5.13.1
 numpyro>=0.14.0
 scikit-learn>=1.4.1
-statsmodels>=0.14.1
+pymer4>=0.8.2
 
 # Code formatting, typing and linting
 black>=24.2.0
@@ -37,7 +37,9 @@ pyupgrade>=3.15.1
 # Notebooks
 jupyter>=1.0.0
 ipykernel>=6.29.3
+jupyter-lsp-python>2.2.5
 
 # Other
 python-box>=7.1.1
 dill>=0.3.8
+wakepy>0.10.1

@@ -1,22 +1,23 @@
 from core.dags.dag_setup import BaseDAG, parse_args, run_dags
-from core.data.predicts_task import PredictsProcessingTask
+from core.data.predicts_task import PredictsConcatenationTask
 from core.data.raster_stats_task import (
     BioclimaticFactorsTask,
     PopulationDensityTask,
     TopographicFactorsTask,
 )
 from core.data.road_density_task import RoadDensityTask
-from core.data.site_buffering_task import ProjectAndBufferTask
-from core.features.abundance_task import AbundanceFeaturesTask
+from core.data.site_buffering_task import SiteBufferingTask
+from core.features.alpha_diversity_task import AlphaDiversityTask
 from core.features.combine_data_task import CombineDataTask
-from core.model.crossval_task import CrossValidationTask
-from core.model.model_train_task import ModelTrainingTask
+from core.features.generate_features_task import GenerateFeaturesTask
+from core.model.model_data_task import ModelDataTask
+from core.model.training_crossval_task import CrossValidationTask, ModelTrainingTask
 
 
 class PredictsProcessingDAG(BaseDAG):
     def __init__(self) -> None:
         super().__init__()
-        self.tasks = [PredictsProcessingTask, ProjectAndBufferTask]
+        self.tasks = [PredictsConcatenationTask, SiteBufferingTask]
 
 
 class PopulationDensityDAG(BaseDAG):
@@ -43,22 +44,28 @@ class TopographicFactorsDAG(BaseDAG):
         self.tasks = [TopographicFactorsTask]
 
 
-class AbundanceFeaturesDAG(BaseDAG):
+class CombineDataDAG(BaseDAG):
     def __init__(self) -> None:
         super().__init__()
-        self.tasks = [CombineDataTask, AbundanceFeaturesTask]
+        self.tasks = ["CombineDataTask"]
+
+
+class AlphaDiversityDAG(BaseDAG):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tasks = [CombineDataTask, GenerateFeaturesTask, AlphaDiversityTask]
 
 
 class ModelTrainingDAG(BaseDAG):
     def __init__(self) -> None:
-        super().__init__()
-        self.tasks = [ModelTrainingTask]
+        super().__init__(mode="training")
+        self.tasks = [ModelDataTask, ModelTrainingTask]
 
 
 class CrossValidationDAG(BaseDAG):
     def __init__(self) -> None:
-        super().__init__()
-        self.tasks = [CrossValidationTask]
+        super().__init__(mode="crossval")
+        self.tasks = [ModelDataTask, CrossValidationTask]
 
 
 # Mapping of DAG command line names to their corresponding classes
@@ -69,7 +76,8 @@ dag_mapping = {
     "roads": RoadDensityDAG,
     "bioclimatic": BioclimaticFactorsDAG,
     "topographic": TopographicFactorsDAG,
-    "abundance": AbundanceFeaturesDAG,
+    "alpha": AlphaDiversityDAG,
+    # "beta":,
     "training": ModelTrainingDAG,
     "crossval": CrossValidationDAG,
 }
