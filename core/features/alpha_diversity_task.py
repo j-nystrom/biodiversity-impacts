@@ -176,14 +176,21 @@ class AlphaDiversityTask:
         """Count the bumber of unique species in each group."""
         logger.info("Calculating species richness.")
 
-        # Filter out non-occurences so we can just use count as agg function
-        df = df.filter(pl.col("Effort_corrected_measurement") != 0)
+        df = df.with_columns(
+            pl.when(pl.col("Effort_corrected_measurement") > 0)
+            .then(1)
+            .otherwise(0)
+            .alias("Effort_corrected_measurement_binary")
+        )
+        df = df.drop("Effort_corrected_measurement").rename(
+            {"Effort_corrected_measurement_binary": "Effort_corrected_measurement"}
+        )  # Rename to original column name for compatibility with code below
 
         metric = "Species_richness"
         df_res = self.calculate_abundance_or_richness_metric(
             df=df,
             metric_name=metric,
-            agg_function=pl.count,
+            agg_function=pl.sum,
         )
         validate_alpha_diversity_calculations(df_res, metric_name=metric)
 
@@ -213,6 +220,8 @@ class AlphaDiversityTask:
         # Reuse existing functions for total abundance and species richness
         df_tot_abund = self.calculate_total_abundance(df)
         df_richness = self.calculate_species_richness(df)
+        print(df_tot_abund.shape)
+        print(df_richness.shape)
 
         # Join the total abundance and species richness data
         df = df.join(
@@ -250,11 +259,15 @@ class AlphaDiversityTask:
 
         # Sum Shannon components to get the Shannon index
         df_shannon = df.group_by(self.groupby_cols).agg(
-            pl.sum("Shannon_component").alias("Shannon_index"),
-            pl.first("Total_abundance"),
+            pl.sum("Shannon_component").alias("Shannon_index")
         )
 
         # Calculate a modified Shannon index
+        df_shannon = df_shannon.join(
+            df_tot_abund.select(self.groupby_cols + ["Total_abundance"]),
+            on=self.groupby_cols,
+            how="inner",
+        )
         df_shannon = df_shannon.with_columns(
             ((pl.col("Total_abundance") + 1).log() * pl.col("Shannon_index")).alias(
                 "Modified_Shannon_index"
