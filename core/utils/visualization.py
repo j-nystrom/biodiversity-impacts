@@ -198,13 +198,31 @@ def plot_calibration_by_group(
     group_idx: np.array,
     group_mapping: dict[int, str],
 ) -> None:
-    # Determine the number of unique groups
-    groups = np.unique(group_idx)
-    n_groups = len(groups)
+    """
+    Plot calibration (Observed vs Predicted) for each group, sorted by the
+    number of observations.
+
+    Args:
+        y_true: Array of true observed values.
+        y_pred: Array of predicted values.
+        group_idx: Array of group indices corresponding to each observation.
+        group_mapping: Mapping of group indices to their names.
+    """
+    # Determine the number of unique groups and their sizes
+    groups, counts = np.unique(group_idx, return_counts=True)
+
+    # Sort groups by the number of observations, from largest to smallest
+    sorted_groups = groups[np.argsort(-counts)]
+    sorted_counts = counts[np.argsort(-counts)]
+
+    # Log group sizes
+    print("Groups sorted by size (largest to smallest):")
+    for group, count in zip(sorted_groups, sorted_counts):
+        print(f"{group_mapping.get(group, group)}: {count} observations")
 
     # Calculate the dimensions of the grid of subplots
     n_cols = 3
-    n_rows = int(np.ceil(n_groups / n_cols))
+    n_rows = int(np.ceil(len(sorted_groups) / n_cols))
 
     # Set the figsize dynamically based on the number of groups (arbitrary
     # width and height per subplot)
@@ -217,7 +235,7 @@ def plot_calibration_by_group(
     )
 
     axes = axes.ravel()  # Flatten the axs array for easy iteration
-    for idx, group in enumerate(groups):
+    for idx, group in enumerate(sorted_groups):
         # Select the data for the current group
         mask = group_idx == group
         y_true_group = y_true[mask]
@@ -268,7 +286,7 @@ def plot_calibration_by_group(
 
     # Hide any empty subplots that aren't used (if the number of groups is not
     # a perfect square)
-    for ax in axes[n_groups:]:
+    for ax in axes[len(sorted_groups) :]:
         ax.set_visible(False)
 
     plt.show()
@@ -326,7 +344,7 @@ def plot_residuals_by_group(
 
 def print_evaluation_metrics_train(metrics: dict[str, Any]) -> None:
     """Print model performance metrics in a structured format."""
-    print("MKodel performance metrics")
+    print("Model performance metrics")
     print("=" * 80)
 
     # Overall metrics

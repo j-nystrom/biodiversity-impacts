@@ -64,7 +64,9 @@ def create_logger(
 
 def create_run_folder_path(base_path: str = configs.run_folder_path) -> str:
     """Generates a new folder for the current run, based on current date and time."""
-    run_folder_name = "run_folder_" + datetime.datetime.now().strftime("%Y-%m-%d_%H.%M")
+    run_folder_name = "run_folder_" + datetime.datetime.now().strftime(
+        "%Y-%m-%d_%H.%M.%S"
+    )
     run_folder_path = os.path.join(base_path, run_folder_name)
     os.makedirs(run_folder_path, exist_ok=True)
 
