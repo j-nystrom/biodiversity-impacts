@@ -577,9 +577,9 @@ def biome_realm_ecoregion_slope_model(model_data: dict[str, Any]) -> pm.Model:
 
         # Ecoregion intercepts at the site level
         # Used for final scaling of outputs (dividing prediction by intercept)
-        alpha_eco_site = pm.Deterministic(  # noqa: F841
-            "alpha_eco_site", alpha_eco[biome_realm_eco_idx]
-        )
+        # alpha_eco_site = pm.Deterministic(  # noqa: F841
+        # "alpha_eco_site", alpha_eco[biome_realm_eco_idx]
+        # )
 
         # Likelihood function
         y_like = pm.Normal(  # noqa: F841

@@ -7,7 +7,7 @@
 diversity_type: alpha  # [alpha, beta]
 data_scope:  # Biogeographic and taxonomic scope on which to train model
   biogeographic:
-    include_all: True  # True if global scope, False if non-global
+    include_all: False  # True if global scope, False if non-global
     filtering_logic: include  # Either include or exclude biomes listed below
     filtering_dicts:  # Only applicable if global is False
       Biome:  # Include / exclude the following biomes
@@ -32,8 +32,9 @@ data_scope:  # Biogeographic and taxonomic scope on which to train model
 # Run and model structure settings -------------------
 
 run_settings:
-  model_type: lmm  # [bayesian, lmm]
-  model_variables: bii_ref_model  # See below for model configurations
+  model_type: bayesian  # [bayesian, lmm]
+  model_variables: bayesian_base_model  # See below for model configurations
+  # bayesian_base_model, bayesian_thesis_ref_model, bii_ref_model
   group_size_threshold: 10  # If 0 there is no filtering by group size
   threshold_on_groups: [Biome, Realm, Ecoregion]
 
@@ -49,15 +50,15 @@ run_settings:
     taxonomic_resolution: All_species  # Must match lowest taxonomic level in hierarchy
 
     prior_values:  # See model definition for where they are used
-      intercept_hyperprior_mean: 0.3
+      intercept_hyperprior_mean: 0.5
       coef_prior_var: 0.1
       gaussian_noise: 0.1
       alpha_var_param: 2
       beta_var_param: 2
 
     sampler:  # Refer to PyMC documentation for all settings
-      draws: 50
-      tune: 50
+      draws: 1000
+      tune: 2000
       cores: 4
       chains: 4
       target_accept: 0.99
@@ -178,13 +179,21 @@ model_variables:
 
   # Bayesian hierarchical base model
   bayesian_base_model:
-    response_var: Scaled_modified_Shannon_index
+    response_var: Scaled_Modified_Shannon_index
     response_var_transform: null  # [adjust, sqrt, logit, null]
-    requires_intensity_data: False
+    requires_intensity_data: True
     categorical_vars:
-      - Secondary vegetation_All uses
-      - Cropland
-      - Pasture
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_Minimal use
+      - Secondary vegetation_Light use
+      - Secondary vegetation_Intense use
+      - Cropland_Minimal use
+      - Cropland_Light use
+      - Cropland_Intense use
+      - Pasture_Minimal use
+      - Pasture_Light use
+      - Pasture_Intense use
       - Urban_All uses
     continuous_vars:
       - Pop_density_1km_log

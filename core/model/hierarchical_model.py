@@ -16,17 +16,19 @@ from core.model.pymc_models import general_hierarchical_model
 class BayesianHierarchicalModel(BaseModel):
     def __init__(
         self,
+        mode: str,
         model_settings: dict[str, Any],
         model_vars: dict[str, Any],
-        site_name_to_idx: dict[str, int],
         logger: logging.Logger,
-        mode: str,
+        site_name_to_idx: dict[str, int],
+        hierarchy_mapping: dict[str, list[str]],
     ) -> None:
-        super().__init__(model_settings, model_vars, site_name_to_idx, logger, mode)
+        super().__init__(mode, model_settings, model_vars, logger)
 
-        # Model-specific settings
-        self.hierarchy = self.model_settings["hierarchy"]
-        self.sampler_settings = self.model_settings["sampler"]
+        # Additional settings for Bayesian model
+        self.site_name_to_idx: dict[str, int] = site_name_to_idx
+        self.hierarchy_mapping: dict[str, Any] = hierarchy_mapping
+        self.sampler_settings: dict[str, Any] = self.model_settings["sampler"]
 
     def prepare_data(self, df: pl.DataFrame) -> dict[str, Any]:
         # Continuous vars are standardized to have mean zero and unit variance
@@ -66,154 +68,97 @@ class BayesianHierarchicalModel(BaseModel):
 
     def format_data_for_pymc_model(self, df: pl.DataFrame) -> dict[str, Any]:
         """
-        Format the dataframe for use in PyMC models. The function dynamically handles
-        one, two, or three hierarchical levels.
+        Format the dataframe for use in PyMC models.
 
         Args:
             - df: Dataframe with the scaled covariates and response variable.
 
         Returns:
-            - output_dict: Dictionary containing the formatted data for the PyMC model.
-            - idx_to_site_name: Mapping of indices to site names for reference.
+            - output_dict: Dictionary containing the formatted data for the
+                PyMC model.
         """
         self.logger.info("Formatting data for PyMC model.")
 
-        # Extract columns for the hierarchical levels
-        level_1 = self.hierarchy["level_1"]
-        level_2 = self.hierarchy["level_2"]
-        level_3 = self.hierarchy["level_3"]
+        # Use self.hierarchy_mapping to simplify processing
+        hierarchy = self.hierarchy_mapping
 
-        # Sort dataframe for consistent operations
-        df = df.sort(["SS", "SSB", "SSBS"])
+        # Initialize outputs
+        level_indices = {}
+        level_values = {}
 
-        # Process Level 1
-        if len(level_1) >= 1:
-            level_1_col = "_".join(level_1)
-            df = df.with_columns(
-                pl.concat_str([pl.col(col) for col in level_1], separator="_").alias(
-                    level_1_col
-                )
-            )
-        else:
-            level_1_col = level_1[0]
+        # Process hierarchical levels dynamically to create index variables
+        for level, mapping in hierarchy.items():
+            if level == "column_names":  # Process mappings only
+                continue
 
-        level_1_values = df.get_column(level_1_col).unique().to_list()
-        level_1_idx = (
-            df.get_column(level_1_col).cast(pl.Categorical).to_physical().to_numpy()
-        )
-
-        # Process Level 2
-        if level_2 and all(col in df.columns for col in level_2):
-            if len(level_2) >= 1:
-                level_2_col = "_".join(level_2)
-                pl.concat_str([pl.col(col) for col in level_2], separator="_").alias(
-                    level_2_col
-                )
-            else:
-                level_2_col = level_2[0]
-
-            df = df.with_columns(
-                pl.concat_str(
-                    [pl.col(level_1_col), pl.col(level_2_col)], separator="_"
-                ).alias("Combined_Level_2")
-            )
-            level_2_values = df.get_column("Combined_Level_2").unique().to_list()
-            level_2_idx = (
-                df.get_column("Combined_Level_2")
-                .cast(pl.Categorical)
-                .to_physical()
+            col_name = hierarchy["column_names"][level]
+            level_indices[f"{level}_idx"] = (
+                df.get_column(col_name)
+                .replace(mapping, return_dtype=pl.Int32)
                 .to_numpy()
             )
+            level_values[f"{level}_values"] = list(mapping.keys())
+
+        # Create mapping indices between levels
+        # Level 2 to level 1
+        if hierarchy["column_names"]["level_2"]:
+            level_1_col = hierarchy["column_names"]["level_1"]
+            level_2_col = hierarchy["column_names"]["level_2"]
             level_2_to_level_1_idx = (
-                df.select([level_1_col, "Combined_Level_2"])
+                df.select([level_1_col, level_2_col])
                 .unique()
-                .sort([level_1_col, "Combined_Level_2"])
+                .sort([level_1_col, level_2_col])
                 .get_column(level_1_col)
                 .cast(pl.Categorical)
                 .to_physical()
                 .to_numpy()
             )
-        else:
-            level_2_values = None
-            level_2_idx = None
-            level_2_to_level_1_idx = None
 
-        # Process Level 3
-        if level_3 and all(col in df.columns for col in level_3):
-            if len(level_3) >= 1:
-                level_3_col = "_".join(level_3)
-                pl.concat_str([pl.col(col) for col in level_3], separator="_").alias(
-                    level_3_col
-                )
-            else:
-                level_3_col = level_3[0]
-
-            df = df.with_columns(
-                pl.concat_str(
-                    [pl.col("Combined_Level_2"), pl.col(level_3_col)], separator="_"
-                ).alias("Combined_Level_3")
-            )
-            level_3_values = df.get_column("Combined_Level_3").unique().to_list()
-            level_3_idx = (
-                df.get_column("Combined_Level_3")
-                .cast(pl.Categorical)
-                .to_physical()
-                .to_numpy()
-            )
+        # Level 3 to level 2
+        if hierarchy["column_names"]["level_3"]:
+            level_2_col = hierarchy["column_names"]["level_2"]
+            level_3_col = hierarchy["column_names"]["level_3"]
             level_3_to_level_2_idx = (
-                df.select(["Combined_Level_2", "Combined_Level_3"])
+                df.select([level_2_col, level_3_col])
                 .unique()
-                .sort(["Combined_Level_2", "Combined_Level_3"])
-                .get_column("Combined_Level_2")
+                .sort([level_2_col, level_3_col])
+                .get_column(level_2_col)
                 .cast(pl.Categorical)
                 .to_physical()
                 .to_numpy()
             )
-        else:
-            level_3_values = None
-            level_3_idx = None
-            level_3_to_level_2_idx = None
 
-        # Create the response variable vector
-        if self.response_var_transform:
-            response_col_name = self.response_var + "_" + self.response_var_transform
-        else:
-            response_col_name = self.response_var
-        y_obs = df.select(response_col_name).to_numpy().flatten()
+        # Create response variable vector
+        response_col_name = (
+            f"{self.response_var}_{self.response_var_transform}"
+            if self.response_var_transform
+            else self.response_var
+        )
+        y_obs = df.get_column(response_col_name).to_numpy()
 
-        # Create the design matrix
+        # Create design matrix
         x_vars = self.categorical_vars + self.continuous_vars + self.interaction_terms
         x_obs = df.select(x_vars).to_numpy()
 
-        # Create coordinates dictionary
-        idx = np.arange(len(y_obs))
+        # Add site indices for reference
         site_idx = np.array(
             [self.site_name_to_idx[site] for site in df.get_column("SSBS").to_list()]
         )
-        coords = {
-            "idx": idx,
-            "x_vars": x_vars,
-            "level_1_values": level_1_values,
-        }
-        if level_2_values is not None:
-            coords["level_2_values"] = level_2_values
-        if level_3_values is not None:
-            coords["level_3_values"] = level_3_values
 
         # Build output dictionary
+        coords = {"idx": np.arange(df.shape[0])}
+        coords.update(level_values)
+        coords["x_vars"] = x_vars
+
         output_dict = {
             "coords": coords,
             "y_obs": y_obs,
             "x_obs": x_obs,
-            "level_1_idx": level_1_idx,
             "site_idx": site_idx,
+            "level_2_to_level_1_idx": level_2_to_level_1_idx,
+            "level_3_to_level_2_idx": level_3_to_level_2_idx,
         }
-        if level_2_idx is not None:
-            output_dict["level_2_idx"] = level_2_idx
-            output_dict["level_2_to_level_1_idx"] = level_2_to_level_1_idx
-        if level_3_idx is not None:
-            output_dict["level_3_idx"] = level_3_idx
-            output_dict["level_3_to_level_2_idx"] = level_3_to_level_2_idx
+        output_dict.update(level_indices)
 
         self.logger.info("Data formatted for PyMC model.")
 
@@ -239,7 +184,7 @@ class BayesianHierarchicalModel(BaseModel):
                 chains=self.sampler_settings["chains"],
                 target_accept=self.sampler_settings["target_accept"],
                 nuts_sampler=self.sampler_settings["nuts_sampler"],
-                idata_kwargs={"log_likelihood": True},  # Compute log likelihood
+                # idata_kwargs={"log_likelihood": True},  # Compute log likelihood
             )
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
@@ -368,7 +313,8 @@ class BayesianHierarchicalModel(BaseModel):
         """
         # Get site information and observed values
         site_idx = prediction_data["site_idx"]
-        site_names = [self.idx_to_site[idx] for idx in site_idx]
+        idx_to_site = {idx: name for name, idx in self.site_name_to_idx.items()}
+        site_names = [idx_to_site[idx] for idx in site_idx]
         y_obs = prediction_data["y_obs"]
 
         if mode == "train":  # Posterior predictive samples on training data

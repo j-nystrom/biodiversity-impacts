@@ -11,6 +11,7 @@ from scipy.special import logit
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
 from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
 
 from core.tests.shared.validate_shared import (
     get_unique_value_count,
@@ -69,6 +70,7 @@ class ModelDataTask:
         self.taxonomic_scope: dict[str, Any] = configs.data_scope.taxonomic
 
         # Model specific configs
+        self.model_type = configs.run_settings.model_type
         model_vars = configs.model_variables[configs.run_settings.model_variables]
         self.response_var: str = model_vars.response_var
         self.response_var_transform: str = model_vars.response_var_transform
@@ -76,6 +78,11 @@ class ModelDataTask:
         self.categorical_vars: list[str] = model_vars.categorical_vars
         self.continuous_vars: list[str] = model_vars.continuous_vars
         self.interaction_cols: list[str] = model_vars.interaction_cols
+
+        if self.model_type == "bayesian":  # To create mapping for the hierarchy
+            self.hierarchy: dict[str, list[str]] = configs.run_settings[
+                self.model_type
+            ].hierarchy
 
         # If running cross-validation
         if self.mode == "crossval":
@@ -151,12 +158,26 @@ class ModelDataTask:
         with open(interaction_terms_path, "w") as f:
             json.dump(interaction_terms, f)
 
-        # Create mapping between site names and indices for later use
-        site_names = df["SSBS"].unique().to_list()
-        site_name_to_idx = {site_name: idx for idx, site_name in enumerate(site_names)}
-        site_mapping_path = os.path.join(self.run_folder_path, "site_mapping.json")
-        with open(site_mapping_path, "w") as f:
-            json.dump(site_name_to_idx, f)
+        if self.model_type == "bayesian":
+            # Create mapping between site names and indices for later use
+            site_names = df["SSBS"].unique().to_list()
+            site_name_to_idx = {
+                site_name: idx for idx, site_name in enumerate(site_names)
+            }
+            site_mapping_path = os.path.join(self.run_folder_path, "site_mapping.json")
+            with open(site_mapping_path, "w") as f:
+                json.dump(site_name_to_idx, f)
+
+            # Create index-name mapping for all hierarchical levels
+            df, hierarchy_cols, hierarchy_mapping = (
+                self.generate_global_hierarchy_mapping(df)
+            )
+            hierarchy_mapping_path = os.path.join(
+                self.run_folder_path, "hierarchy_mapping.json"
+            )
+            all_model_vars += hierarchy_cols
+            with open(hierarchy_mapping_path, "w") as f:
+                json.dump(hierarchy_mapping, f)
 
         # If the goal is to generate training data, we are done here
         if self.mode == "training":
@@ -441,6 +462,51 @@ class ModelDataTask:
 
         return df, new_cols
 
+    def generate_global_hierarchy_mapping(
+        self, df: pl.DataFrame
+    ) -> tuple[pl.DataFrame, list[str], dict[str, dict[str, int]]]:
+        """
+        Generate a global mapping for hierarchical levels from a dataframe.
+
+        Args:
+            df: The input DataFrame containing the data.
+
+        Returns:
+            mapping: A dictionary where keys are the hierarchy levels and values
+                map unique combined categorical values to indices. Also includes
+                column names for each level.
+        """
+        mapping = {"column_names": {}}  # type: ignore
+        all_cols = []
+        new_cols = []
+
+        for level, cols in self.hierarchy.items():
+            if cols:
+                all_cols.extend(cols)
+                col_name = "_".join(all_cols) if len(all_cols) > 1 else all_cols[0]
+
+                # Add or combine columns for this level
+                if col_name not in df.columns:
+                    df = df.with_columns(
+                        pl.concat_str(
+                            [pl.col(col) for col in all_cols], separator="_"
+                        ).alias(col_name)
+                    )
+
+                # Save the combined column name for this level
+                mapping["column_names"][level] = col_name
+
+                # Create mapping from unique combined values to indices
+                unique_values = df.get_column(col_name).unique().to_list()
+                mapping[level] = {value: idx for idx, value in enumerate(unique_values)}
+
+        new_cols = [
+            mapping["column_names"]["level_2"],
+            mapping["column_names"]["level_3"],
+        ]
+
+        return df, new_cols, mapping
+
     def generate_cv_folds(
         self, df: pl.DataFrame
     ) -> tuple[list[pl.DataFrame], list[pl.DataFrame]]:
@@ -463,6 +529,8 @@ class ModelDataTask:
         strategy = self.cv_settings["strategy"]
         stratify_groups = self.cv_settings["stratify_groups"]
         clustering_method = self.cv_settings["clustering_method"]
+        min_samples_per_cluster = self.cv_settings.get("min_samples_per_cluster", 5)
+
         if strategy != "random":
             clustering_vars = self.cv_settings["clustering_vars"][strategy]
 
@@ -478,15 +546,24 @@ class ModelDataTask:
         df = ModelDataTask._create_stratification_column(df, stratify_groups)
         df["Cluster"] = None
 
-        # For spatial and environmental CV, do clustering using k-means or GM
+        # For spatial and environmental CV, perform clustering
         if strategy in ["spatial", "environmental"]:
             logger.info(
                 f"Performing clustering based on {strategy} variables "
                 f"using method '{clustering_method}'."
             )
-            # Perform clustering within each stratify group (e.g. Biome)
+            # Perform clustering within each stratify group
             for group in df["Stratify_group"].unique():
                 df_group = df[df["Stratify_group"] == group]
+
+                # Validate the number of samples in the group
+                if df_group.shape[0] < k:
+                    logger.warning(
+                        f"Group '{group}' has fewer samples ({df_group.shape[0]}) "
+                        f"than the number of folds ({k})."
+                    )
+                    continue
+
                 clustered_group = ModelDataTask._perform_clustering(
                     df_group,
                     method=clustering_method,
@@ -495,9 +572,20 @@ class ModelDataTask:
                     seed=seed,
                     group=group,
                 )
+                # Assign cluster labels
                 df.loc[df["Stratify_group"] == group, "Cluster"] = clustered_group[
                     "Cluster"
                 ]
+
+                # Check for small clusters
+                if (
+                    clustered_group["Cluster"].value_counts().min()
+                    < min_samples_per_cluster
+                ):
+                    logger.warning(
+                        f"Group '{group}' has clusters with fewer than "
+                        f"{min_samples_per_cluster} samples!"
+                    )
 
         # For random CV, create "Cluster" column based on stratified K-Fold
         elif strategy == "random":
@@ -517,8 +605,10 @@ class ModelDataTask:
             df_train_list.append(pl.DataFrame(df_train))
             df_test_list.append(pl.DataFrame(df_test))
 
-        logger.info("Finished generating k-folds for cross-validation.")
+        # Check for overlaps, duplicates, and other inconsistencies
+        self._validate_folds(df_train_list, df_test_list)
 
+        logger.info("Finished generating k-folds for cross-validation.")
         return df_train_list, df_test_list
 
     @staticmethod
@@ -567,10 +657,11 @@ class ModelDataTask:
         Returns:
             - df: DataFrame with an added "Cluster" column for cluster labels.
         """
-        logger.info(f"Performing clustering for group {group}.")
+        logger.info(f"Performing clustering for group '{group}'.")
 
-        # Extract feature data for clustering
+        # Extract feature data for clustering and handle scaling
         feature_data = df[features].to_numpy()
+        feature_data = StandardScaler().fit_transform(feature_data)
 
         # Initialize the clustering model
         if method == "kmeans":
@@ -581,8 +672,45 @@ class ModelDataTask:
             raise ValueError(f"Unsupported clustering method: {method}")
 
         # Fit the model and assign cluster labels
-        df.loc[:, "Cluster"] = cluster_model.fit_predict(feature_data)
+        df["Cluster"] = cluster_model.fit_predict(feature_data)
 
-        logger.info("Clustering completed.")
+        logger.info(f"Clustering completed for group '{group}'.")
 
         return df
+
+    def _validate_folds(
+        self, df_train_list: list[pd.DataFrame], df_test_list: list[pd.DataFrame]
+    ) -> None:
+        """
+        Validate the generated folds for overlaps, duplicates, and inconsistencies.
+        """
+        for i, (df_train, df_test) in enumerate(zip(df_train_list, df_test_list)):
+            overlap = df_train.filter(pl.col("SSBS").is_in(df_test["SSBS"]))
+            if overlap.shape[0] > 0:
+                print(f"Overlap detected in fold {i}!")
+            else:
+                print(f"No overlap in fold {i}.")
+
+        for i, df_test_1 in enumerate(df_test_list):
+            for j, df_test_2 in enumerate(df_test_list):
+                if i >= j:
+                    continue  # Skip same test sets or already compared pairs
+                overlap = df_test_1.filter(pl.col("SSBS").is_in(df_test_2["SSBS"]))
+                if overlap.shape[0] > 0:
+                    print(f"Duplicate entries found between test folds {i} and {j}!")
+                else:
+                    print(f"No duplicates between test folds {i} and {j}.")
+
+        for i, df_test in enumerate(df_test_list):
+            duplicates = df_test.filter(pl.col("SSBS").is_duplicated())
+            if duplicates.shape[0] > 0:
+                print(f"Duplicates detected in test fold {i}!")
+            else:
+                print(f"No duplicates in test fold {i}.")
+
+        for i, df_train in enumerate(df_train_list):
+            duplicates = df_train.filter(pl.col("SSBS").is_duplicated())
+            if duplicates.shape[0] > 0:
+                print(f"Duplicates detected in train fold {i}!")
+            else:
+                print(f"No duplicates in train fold {i}.")

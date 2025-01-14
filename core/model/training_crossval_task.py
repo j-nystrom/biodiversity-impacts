@@ -51,24 +51,29 @@ class BaseModelTask:
         )
         self.site_mapping_path: str = os.path.join(run_folder_path, "site_mapping.json")
         self.site_info_path: str = os.path.join(run_folder_path, "site_info.parquet")
+        if self.model_type == "bayesian":
+            self.hierarchy_mapping_path: str = os.path.join(
+                run_folder_path, "hierarchy_mapping.json"
+            )
 
     def load_shared_data(self) -> None:
         """Validate required input files and load shared resources."""
-        validate_input_files(
-            file_paths=[
-                self.interaction_terms_path,
-                self.site_mapping_path,
-                self.site_info_path,
-            ]
-        )
+        validate_input_files(file_paths=[self.interaction_terms_path])
         # Load key information about each site for analysis
         self.df_site_info = pl.read_parquet(self.site_info_path)
 
         # Load generated interaction terms and mapping of site names to indices
         with open(self.interaction_terms_path) as f:
             self.model_vars["interaction_terms"] = json.load(f)
-        with open(self.site_mapping_path) as f:
-            self.site_name_to_idx = json.load(f)
+
+        if self.model_type == "bayesian":
+            validate_input_files(
+                file_paths=[self.site_mapping_path, self.hierarchy_mapping_path]
+            )
+            with open(self.site_mapping_path) as f:
+                self.site_name_to_idx = json.load(f)
+            with open(self.hierarchy_mapping_path) as f:
+                self.hierarchy_mapping = json.load(f)
 
     def initialize_model(self) -> Union[BayesianHierarchicalModel, LinearMixedModel]:
         """Instantiate the appropriate model class based on the model type."""
@@ -76,16 +81,19 @@ class BaseModelTask:
             "bayesian": BayesianHierarchicalModel,
             "lmm": LinearMixedModel,
         }
-        if self.model_type in model_classes:
-            return model_classes[self.model_type](  # type: ignore
-                model_settings=self.model_settings,
-                model_vars=self.model_vars,
-                site_name_to_idx=self.site_name_to_idx,
-                logger=logger,
-                mode=self.mode,
-            )
-        else:
-            raise ValueError(f"Unsupported model type: {self.model_type}")
+        # Shared model class attributes
+        model_init_kwargs = {
+            "model_settings": self.model_settings,
+            "model_vars": self.model_vars,
+            "logger": logger,
+            "mode": self.mode,
+        }
+        # Add specific attributes for Bayesian model
+        if self.model_type == "bayesian":
+            model_init_kwargs["site_name_to_idx"] = self.site_name_to_idx
+            model_init_kwargs["hierarchy_mapping"] = self.hierarchy_mapping
+
+        return model_classes[self.model_type](**model_init_kwargs)
 
     def evaluate_model_performance(
         self, df_pred: pl.DataFrame
@@ -96,6 +104,7 @@ class BaseModelTask:
             model_type=self.model_type,
             response_transform=self.response_var_transform,
         )
+        logger.info("Performance metrics for state predictions:")
         state_metrics = calculate_performance_metrics(
             df_pred,
             model_type=self.model_type,
@@ -110,6 +119,7 @@ class BaseModelTask:
             model_type=self.model_type,
             mode=self.mode,
         )
+        logger.info("Performance metrics for change predictions:")
         change_metrics = calculate_performance_metrics(
             df_pred_change,
             model_type=self.model_type,
@@ -248,7 +258,7 @@ class CrossValidationTask(BaseModelTask):
             df_pred_train = model.predict(train_data, pred_mode="train")
             df_pred_test = model.predict(test_data, pred_mode="test")
 
-            logger.info("Evaluation results on training set:\n")
+            logger.info("Evaluation results on training set:")
             (
                 df_pred_train,
                 df_pred_change_train,
@@ -256,7 +266,7 @@ class CrossValidationTask(BaseModelTask):
                 change_metrics_train,
             ) = self.evaluate_model_performance(df_pred_train)
 
-            logger.info("Evaluation results on test set:\n")
+            logger.info("Evaluation results on test set")
             (
                 df_pred_test,
                 df_pred_change_test,

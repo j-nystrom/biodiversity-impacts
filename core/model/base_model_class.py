@@ -5,19 +5,16 @@ from typing import Any
 class BaseModel:
     def __init__(
         self,
+        mode: str,
         model_settings: dict[str, Any],
         model_vars: dict[str, Any],
-        site_name_to_idx: dict[str, int],
         logger: logging.Logger,
-        mode: str,
     ) -> None:
         # Model settings
+        self.mode = mode
         self.model_settings = model_settings
         self.model_vars = model_vars
-        self.site_name_to_idx = site_name_to_idx
-        self.idx_to_site = {idx: name for name, idx in self.site_name_to_idx.items()}
         self.logger = logger
-        self.mode = mode
 
         # Model covariates
         self.response_var = model_vars["response_var"]

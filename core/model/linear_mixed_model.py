@@ -15,13 +15,12 @@ from core.model.model_utils import standardize_continuous_covariates
 class LinearMixedModel(BaseModel):
     def __init__(
         self,
+        mode: str,
         model_settings: dict[str, Any],
         model_vars: dict[str, Any],
-        site_name_to_idx: dict[str, int],
         logger: logging.Logger,
-        mode: str,
     ) -> None:
-        super().__init__(model_settings, model_vars, site_name_to_idx, logger, mode)
+        super().__init__(mode, model_settings, model_vars, logger)
 
         # Fixed effects
         self.response_col_name = (

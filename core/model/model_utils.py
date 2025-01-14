@@ -229,6 +229,7 @@ def calculate_performance_metrics(
             y_pred = df.get_column("Delta_predicted_RE").to_numpy()
         elif model_type == "lmm" and mode == "crossval":
             y_pred = df.get_column("Delta_predicted_FE").to_numpy()
+            y_pred_re = df.get_column("Delta_predicted_RE").to_numpy()
 
     # Calculate quartiles for observed values
     q1 = np.percentile(y_true, 25)
@@ -325,28 +326,6 @@ def calculate_performance_metrics(
     pearson_corr_top, _ = pearsonr(top_quartile_true, top_quartile_pred)
     spearman_corr_top, _ = spearmanr(top_quartile_true, top_quartile_pred)
 
-    # Log quartile-specific metrics
-    logger.info(
-        "\nBottom quartile performance:\n"
-        f" - R2 (standard): {r2_std_bottom:.3f}\n"
-        f" - R2 (variance explained): {r2_var_bottom:.3f}\n"
-        f" - Mean absolute error: {mean_abs_error_bottom:.3f}\n"
-        f" - Median absolute error: {median_abs_error_bottom:.3f}\n"
-        f" - Pearson correlation: {pearson_corr_bottom:.3f}\n"
-        f" - Spearman rank correlation: {spearman_corr_bottom:.3f}\n"
-        f" - Bias ratio (pred/obs): {bias_metrics['bias_bottom']:.3f}\n"
-    )
-    logger.info(
-        "\nTop quartile performance:\n"
-        f" - R2 (standard): {r2_std_top:.3f}\n"
-        f" - R2 (variance explained): {r2_var_top:.3f}\n"
-        f" - Mean absolute error: {mean_abs_error_top:.3f}\n"
-        f" - Median absolute error: {median_abs_error_top:.3f}\n"
-        f" - Pearson correlation: {pearson_corr_top:.3f}\n"
-        f" - Spearman rank correlation: {spearman_corr_top:.3f}\n"
-        f" - Bias ratio (pred/obs): {bias_metrics['bias_top']:.3f}\n"
-    )
-
     # Return all metrics
     metrics = {
         "r2_std": r2_std,
@@ -369,6 +348,13 @@ def calculate_performance_metrics(
         "spearman_corr_top": spearman_corr_top,
         "bias_metrics": bias_metrics,
     }
+    if pred_type == "state":
+        metrics.update(
+            {
+                "r2_std_trans": r2_std_trans,
+                "r2_var_trans": r2_var_trans,
+            }
+        )
 
     return metrics
 
