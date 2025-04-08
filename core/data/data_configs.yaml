@@ -243,3 +243,27 @@ road_density:
     - Africa
     - Asia
     - Americas
+
+
+# LandUseFractionTask --------------------------------------
+
+lu_fractions:
+  polygon_sizes_km: [1, 5, 10, 50]
+  input_raster_base_path: "../../../data/ESA/lulc_esa_"
+  output_base_path: "../../../data/output/land_use_fractions/lu_fractions_"
+  agg_settings:
+      include_all_pixels: True
+  simplified_lu_mapping:  # https://maps.elie.ucl.ac.be/CCI/viewer/download/CCI-LC_Maps_Legend.pdf
+    Cropland: [10, 11, 12, 20]
+    Mosaic_cropland_natural: [30, 40]
+    Tree_cover: [50, 60, 61, 62, 70, 71, 72, 80, 81, 82, 90]
+    Mosaic_tree_shrub: [100, 110]
+    Shrubland: [120, 121, 122]
+    Grassland: [130]
+    Lichen_mosses: [140]
+    Sparse_vegetation: [150, 151, 152, 153]
+    Flooded_vegetation: [160, 170, 180]
+    Urban_areas: [190]
+    Bare_areas: [200, 201, 202]
+    Water_bodies: [210]
+    Permanent_snow_ice: [220]

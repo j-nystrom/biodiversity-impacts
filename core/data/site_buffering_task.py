@@ -135,7 +135,7 @@ class SiteBufferingTask:
         # Save one shapefile for each buffer distance in UTM and global formats
         for dist, path in zip(self.polygon_sizes_km, self.global_polygon_paths):
             gdf_res = gpd.GeoDataFrame(
-                gdf_coords[["SSBS", f"glob_{dist}km"]],
+                gdf_coords[["SSBS", "Year", f"glob_{dist}km"]],
                 geometry=f"glob_{dist}km",
             )
             # Save to file, using Fiona engine to avoid issues with missing CRS
@@ -148,7 +148,7 @@ class SiteBufferingTask:
 
         for dist, path in zip(self.polygon_sizes_km, self.utm_polygon_paths):
             gdf_res = gpd.GeoDataFrame(
-                gdf_coords[["SSBS", f"utm_{dist}km"]],
+                gdf_coords[["SSBS", "Year", f"utm_{dist}km"]],
                 geometry=f"utm_{dist}km",
             )
             validate_output_files(
@@ -162,7 +162,7 @@ class SiteBufferingTask:
     def create_site_coord_geometries(self, df: pl.DataFrame) -> gpd.GeoDataFrame:
         """
         Generate a geodataframe with Point geometries for each unique site
-        based on longitude and latitude.
+        based on longitude, latitude, and sampling year.
 
         NOTE: This should be made more generic if expanding data to GBIF. This
         mainly concerns consistent, generic column names.
@@ -172,8 +172,8 @@ class SiteBufferingTask:
                 latitude of sampling sites.
 
         Returns:
-            - gdf_site_coords: Geodataframe with point coordinates for each
-                sampling site.
+            - gdf_site_coords: Geodataframe with point coordinates and sample
+                years for each sampling site.
 
         Raises:
             - ValueError: If the input dataframe is missing required columns or
@@ -184,11 +184,21 @@ class SiteBufferingTask:
         # Check that the input data is valid
         validate_site_coordinate_data(df, required_columns=self.site_required_cols)
 
-        # Get the coordinates for each unique site and generate coord tuples
+        # Add Sample_year column if it does not exist
+        if "Year" not in df.columns:
+            df = df.with_columns(
+                pl.col("Sample_midpoint")
+                .str.to_datetime("%Y-%m-%d")
+                .dt.year()
+                .alias("Year")
+            )
+
+        # Get the coordinates and sample year for each unique site
         df_long_lat = df.group_by("SSBS").agg(
             [
                 pl.first("Longitude"),
                 pl.first("Latitude"),
+                pl.first("Year"),
             ]
         )
         coordinates = zip(
@@ -200,7 +210,11 @@ class SiteBufferingTask:
         geometry = [Point(x, y) for x, y in coordinates]
         gdf_coords = (
             gpd.GeoDataFrame(
-                {"SSBS": df_long_lat.get_column("SSBS"), "geometry": geometry}
+                {
+                    "SSBS": df_long_lat.get_column("SSBS"),
+                    "Year": df_long_lat.get_column("Year"),
+                    "geometry": geometry,
+                }
             )
             .set_crs(self.site_coords_crs)
             .sort_values("SSBS", ascending=True)
@@ -244,7 +258,7 @@ class SiteBufferingTask:
 
         # Buffer array of Points into the chosen size and type
         utm_coords_buffered = shapely.buffer(
-            points, polygon_size * 1000, cap_style=polygon_type
+            points, distance=polygon_size * 1000, cap_style=polygon_type
         )
         logger.info("Finished buffering points.")
 
