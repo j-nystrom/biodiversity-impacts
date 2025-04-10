@@ -11,7 +11,7 @@ predicts:
   predicts_2016_path: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
   predicts_2022_path: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
   merged_data_path: "../../../data/output/predicts/all_predicts.parquet"
-  # The raw PREDICTS data is not organized in a logical way. This list
+  # The raw PREDICTS columns are not organized in a logical way. This list
   # specifies the order of columns in the final dataframe
   output_col_order:
   - _id
