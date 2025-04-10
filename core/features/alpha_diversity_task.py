@@ -45,20 +45,20 @@ class AlphaDiversityTask:
         """
         Attributes:
             - run_folder_path: Folder for storing logs and certain outputs.
-            - feature_data_path: Path to the shared feature data generated in
-                previous task (shared between alpha and beta diversity tasks).
+            - feature_data_path: c.
             - groupby_cols: 'SS', 'SSB' and 'SSBS' always used for grouping.
             - taxonomic_levels: The levels in the taxonomic hierarchy that
                 should be used as groupby columns when calculating diversity at
                 that particular level.
-            - output_data_paths: Output path for the final dataframe.
+            - output_data_paths: Output path for the final dataframes for each
+                grouping level.
         """
         self.run_folder_path = run_folder_path
         self.feature_data_path: str = configs.feature_generation.feature_data_path
         self.groupby_cols: list[str] = configs.diversity_metrics.groupby_cols
         self.taxonomic_levels: list[str] = configs.diversity_metrics.taxonomic_levels
         self.output_data_paths: dict[str, str] = (
-            configs.diversity_metrics.output_data_paths.alpha
+            configs.diversity_metrics.alpha.output_data_paths
         )
 
     def run_task(self) -> None:
@@ -99,9 +99,13 @@ class AlphaDiversityTask:
             df_first = df.group_by("SSBS").first()
             df_first = df_first.drop(
                 [
-                    "Taxon_name_entered",
-                    "Measurement",
-                    "Effort_corrected_measurement",
+                    col
+                    for col in [
+                        "Taxon_name_entered",
+                        "Measurement",
+                        "Effort_corrected_measurement",
+                    ]
+                    if col in df_first.columns
                 ]
             )
             df_first = df_first.drop(self.taxonomic_levels[i:])

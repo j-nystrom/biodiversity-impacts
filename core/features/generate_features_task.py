@@ -63,7 +63,7 @@ class GenerateFeaturesTask:
 
     def run_task(self) -> None:
         """
-        The following key processing steps are performed:
+        Perform the following processing steps:
             - Generate dummy variables (one-hot encoding) for the categorical
                 land-use data.
             - Combine land-use type and intensity into one column and generate
@@ -98,6 +98,12 @@ class GenerateFeaturesTask:
         df = GenerateFeaturesTask.calculate_study_mean_densities(
             df, variables=self.density_vars + new_cols  # Include transformed cols
         )
+
+        # Handle any invalid values in continuous columns
+        all_continuous_vars = (
+            self.density_vars + new_cols + self.bioclimatic_vars + self.topographic_vars
+        )
+        df = self.handle_invalid_values(df, columns=all_continuous_vars)
 
         # Save the final dataframe to disk
         validate_output_files(
@@ -248,6 +254,25 @@ class GenerateFeaturesTask:
             .otherwise(0)
             .alias("Urban_All uses")
         )
+        df_res = df_res.with_columns(
+            pl.when(pl.col("Predominant_land_use") == "Cropland")
+            .then(1)
+            .otherwise(0)
+            .alias("Cropland_All uses")
+        )
+        # Combine urban land use of all intensities
+        df_res = df_res.with_columns(
+            pl.when(pl.col("Predominant_land_use") == "Urban")
+            .then(1)
+            .otherwise(0)
+            .alias("Urban_All uses")
+        )
+        df_res = df_res.with_columns(
+            pl.when(pl.col("Predominant_land_use") == "Pasture")
+            .then(1)
+            .otherwise(0)
+            .alias("Pasture_All uses")
+        )
 
         # Combine light and intense use for cropland and pasture
         df_res = df_res.with_columns(
@@ -268,6 +293,26 @@ class GenerateFeaturesTask:
             .then(1)
             .otherwise(0)
             .alias("Pasture_Light_Intense")
+        )
+
+        df_res = df_res.with_columns(
+            pl.when(
+                (pl.col("Predominant_land_use") == "Primary vegetation")
+                & (pl.col("Use_intensity").is_in(["Light use", "Intense use"]))
+            )
+            .then(1)
+            .otherwise(0)
+            .alias("Primary vegetation_Light_Intense")
+        )
+
+        df_res = df_res.with_columns(
+            pl.when(
+                (pl.col("Predominant_land_use").str.contains("(?i)secondary"))
+                & (pl.col("Use_intensity").is_in(["Light use", "Intense use"]))
+            )
+            .then(1)
+            .otherwise(0)
+            .alias("Secondary vegetation_Light_Intense")
         )
 
         return df_res
@@ -375,3 +420,92 @@ class GenerateFeaturesTask:
 
         logger.info(f"Finished creating dummy columns for {column_name}.")
         return df_dummies
+
+    @staticmethod
+    def handle_invalid_values(df: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
+        """
+        Check for NaN or infinite values in specified columns and replace them
+        with the mean valuein the corresponding 'SSB' group. Log any
+        replacements.
+
+        Parameters:
+        - df: Input Polars DataFrame containing the data to process.
+        - columns: List of column names to check for invalid values.
+
+        Returns:
+        - A Polars DataFrame with invalid values replaced.
+        """
+        logger.info("Handling invalid values in specified (continuous) columns.")
+
+        for col in columns:
+            if col not in df.columns:
+                logger.warning(f"Column '{col}' not found in the DataFrame.")
+                continue
+
+            # Identify invalid values (NaN or infinite)
+            nan_count = df.filter(pl.col(col).is_nan()).height
+            null_count = df.filter(pl.col(col).is_null()).height
+            inf_count = df.filter(pl.col(col).is_infinite()).height
+            total_invalid = nan_count + null_count + inf_count
+
+            if nan_count > 0:
+                logger.warning(f"Column {col} contains {nan_count} NaNs.")
+            elif null_count > 0:
+                logger.warning(f"Column {col} contains {null_count} NULLs.")
+            elif inf_count > 0:
+                logger.warning(f"Column {col} contains {inf_count} infinite values.")
+            else:
+                logger.info(f"No NaNs or NULLs found in column {col}.")
+
+            if total_invalid > 0:
+                # Calculate group means for the column based on 'SSB'
+                df_group_means = (
+                    df.filter(
+                        ~pl.col(col).is_nan()
+                        & ~pl.col(col).is_infinite()
+                        & ~pl.col(col).is_null()
+                    )
+                    .group_by("SSB")
+                    .agg(pl.col(col).mean().alias("mean_value"))
+                )
+
+                # Join group means back to the DataFrame
+                df = df.join(df_group_means, on="SSB", how="left")
+
+                # Replace invalid values with the group mean
+                df = df.with_columns(
+                    pl.when(
+                        pl.col(col).is_nan()
+                        | pl.col(col).is_infinite()
+                        | pl.col(col).is_null()
+                    )
+                    .then(pl.col("mean_value"))
+                    .otherwise(pl.col(col))
+                    .alias(col)
+                )
+
+                # Drop the intermediate 'mean_value' column
+                df = df.drop("mean_value")
+
+                # Check results of the replacement
+                nan_count_after = df.filter(pl.col(col).is_nan()).height
+                null_count_after = df.filter(pl.col(col).is_null()).height
+                inf_count_after = df.filter(pl.col(col).is_infinite()).height
+                total_invalid_after = (
+                    nan_count_after + null_count_after + inf_count_after
+                )
+
+                if total_invalid_after > 0:
+                    logger.warning(
+                        f"Failed to replace all invalid values in column '{col}'. "
+                        f"Remaining - NaNs: {nan_count_after},"
+                        f"NULLs: {null_count_after}, Inf: {inf_count_after}."
+                    )
+                else:
+                    logger.info(
+                        f"Successfully replaced all invalid values in column '{col}'."
+                    )
+            else:
+                logger.info(f"No invalid values found in column '{col}'.")
+
+        return df

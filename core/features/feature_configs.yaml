@@ -172,8 +172,7 @@ feature_generation:
   feature_data_path: "../../../data/output/features/feature_data.parquet"
 
 
-# AlphaDiversityTask --------------------------------------
-# BetaDiversityTask --------------------------------------
+# Diversity metric tasks --------------------------------------
 
 diversity_metrics:
   # All diversity metrics are calculated at the site level, hence the first set
@@ -186,17 +185,31 @@ diversity_metrics:
     - Class
     - Order
 
-  output_data_paths:
-    alpha:
+# AlphaDiversityTask --------------------------------------
+
+  alpha:
+    output_data_paths:
       All_species: "../../../data/output/alpha_diversity/alpha_all_species.parquet"
       Kingdom: "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
       Phylum: "../../../data/output/alpha_diversity/alpha_phylum.parquet"
       Class: "../../../data/output/alpha_diversity/alpha_class.parquet"
       Order: "../../../data/output/alpha_diversity/alpha_order.parquet"
 
-    beta:
+# BetaDiversityTask --------------------------------------
+
+  beta:
+    environmental_dist_vars:  # Used to calculate the environmental distance
+    # NOTE: Potentially just use all the environmental variables
+      - Max_temp_warmest_month_1km
+      - Min_temp_coldest_month_1km
+      - Precip_wettest_month_1km
+      - Precip_driest_month_1km
+      - Elevation_1km
+
+    output_data_paths:
+      # NOTE: Temporarily commented out to avoid unnecessary processing
       All_species: "../../../data/output/beta_diversity/beta_all_species.parquet"
-      Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
-      Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
-      Class: "../../../data/output/beta_diversity/beta_class.parquet"
-      Order: "../../../data/output/beta_diversity/beta_order.parquet"
+      #Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
+      #Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
+      #Class: "../../../data/output/beta_diversity/beta_class.parquet"
+      #Order: "../../../data/output/beta_diversity/beta_order.parquet"
