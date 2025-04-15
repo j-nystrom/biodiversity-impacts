@@ -95,23 +95,23 @@ feature_generation:
     - Road_density_10km
     - Road_density_50km
 
-  bioclimatic_vars:  # Columns related to bioclimatic information
+  bioclimatic_vars:  # Columns related to bioclimatic conditions
     - Annual_mean_temp_1km
     - Temp_seasonality_1km
     - Max_temp_warmest_month_1km
     - Min_temp_coldest_month_1km
     - Annual_precip_1km
+    - Precip_seasonality_1km
     - Precip_wettest_month_1km
     - Precip_driest_month_1km
-    - Precip_seasonality_1km
     - Annual_mean_temp_10km
     - Temp_seasonality_10km
     - Max_temp_warmest_month_10km
     - Min_temp_coldest_month_10km
     - Annual_precip_10km
+    - Precip_seasonality_10km
     - Precip_wettest_month_10km
     - Precip_driest_month_10km
-    - Precip_seasonality_10km
 
   topographic_vars:  # Columns related to topographic information
     - Elevation_1km
@@ -180,6 +180,7 @@ diversity_metrics:
   # is created (i.e. each frame has a different level of granularity)
   groupby_cols: [SS, SSB, SSBS]
   taxonomic_levels:
+    - Custom_taxonomic_group  # This is defined in the generate features task
     - Kingdom
     - Phylum
     - Class
@@ -188,12 +189,14 @@ diversity_metrics:
 # AlphaDiversityTask --------------------------------------
 
   alpha:
-    output_data_paths:
+    output_data_paths:  # NOTE: Logic for the "Custom" version is specified in the task
+      # NOTE: Temporarily commented out to avoid unnecessary processing
       All_species: "../../../data/output/alpha_diversity/alpha_all_species.parquet"
-      Kingdom: "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
-      Phylum: "../../../data/output/alpha_diversity/alpha_phylum.parquet"
-      Class: "../../../data/output/alpha_diversity/alpha_class.parquet"
-      Order: "../../../data/output/alpha_diversity/alpha_order.parquet"
+      Custom: "../../../data/output/alpha_diversity/alpha_custom.parquet"
+      # Kingdom: "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
+      # Phylum: "../../../data/output/alpha_diversity/alpha_phylum.parquet"
+      # Class: "../../../data/output/alpha_diversity/alpha_class.parquet"
+      # Order: "../../../data/output/alpha_diversity/alpha_order.parquet"
 
 # BetaDiversityTask --------------------------------------
 
@@ -206,10 +209,11 @@ diversity_metrics:
       - Precip_driest_month_1km
       - Elevation_1km
 
-    output_data_paths:
+    output_data_paths:  # NOTE: Logic for the "Custom" version is specified in the task
       # NOTE: Temporarily commented out to avoid unnecessary processing
       All_species: "../../../data/output/beta_diversity/beta_all_species.parquet"
-      #Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
-      #Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
-      #Class: "../../../data/output/beta_diversity/beta_class.parquet"
-      #Order: "../../../data/output/beta_diversity/beta_order.parquet"
+      Custom: "../../../data/output/beta_diversity/beta_custom.parquet"
+      # Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
+      # Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
+      # Class: "../../../data/output/beta_diversity/beta_class.parquet"
+      # Order: "../../../data/output/beta_diversity/beta_order.parquet"
