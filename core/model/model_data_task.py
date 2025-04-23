@@ -696,10 +696,11 @@ class ModelDataTask:
         the spatial and environmental folds.
 
         TODO: Check if there are libraries that can be used for the spatial
-        and environmental CV. In the current implementation, clustering at the
-        study level results in studies appearing in multiple folds, in case a
-        study spans multiple strata. This is a simplification that should be
-        evaluated.
+        and environmental CV.
+
+        NOTE: In the current implementation, splitting at the study level
+        results in studies appearing in multiple folds, in case a study spans
+        multiple strata. This is a simplification that should be evaluated.
 
         Args:
             - df: DataFrame with the model data to split.
@@ -768,12 +769,13 @@ class ModelDataTask:
                         logger.warning(
                             f"Stratum '{group}' has fewer than {k} studies. Skipping."
                         )
+                        continue
                     # Get the global indices for later mapping
                     global_idx = df_group.index
 
                     # Do GroupKFold splitting at the study level
                     for i, (_, local_test_idx) in enumerate(
-                        group_kfold.split(X=df, groups=df["SS"])
+                        group_kfold.split(X=df_group, groups=df_group["SS"])
                     ):
                         # Map local indices to global indices to assign the
                         # right fold IDs to the original dataframe, which is at
@@ -789,7 +791,6 @@ class ModelDataTask:
                         logger.warning(
                             f"Stratum '{group}' has fewer than {k} sites. Skipping."
                         )
-                        continue
 
                     # StratifiedKFold creates balanced folds across strata
                     # If there are no strata, this is equivalent to the
