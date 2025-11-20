@@ -8,14 +8,22 @@ logger = create_logger(__name__)
 
 class BaseDAG:
     """
-    Base DAG from which other DAGs inherit. It implements a 'run_dag' method
-    that runs all the Tasks of a DAG in sequence.
+    Base DAG from which other DAGs inherit. DAGs are the entry points to the
+    codebase, specifying which tasks should be run. It implements a 'run_dag'
+    method that runs all the Tasks of a DAG in sequence. For available DAGs
+    and their associated tasks, see 'dags.py'.
+
+    For example, from core/dags we can run the CrossValidationDAG like so:
+        python dags.py crossval
+        or run two DAGs in sequence:
+        python dags.py training crossval
     """
 
     def __init__(self, mode: Optional[str] = None) -> None:
         """
         Args:
-            mode: Optional mode to pass to tasks (e.g., "training", "crossval").
+            mode: Specifically used to distingusih between training and
+                cross-validation modes for model-related DAGs.
         """
         self.tasks: list = []
         self.run_folder_path = create_run_folder_path()
@@ -23,7 +31,6 @@ class BaseDAG:
 
     def run_dag(self) -> None:
         for task in self.tasks:
-            # Pass `mode` to tasks if they expect it
             if self.mode:
                 task_instance = task(self.run_folder_path, mode=self.mode)
             else:
