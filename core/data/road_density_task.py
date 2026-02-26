@@ -25,8 +25,8 @@ class RoadDensityTask:
     Task for calculating the road density inside sampling site polygons with
     varying radius.
 
-    TODO: Refactor to use polars instead of pandas. Should also merge the
-    Oceania files here instead of in a separate notebook.
+    TODO: Low prio: Refactor to use polars instead of pandas. Could also merge
+    the Oceania files here instead of in a separate notebook.
     """
 
     def __init__(self) -> None:

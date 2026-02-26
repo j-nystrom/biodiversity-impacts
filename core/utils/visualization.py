@@ -75,7 +75,8 @@ def plot_calibration_and_residuals(
     bias_metrics = metrics["bias_metrics"]
     bias_values = bias_metrics["bias_per_decile"]
     overall_bias_ratio = bias_metrics["overall_bias_ratio"]
-    r2_std = metrics["r2_std"]
+    pearson_corr = metrics["pearson_corr"]
+    mean_abs_error = metrics["mean_abs_error"]
     r2_var = metrics["r2_var"]
 
     # Create 2x2 subplot grid
@@ -106,7 +107,7 @@ def plot_calibration_and_residuals(
     axes[0, 0].text(
         horizontal_offset,  # Horizontal offset (left aligned)
         1.0 - vertical_offset,  # Top position
-        f"R² (standard def.)= {r2_std:.3f}",
+        f"Pearson correlation = {pearson_corr:.3f}",
         fontsize=11,
         transform=axes[0, 0].transAxes,  # Use axes coordinate system
         verticalalignment="top",  # Align text to top
@@ -114,8 +115,17 @@ def plot_calibration_and_residuals(
     )
     axes[0, 0].text(
         horizontal_offset,
-        1.0 - 3 * vertical_offset,  # Adjust for the second line
-        f"R² (var. explained)= {r2_var:.3f}",
+        1.0 - 4 * vertical_offset,  # Adjust for the second line
+        f"R² = {r2_var:.3f}",
+        fontsize=11,
+        transform=axes[0, 0].transAxes,
+        verticalalignment="top",
+        horizontalalignment="left",
+    )
+    axes[0, 0].text(
+        horizontal_offset,
+        1.0 - 8 * vertical_offset,  # Adjust for the third line
+        f"Mean absolute error = {mean_abs_error:.3f}",
         fontsize=11,
         transform=axes[0, 0].transAxes,
         verticalalignment="top",
@@ -198,13 +208,31 @@ def plot_calibration_by_group(
     group_idx: np.array,
     group_mapping: dict[int, str],
 ) -> None:
-    # Determine the number of unique groups
-    groups = np.unique(group_idx)
-    n_groups = len(groups)
+    """
+    Plot calibration (Observed vs Predicted) for each group, sorted by the
+    number of observations.
+
+    Args:
+        y_true: Array of true observed values.
+        y_pred: Array of predicted values.
+        group_idx: Array of group indices corresponding to each observation.
+        group_mapping: Mapping of group indices to their names.
+    """
+    # Determine the number of unique groups and their sizes
+    groups, counts = np.unique(group_idx, return_counts=True)
+
+    # Sort groups by the number of observations, from largest to smallest
+    sorted_groups = groups[np.argsort(-counts)]
+    sorted_counts = counts[np.argsort(-counts)]
+
+    # Log group sizes
+    print("Groups sorted by size (largest to smallest):")
+    for group, count in zip(sorted_groups, sorted_counts):
+        print(f"{group_mapping.get(group, group)}: {count} observations")
 
     # Calculate the dimensions of the grid of subplots
     n_cols = 3
-    n_rows = int(np.ceil(n_groups / n_cols))
+    n_rows = int(np.ceil(len(sorted_groups) / n_cols))
 
     # Set the figsize dynamically based on the number of groups (arbitrary
     # width and height per subplot)
@@ -217,7 +245,7 @@ def plot_calibration_by_group(
     )
 
     axes = axes.ravel()  # Flatten the axs array for easy iteration
-    for idx, group in enumerate(groups):
+    for idx, group in enumerate(sorted_groups):
         # Select the data for the current group
         mask = group_idx == group
         y_true_group = y_true[mask]
@@ -268,7 +296,7 @@ def plot_calibration_by_group(
 
     # Hide any empty subplots that aren't used (if the number of groups is not
     # a perfect square)
-    for ax in axes[n_groups:]:
+    for ax in axes[len(sorted_groups) :]:
         ax.set_visible(False)
 
     plt.show()
@@ -326,7 +354,7 @@ def plot_residuals_by_group(
 
 def print_evaluation_metrics_train(metrics: dict[str, Any]) -> None:
     """Print model performance metrics in a structured format."""
-    print("MKodel performance metrics")
+    print("Model performance metrics")
     print("=" * 80)
 
     # Overall metrics
@@ -341,26 +369,32 @@ def print_evaluation_metrics_train(metrics: dict[str, Any]) -> None:
     print()
 
     # Bottom quartile metrics
-    print("Bottom quartile metrics:")
-    print(f"  - R² (standard def): {metrics['r2_std_bottom']:.3f}")
-    print(f"  - R² (variance explained): {metrics['r2_var_bottom']:.3f}")
-    print(f"  - Mean absolute error: {metrics['mean_abs_error_bottom']:.3f}")
-    print(f"  - Median absolute error: {metrics['median_abs_error_bottom']:.3f}")
-    print(f"  - Pearson correlation: {metrics['pearson_corr_bottom']:.3f}")
-    print(f"  - Spearman correlation: {metrics['spearman_corr_bottom']:.3f}")
-    print(f"  - Bias ratio: {metrics['bias_metrics']['bias_bottom']:.3f}")
-    print()
+    try:  # Bottom / top quartile metrics not generated for all runs
+        print("Bottom quartile metrics:")
+        print(f"  - R² (standard def): {metrics['r2_std_bottom']:.3f}")
+        print(f"  - R² (variance explained): {metrics['r2_var_bottom']:.3f}")
+        print(f"  - Mean absolute error: {metrics['mean_abs_error_bottom']:.3f}")
+        print(f"  - Median absolute error: {metrics['median_abs_error_bottom']:.3f}")
+        print(f"  - Pearson correlation: {metrics['pearson_corr_bottom']:.3f}")
+        print(f"  - Spearman correlation: {metrics['spearman_corr_bottom']:.3f}")
+        print(f"  - Bias ratio: {metrics['bias_metrics']['bias_bottom']:.3f}")
+        print()
+    except KeyError:
+        pass
 
     # Top quartile metrics
-    print("Top quartile metrics:")
-    print(f"  - R² (standard def): {metrics['r2_std_top']:.3f}")
-    print(f"  - R² (variance explained): {metrics['r2_var_top']:.3f}")
-    print(f"  - Mean absolute error: {metrics['mean_abs_error_top']:.3f}")
-    print(f"  - Median absolute error: {metrics['median_abs_error_top']:.3f}")
-    print(f"  - Pearson correlation: {metrics['pearson_corr_top']:.3f}")
-    print(f"  - Spearman correlation: {metrics['spearman_corr_top']:.3f}")
-    print(f"  - Bias ratio: {metrics['bias_metrics']['bias_top']:.3f}")
-    print()
+    try:
+        print("Top quartile metrics:")
+        print(f"  - R² (standard def): {metrics['r2_std_top']:.3f}")
+        print(f"  - R² (variance explained): {metrics['r2_var_top']:.3f}")
+        print(f"  - Mean absolute error: {metrics['mean_abs_error_top']:.3f}")
+        print(f"  - Median absolute error: {metrics['median_abs_error_top']:.3f}")
+        print(f"  - Pearson correlation: {metrics['pearson_corr_top']:.3f}")
+        print(f"  - Spearman correlation: {metrics['spearman_corr_top']:.3f}")
+        print(f"  - Bias ratio: {metrics['bias_metrics']['bias_top']:.3f}")
+        print()
+    except KeyError:
+        pass
 
 
 def print_evaluation_metrics_crossval(metrics: list[dict[str, Any]]) -> None:

@@ -29,39 +29,48 @@ class AlphaDiversityTask:
     hierarchical granularity in the model later on.
 
     The alpha metrics currently included are total species abundance,
-    mean species abundance, species richness and two versions of the Shannon
-    index. (Mean species abundance is not to be confused with the MSA metric
-    from the GLOBIO model, which is a beta diversity metric).
+    arithmetic and geometric mean species abundance, species richness and two
+    versions of the Shannon index. (Mean species abundance is not to be
+    confused with the MSA metric from the GLOBIO model, which is a beta
+    diversity metric).
 
     NOTE: There are more data for species richness than for abundance-based
     metrics. If we really want to develop a model for richness it needs to be a
     separate mode of this task, which doesn't filter out non-abundance studies.
     Right now they are filtered out to match the sites included for the
-    abundance-based metrics.
+    abundance-based metrics, so that dataframes are equal-length.
     """
 
     def __init__(self, run_folder_path: str) -> None:
         """
         Attributes:
             - run_folder_path: Folder for storing logs and certain outputs.
-            - feature_data_path: Path to the shared feature data generated in
-                previous task (shared between alpha and beta diversity tasks).
+            - feature_data_path: c.
             - groupby_cols: 'SS', 'SSB' and 'SSBS' always used for grouping.
             - taxonomic_levels: The levels in the taxonomic hierarchy that
-                should be used as groupby columns when calculating diversity.
-            - output_data_paths: Output path for the final dataframe.
+                should be used as groupby columns when calculating diversity at
+                that particular level.
+            - output_data_paths: Output path for the final dataframes for each
+                grouping level.
         """
         self.run_folder_path = run_folder_path
         self.feature_data_path: str = configs.feature_generation.feature_data_path
         self.groupby_cols: list[str] = configs.diversity_metrics.groupby_cols
         self.taxonomic_levels: list[str] = configs.diversity_metrics.taxonomic_levels
         self.output_data_paths: dict[str, str] = (
-            configs.diversity_metrics.output_data_paths.alpha
+            configs.diversity_metrics.alpha.output_data_paths
         )
 
     def run_task(self) -> None:
         """
-        xxx
+        Perform the following processing steps:
+            - Load the feature data from the previous step
+            - For each taxonomic granularity we do the following steps:
+            - Calculate the alpha diversity metrics at each taxonomic level
+                (total abundance, arithmetic mean abundance, species richness,
+                geometric mean abundance, Shannon index)
+            - Get one instance and its attributes of each site (SSBS)
+            - Join all the alpha diversity metrics to that dataframe
         """
         logger.info("Initiating calculation of alpha diversity metrics.")
         start = time.time()
@@ -78,7 +87,8 @@ class AlphaDiversityTask:
             )
 
             df_tot_abund = self.calculate_total_abundance(df)
-            df_mean_abund = self.calculate_mean_abundance(df)
+            df_arithmetic_mean_abund = self.calculate_arithmetic_mean_abundance(df)
+            df_geometric_mean_abund = self.calculate_geometric_mean_abundance(df)
             df_richness = self.calculate_species_richness(df)
             df_shannon = self.calculate_shannon_index(df)
 
@@ -89,39 +99,47 @@ class AlphaDiversityTask:
             df_first = df.group_by("SSBS").first()
             df_first = df_first.drop(
                 [
-                    "Taxon_name_entered",
-                    "Measurement",
-                    "Effort_corrected_measurement",
+                    col
+                    for col in [
+                        "Taxon_name_entered",
+                        "Measurement",
+                        "Effort_corrected_measurement",
+                    ]
+                    if col in df_first.columns
                 ]
             )
             df_first = df_first.drop(self.taxonomic_levels[i:])
 
             # Sequentially join the alpha diversity metrics to create one df
-            df_res = df_tot_abund.join(  # Total abundance + mean abundance
-                df_mean_abund,
+            df_res = df_tot_abund.join(  # Total abundance + arithmetic mean abundance
+                df_arithmetic_mean_abund,
                 on=self.groupby_cols,
                 how="left",
             )
+
+            df_res = df_res.join(  # + Geometric mean abundance
+                df_geometric_mean_abund,
+                on=self.groupby_cols,
+                how="left",
+            )
+
             df_res = df_res.join(  # + Species richness
                 df_richness,
                 on=self.groupby_cols,
                 how="left",
             )
+
             df_res = df_res.join(  # + Shannon index
                 df_shannon,
                 on=self.groupby_cols,
                 how="left",
             )
 
-            # Finally, include all other features in the original dataframe
+            # Finally, include all other attributes in the original dataframe
             # at the right level of aggregation
-            df_res = df_res.join(
-                df_first,
-                on=self.groupby_cols,
-                how="left",
-            )
+            df_res = df_res.join(df_first, on="SSBS", how="left", validate="m:1")
 
-            # Save output file for this level of taxonomic aggregation
+            # Save the output file for this level of taxonomic aggregation
             validate_output_files(
                 file_paths=[path], files=[df_res], allow_overwrite=True
             )
@@ -129,7 +147,7 @@ class AlphaDiversityTask:
 
             logger.info(f"Finished calculations at level: {self.groupby_cols}")
 
-            # Update the list of grouping columns for the next iteration
+            # Update the list of grouping columns for the next iteration;
             # 'taxonomic_levels' contains four taxonomic levels, we continue
             # the loop until all levels have been added to groupby_cols
             if i < len(self.taxonomic_levels):
@@ -156,9 +174,11 @@ class AlphaDiversityTask:
 
         return df_res
 
-    def calculate_mean_abundance(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Calculate the mean abundance of all species in each group."""
-        logger.info("Calculating mean species abundance.")
+    def calculate_arithmetic_mean_abundance(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Calculate the arithmetic mean abundance of all species in each
+        group: mu = sum(y_i) / n over all species i.
+        """
+        logger.info("Calculating arithmetic mean species abundance.")
 
         metric = "Mean_abundance"
         df_res = self.calculate_abundance_or_richness_metric(
@@ -168,22 +188,59 @@ class AlphaDiversityTask:
         )
         validate_alpha_diversity_calculations(df_res, metric_name=metric)
 
-        logger.info("Mean abundance calculations finished.")
+        logger.info("Arithmethic mean abundance calculations finished.")
 
         return df_res
 
+    def calculate_geometric_mean_abundance(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Calculate geometric mean abundance: mu = exp(mean(log(y_i + 1))) - 1,
+        where y_i is the abundance of species i. The +1 is added to avoid
+        taking the log of zero.
+        """
+        logger.info("Calculating geometric mean species abundance.")
+
+        metric = "Geometric_mean_abundance"
+
+        df = df.with_columns(
+            pl.col("Effort_corrected_measurement").log1p().alias("Log_abundance")
+        )
+
+        df_geom_mean = (
+            df.group_by(self.groupby_cols)
+            .agg(pl.col("Log_abundance").mean().alias("Log_mean"))
+            .with_columns((pl.col("Log_mean").exp() - 1).alias(metric))
+            .drop("Log_mean")
+        )
+
+        # Scale within study
+        df_geom_mean = self.scale_by_study_max(df_geom_mean, diversity_metric=metric)
+
+        validate_alpha_diversity_calculations(df_geom_mean, metric_name=metric)
+        logger.info("Geometric mean abundance calculations finished.")
+
+        return df_geom_mean
+
     def calculate_species_richness(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Count the bumber of unique species in each group."""
+        """Count the number of unique species in each grouping."""
         logger.info("Calculating species richness.")
 
-        # Filter out non-occurences so we can just use count as agg function
-        df = df.filter(pl.col("Effort_corrected_measurement") != 0)
+        # Transform abundance data to binary presence / absence
+        df = df.with_columns(
+            pl.when(pl.col("Effort_corrected_measurement") > 0)
+            .then(1)
+            .otherwise(0)
+            .alias("Effort_corrected_measurement_binary")
+        )
+        df = df.drop("Effort_corrected_measurement").rename(
+            {"Effort_corrected_measurement_binary": "Effort_corrected_measurement"}
+        )  # Rename to original column name for compatibility with code below
 
         metric = "Species_richness"
         df_res = self.calculate_abundance_or_richness_metric(
             df=df,
             metric_name=metric,
-            agg_function=pl.count,
+            agg_function=pl.sum,  # Sum over the binary column
         )
         validate_alpha_diversity_calculations(df_res, metric_name=metric)
 
@@ -205,12 +262,14 @@ class AlphaDiversityTask:
             - df: Dataframe with input data.
 
         Returns:
-            - df_shannon: Dataframe with Shannon index and modified Shannon index,
-                including their scaled versions.
+            - df_shannon: Dataframe with Shannon index and modified Shannon
+                index, including their scaled versions.
         """
         logger.info("Calculating site-level Shannon index numbers.")
 
         # Reuse existing functions for total abundance and species richness
+        # This is the total abundance / richness at the site level, either for
+        # all species or per taxonomic level in this iteration
         df_tot_abund = self.calculate_total_abundance(df)
         df_richness = self.calculate_species_richness(df)
 
@@ -250,18 +309,22 @@ class AlphaDiversityTask:
 
         # Sum Shannon components to get the Shannon index
         df_shannon = df.group_by(self.groupby_cols).agg(
-            pl.sum("Shannon_component").alias("Shannon_index"),
-            pl.first("Total_abundance"),
+            pl.sum("Shannon_component").alias("Shannon_index")
         )
 
         # Calculate a modified Shannon index
+        df_shannon = df_shannon.join(
+            df_tot_abund.select(self.groupby_cols + ["Total_abundance"]),
+            on=self.groupby_cols,
+            how="inner",
+        )
         df_shannon = df_shannon.with_columns(
             ((pl.col("Total_abundance") + 1).log() * pl.col("Shannon_index")).alias(
                 "Modified_Shannon_index"
             )
         )
 
-        # Scale Shannon indices
+        # Scale the Shannon indices
         df_shannon = self.scale_by_study_max(
             df_shannon, diversity_metric="Shannon_index"
         )
@@ -286,8 +349,9 @@ class AlphaDiversityTask:
     ) -> pl.DataFrame:
         """
         Generalized function to calculate diversity metrics based on species
-        abundance richness. This is also scaled by the max value within each
-        study. It's called by the functions for each diversity metric below.
+        abundance or richness. This is also scaled by the max value within each
+        study. It's called by the respective functions for each diversity
+        metric in this file.
 
         Args:
             - df: Dataframe with input data.
@@ -301,6 +365,8 @@ class AlphaDiversityTask:
         logger.info(f"Calculating {metric_name}.")
 
         # Filter dataframe to only include abundance studies
+        # NOTE: If richness should be used in the final model, this filtering
+        # should not apply in that case
         df = df.filter(pl.col("Diversity_metric_type") == "Abundance")
 
         # Calculate the metric for the given grouping
@@ -309,16 +375,15 @@ class AlphaDiversityTask:
         )
 
         # Scale the metric within each study
-        df_scaled = AlphaDiversityTask.scale_by_study_max(
-            df_metric, diversity_metric=metric_name
-        )
+        df_scaled = self.scale_by_study_max(df_metric, diversity_metric=metric_name)
 
         logger.info(f"{metric_name} calculations finished.")
 
         return df_scaled
 
-    @staticmethod
-    def scale_by_study_max(df: pl.DataFrame, diversity_metric: str) -> pl.DataFrame:
+    def scale_by_study_max(
+        self, df: pl.DataFrame, diversity_metric: str
+    ) -> pl.DataFrame:
         """
         Scale diversity metrics by dividing them by the maximum value within
         the study to which they belong. This is done to make the metrics
@@ -333,15 +398,19 @@ class AlphaDiversityTask:
         """
         logger.info(f"Scaling {diversity_metric} by max values within studies.")
 
+        # Get the correcting grouping columns
+        tax_cols = [c for c in self.groupby_cols if c not in ("SS", "SSB", "SSBS")]
+        groupby_cols = ["SS"] + tax_cols
+
         # Calculate the max value within each study
-        df_max = df.group_by("SS").agg(
+        df_max = df.group_by(groupby_cols).agg(
             pl.max(diversity_metric).alias(f"Study_max_{diversity_metric}")
         )
 
         # Join the max values back to the original dataframe
         df_scaled = df.join(
-            df_max.select(["SS", f"Study_max_{diversity_metric}"]),
-            on="SS",
+            df_max.select(groupby_cols + [f"Study_max_{diversity_metric}"]),
+            on=groupby_cols,
             how="left",
         )
 

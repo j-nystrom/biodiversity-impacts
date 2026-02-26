@@ -1,8 +1,8 @@
+from collections import Counter
 from typing import Any
 
 import numpy as np
 import polars as pl
-from scipy.special import expit
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import mean_absolute_error, median_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
@@ -13,254 +13,252 @@ logger = create_logger(__name__)
 
 
 def standardize_continuous_covariates(
-    df: pl.DataFrame, vars_to_scale: list[str]
-) -> pl.DataFrame:
+    df_train: pl.DataFrame,
+    df_test: pl.DataFrame,
+    vars_to_standardize: list[str],
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
-    Standardize the continuous covariates in the dataframe, by subtracting the
-    mean and dividing by the standard devation: (x - mu_x) / sigma_x.
+    Standardize continuous covariates using training statistics.
+
+    For training-only runs, pass the same dataframe for df_train and df_test.
+    For cross-validation, pass the train and test dataframes to avoid leakage.
 
     Args:
-        - df: Dataframe containing all covariates in the 'vars_to_scale' list.
-        - vars_to_scale: List of names of covariates to be standardized.
+        - df_train: Dataframe used to fit the scaler.
+        - df_test: Dataframe to transform using the training scaler.
+        - vars_to_standardize: Covariate names to be standardized.
 
     Returns:
-        - df_res: Dataframe with standardized continuous covariates.
-
+        - df_train_res: Training dataframe with standardized covariates.
+        - df_test_res: Test dataframe with standardized covariates.
     """
     logger.info("Standardizing continuous covariates.")
+    if not vars_to_standardize:
+        logger.info("No continuous covariates to standardize.")
+        return df_train, df_test
 
+    # Fit scaler on training data
     scaler = StandardScaler()
-    data_to_scale = df.select(vars_to_scale).to_numpy()
-    df_scaled = pl.DataFrame(scaler.fit_transform(data_to_scale), schema=vars_to_scale)
+    train_data = df_train.select(vars_to_standardize).to_numpy()
+    scaler.fit(train_data)
 
-    # Check for NaN and infinite values, report and replace with zeros
-    # Any such values are likely due to floating point precision issues
-    for col in vars_to_scale:
-        inf_sum = df_scaled.get_column(col).is_infinite().sum()
-        nan_sum = df_scaled.get_column(col).is_nan().sum()
-        if inf_sum > 0:
-            logger.warning(f"{inf_sum} infinite values found in {col}. Filling with 0.")
-        if nan_sum > 0:
-            logger.warning(f"{nan_sum} NaN values found in {col}. Filling with 0.")
-    df_scaled = df_scaled.fill_nan(0)  # Fill all invalid values with 0
+    def _scale_df(df: pl.DataFrame, fitted_scaler: StandardScaler) -> pl.DataFrame:
+        """Scale the specified columns of a dataframe using a fitted scaler."""
+        data_to_scale = df.select(vars_to_standardize).to_numpy()
+        df_scaled = pl.DataFrame(
+            fitted_scaler.transform(data_to_scale),
+            schema=vars_to_standardize,
+        )
 
-    # Replace original columns with the standardized ones
-    df_res = pl.concat([df.drop(vars_to_scale), df_scaled], how="horizontal")
+        # Check for NaN and infinite values, report and replace with zeros
+        # Any such values are likely due to floating point precision issues
+        for col in vars_to_standardize:
+            inf_sum = df_scaled.get_column(col).is_infinite().sum()
+            nan_sum = df_scaled.get_column(col).is_nan().sum()
+            if inf_sum > 0:
+                logger.warning(
+                    f"{inf_sum} infinite values found in {col}. Filling with 0."
+                )
+            if nan_sum > 0:
+                logger.warning(f"{nan_sum} NaN values found in {col}. Filling with 0.")
+        df_scaled = df_scaled.fill_nan(0)
+
+        # Replace original columns with the standardized ones
+        return pl.concat([df.drop(vars_to_standardize), df_scaled], how="horizontal")
+
+    # Transform both dataframes using the fitted scaler
+    df_train_res = _scale_df(df_train, scaler)
+    df_test_res = _scale_df(df_test, scaler)
 
     logger.info("Finished standardizing continuous covariates.")
 
-    return df_res
+    return df_train_res, df_test_res
 
 
-def augment_prediction_dataframe(
-    df: pl.DataFrame, model_type: str, response_transform: str
-) -> pl.DataFrame:
-    y_obs_trans = df.get_column("Observed")
-    y_obs = _inverse_transform_response(y_obs_trans, response_transform)
-
-    if model_type == "bayesian":
-        y_pred_trans = np.clip(df.get_column("Predicted"), 0, 1)
-        y_pred = _inverse_transform_response(y_pred_trans, response_transform)
-
-    elif model_type == "lmm":
-        y_pred_re_trans = np.clip(df.get_column("Predicted_RE"), 0, 1)
-        y_pred_re = _inverse_transform_response(y_pred_re_trans, response_transform)
-
-        y_pred_fe_trans = np.clip(df.get_column("Predicted_FE"), 0, 1)
-        y_pred_fe = _inverse_transform_response(y_pred_fe_trans, response_transform)
-
-    output_dict = {
-        "SSBS": df.get_column("SSBS"),
-        "Observed": y_obs,
-        "Observed_transformed": y_obs_trans,
-    }
-
-    if model_type == "bayesian":
-        output_dict["Predicted"] = y_pred
-        output_dict["Residuals"] = y_pred - y_obs
-        output_dict["Predicted_transformed"] = y_pred_trans
-
-    elif model_type == "lmm":
-        output_dict["Predicted_RE"] = y_pred_re
-        output_dict["Residuals_RE"] = y_pred_re - y_obs
-        output_dict["Predicted_RE_transformed"] = y_pred_re_trans
-
-        output_dict["Predicted_FE"] = y_pred_fe
-        output_dict["Residuals_FE"] = y_pred_fe - y_obs
-        output_dict["Predicted_FE_transformed"] = y_pred_fe_trans
-
-    df_pred = pl.DataFrame(output_dict)
-
-    return df_pred
-
-
-def approximate_change_predictions(
-    df_pred: pl.DataFrame, df_site_info: pl.DataFrame, model_type: str, mode: str
-) -> pl.DataFrame:
+def validate_design_matrix_columns(
+    df_train: pl.DataFrame,
+    df_test: pl.DataFrame,
+    x_vars: list[str],
+) -> None:
     """
-    Approximate change predictions by calculating pairwise differences in predictions
-    and observed values between each pair of sites within the same block.
+    Validate design matrix columns for duplicates and train/test consistency.
+
+    For training-only runs, pass the same dataframe for df_train and df_test.
+    """
+    if not x_vars:
+        raise ValueError("Design matrix columns are empty.")
+
+    duplicates = [name for name, count in Counter(x_vars).items() if count > 1]
+    if duplicates:
+        raise ValueError(f"Duplicate columns in design matrix: {duplicates}")
+
+    missing_train = [col for col in x_vars if col not in df_train.columns]
+    missing_test = [col for col in x_vars if col not in df_test.columns]
+    if missing_train:
+        raise ValueError(f"Missing design matrix columns in train: {missing_train}")
+    if missing_test:
+        raise ValueError(f"Missing design matrix columns in test: {missing_test}")
+
+    train_cols = df_train.select(x_vars).columns
+    test_cols = df_test.select(x_vars).columns
+    if train_cols != x_vars:
+        raise ValueError("Train design matrix columns do not match expected ordering.")
+    if test_cols != x_vars:
+        raise ValueError("Test design matrix columns do not match expected ordering.")
+    if train_cols != test_cols:
+        raise ValueError("Train and test design matrix columns do not match.")
+
+
+def get_scope_counts(
+    df: pl.DataFrame,
+    diversity_type: str,
+    *,
+    site_key: str | None = None,
+    check_key: str | None = None,
+) -> dict[str, int]:
+    """
+    Count studies, observations, and sites or site pairs for a dataframe.
 
     Args:
-        - df_pred: Prediction dataframe containing predicted and observed values.
-        - df_site_info: Site information dataframe with "SSBS" and "Block" columns.
-        - model_type: Type of the model ('bayesian' or 'lmm').
-        - mode: Mode of operation ('training' or 'crossval').
+        - df: Dataframe to summarize
+        - diversity_type: Either "alpha" or "beta"
+        - site_key: Optional column name for site or site-pair identifiers
+        - check_key: Optional column name for a composite uniqueness key
 
     Returns:
-        - pl.DataFrame: Output dataframe with columns "Site_1", "Site_2",
-          "Delta_predicted_re", "Delta_predicted_fe", "Delta_observed".
+        - counts: Dictionary of counts for studies, observations, and scope
     """
-    # Join the two dataframes on site id
-    df_merged = df_pred.join(df_site_info, on="SSBS", how="inner")
+    counts = {
+        "studies": df.get_column("SS").n_unique(),
+        "observations": df.height,
+    }
 
-    # Filter out cases where the study doesn't contain spatial blocks
-    df_merged = df_merged.filter(~pl.col("Block").is_null())
+    if diversity_type == "alpha":
+        key = site_key or "SSBS"
+        if key not in df.columns:
+            raise ValueError(f"Missing site key column: {key}")
+        counts["sites"] = df.get_column(key).n_unique()
+    elif diversity_type == "beta":
+        if site_key and site_key in df.columns:
+            counts["site_pairs"] = df.get_column(site_key).n_unique()
+        elif {"SSBS", "Primary_minimal_site"}.issubset(df.columns):
+            counts["site_pairs"] = df.select(
+                ["SSBS", "Primary_minimal_site"]
+            ).n_unique()
+        else:
+            raise ValueError("Missing columns for site-pair counting")
+    else:
+        raise ValueError(f"Unsupported diversity_type: {diversity_type}")
 
-    # Pairwise differences in predictions and observed within each group
-    pairwise_results = []
-    grouped = df_merged.group_by("SSB").agg(pl.col("*"))
+    if check_key:
+        if check_key not in df.columns:
+            raise ValueError(f"Missing check_key column: {check_key}")
+        counts["check_key"] = df.get_column(check_key).n_unique()
 
-    for group in grouped.iter_rows(named=True):
-        group_sites = group["SSBS"]
-        predominant_land_uses = group["Predominant_land_use"]
-        observed = group["Observed"]
-
-        if model_type == "bayesian":
-            predicted = group["Predicted"]
-        elif model_type == "lmm":
-            predicted_re = group["Predicted_RE"]
-            predicted_fe = group["Predicted_FE"]
-
-        # Calculate pairwise differences
-        n_sites = len(group_sites)
-        seen_pairs = set()  # To keep track of processed site pairs
-
-        for i in range(n_sites):
-            for j in range(i + 1, n_sites):
-                # Skip pairs with the same Predominant_land_use
-                if predominant_land_uses[i] == predominant_land_uses[j]:
-                    continue
-
-                # Create a unique pair identifier
-                pair_key = tuple(sorted((group_sites[i], group_sites[j])))
-
-                # Skip if this pair was already processed
-                if pair_key in seen_pairs:
-                    continue
-
-                seen_pairs.add(pair_key)
-
-                result = {
-                    "Site_1": group_sites[i],
-                    "Site_2": group_sites[j],
-                    "Delta_observed": observed[j] - observed[i],
-                }
-
-                if model_type == "bayesian":
-                    result["Delta_predicted"] = predicted[j] - predicted[i]
-                    result["Delta_residuals"] = (
-                        result["Delta_predicted"] - result["Delta_observed"]
-                    )
-                elif model_type == "lmm":
-                    result["Delta_predicted_RE"] = predicted_re[j] - predicted_re[i]
-                    result["Delta_predicted_FE"] = predicted_fe[j] - predicted_fe[i]
-                    result["Delta_residuals_RE"] = (
-                        result["Delta_predicted_RE"] - result["Delta_observed"]
-                    )
-                    result["Delta_residuals_FE"] = (
-                        result["Delta_predicted_FE"] - result["Delta_observed"]
-                    )
-
-                pairwise_results.append(result)
-
-        output_df = pl.DataFrame(pairwise_results)
-
-    return output_df
+    return counts
 
 
 def calculate_performance_metrics(
-    df: pl.DataFrame, model_type: str, mode: str, pred_type: str
+    df: pl.DataFrame,
+    model_type: str,
+    mode: str,
+    *,
+    prediction_col: str | None = None,
 ) -> dict[str, float]:
     """
     Evaluate model performance and log results. Calculates R2, mean absolute
-    error, Pearson correlation, and Spearman rank correlation. All metrics
-    are calculated on back-transformed data, including for top and bottom
-    quartiles of observed values.
+    error, Pearson correlation, and Spearman rank correlation. Metrics are
+    calculated for the full dataset and for top and bottom quartiles of
+    observed values.
 
     Args:
-        - df: Dataframe containing 'Observed' and 'Predicted' columns.
-        - model_type: Type of model ('bayesian' or 'lmm').
+        - df: Dataframe containing 'Observed' and model predictions.
+        - model_type: Type of model ('bayesian' or 'glmm').
         - mode: Mode of evaluation ('training' or 'crossval').
-        - response_transform: Method used to transform the response variable.
+        - prediction_col: Optional column name to use for predictions.
 
     Returns:
         - performance_metrics: A dictionary containing the calculated metrics.
     """
     logger.info("Evaluating model performance metrics.")
 
-    # Extract observed and predicted values based on prediction type
-    if pred_type == "state":
-        # Observed values
-        y_true = df.get_column("Observed").to_numpy()
-        y_true_trans = df.get_column("Observed_transformed").to_numpy()
+    # Extract observed and predicted values
+    y_true = df.get_column("Observed").to_numpy()
+    y_pred_re: np.ndarray | None = None
+    if prediction_col is not None:
+        y_pred = df.get_column(prediction_col).to_numpy()
+    elif model_type == "glmm" and mode == "training":
+        y_pred = df.get_column("Predicted_RE").to_numpy()
+    elif model_type == "glmm" and mode == "crossval":
+        y_pred = df.get_column("Predicted_FE").to_numpy()
+        y_pred_re = df.get_column("Predicted_RE").to_numpy()
+    else:
+        y_pred = df.get_column("Predicted").to_numpy()
 
-        # Predicted values
-        if model_type == "bayesian":
-            y_pred = df.get_column("Predicted").to_numpy()
-            y_pred_trans = df.get_column("Predicted_transformed").to_numpy()
-        elif model_type == "lmm" and mode == "training":
-            y_pred = df.get_column("Predicted_RE").to_numpy()
-            y_pred_trans = df.get_column("Predicted_RE_transformed").to_numpy()
-        elif model_type == "lmm" and mode == "crossval":
-            y_pred = df.get_column("Predicted_FE").to_numpy()
-            y_pred_trans = df.get_column("Predicted_FE_transformed").to_numpy()
+    # Calculate quartiles for observed values using rank-based bins
+    n_obs = y_true.size
+    order = np.argsort(y_true)
+    quartile_edges = np.linspace(0, n_obs, 5, dtype=int)
+    bottom_indices = order[quartile_edges[0] : quartile_edges[1]]
+    top_indices = order[quartile_edges[3] : quartile_edges[4]]
+    if bottom_indices.size == 0:
+        logger.warning("Bottom quartile empty (n_obs=%d).", n_obs)
+    if top_indices.size == 0:
+        logger.warning("Top quartile empty (n_obs=%d).", n_obs)
+
+    # Calculate overall metrics for the general case
+    r2_std = r2_score(y_true, y_pred)
+    if model_type == "glmm" and mode == "crossval":
+        if y_pred_re is None:
             y_pred_re = df.get_column("Predicted_RE").to_numpy()
-            y_pred_trans_re = df.get_column("Predicted_RE_transformed").to_numpy()
+        r2_var = np.var(y_pred) / (np.var(y_pred_re) + np.var(y_true - y_pred))
+    else:
+        r2_var = np.var(y_pred) / (np.var(y_pred) + np.var(y_true - y_pred))
+    mean_abs_error = mean_absolute_error(y_true, y_pred)
+    median_abs_error = median_absolute_error(y_true, y_pred)
 
-    elif pred_type == "change":
-        # Observed changes
-        y_true = df.get_column("Delta_observed").to_numpy()
+    def _safe_corr(
+        y_true_slice: np.ndarray,
+        y_pred_slice: np.ndarray,
+        label: str,
+    ) -> tuple[float, float]:
+        def _slice_summary(values: np.ndarray) -> str:
+            if values.size == 0:
+                return "n=0"
+            return (
+                f"n={values.size}, min={float(np.min(values)):.4g}, "
+                f"max={float(np.max(values)):.4g}"
+            )
 
-        # Predicted changes
-        if model_type == "bayesian":
-            y_pred = df.get_column("Delta_predicted").to_numpy()
-        elif model_type == "lmm" and mode == "training":
-            y_pred = df.get_column("Delta_predicted_RE").to_numpy()
-        elif model_type == "lmm" and mode == "crossval":
-            y_pred = df.get_column("Delta_predicted_FE").to_numpy()
+        if y_true_slice.size == 0 or y_pred_slice.size == 0:
+            logger.warning(
+                "%s correlation skipped: empty slice (true: %s, pred: %s).",
+                label,
+                _slice_summary(y_true_slice),
+                _slice_summary(y_pred_slice),
+            )
+            return np.nan, np.nan
+        std_true = float(np.std(y_true_slice))
+        std_pred = float(np.std(y_pred_slice))
+        if np.isclose(std_true, 0.0) or np.isclose(std_pred, 0.0):
+            logger.warning(
+                "%s correlation skipped: constant input "
+                "(true: %s, pred: %s, std_true=%.4g, std_pred=%.4g).",
+                label,
+                _slice_summary(y_true_slice),
+                _slice_summary(y_pred_slice),
+                std_true,
+                std_pred,
+            )
+            return np.nan, np.nan
+        pearson_corr, _ = pearsonr(y_true_slice, y_pred_slice)
+        spearman_corr, _ = spearmanr(y_true_slice, y_pred_slice)
+        return pearson_corr, spearman_corr
 
-    # Calculate quartiles for observed values
-    q1 = np.percentile(y_true, 25)
-    q3 = np.percentile(y_true, 75)
-    bottom_indices = np.where(y_true <= q1)[0]
-    top_indices = np.where(y_true >= q3)[0]
+    pearson_corr, spearman_corr = _safe_corr(y_true, y_pred, "Overall")
 
     # Bias calculations for overall, bottom, and top quartiles
     bias_metrics = calculate_bias_metrics(y_true, y_pred, bottom_indices, top_indices)
-
-    # Calculate overall metrics
-    r2_std = r2_score(y_true, y_pred)
-    if pred_type == "state":
-        r2_std_trans = r2_score(y_true_trans, y_pred_trans)
-
-    if model_type == "lmm" and mode == "crossval":
-        r2_var = np.var(y_pred) / (np.var(y_pred_re) + np.var(y_true - y_pred))
-        if pred_type == "state":
-            r2_var_trans = np.var(y_pred_trans) / (
-                np.var(y_pred_trans_re) + np.var(y_true_trans - y_pred_trans)
-            )
-    else:
-        r2_var = np.var(y_pred) / (np.var(y_pred) + np.var(y_true - y_pred))
-        if pred_type == "state":
-            r2_var_trans = np.var(y_pred_trans) / (
-                np.var(y_pred_trans) + np.var(y_true_trans - y_pred_trans)
-            )
-
-    mean_abs_error = mean_absolute_error(y_true, y_pred)
-    median_abs_error = median_absolute_error(y_true, y_pred)
-    pearson_corr, _ = pearsonr(y_true, y_pred)
-    spearman_corr, _ = spearmanr(y_true, y_pred)
 
     # Log overall metrics
     logger.info(
@@ -273,19 +271,15 @@ def calculate_performance_metrics(
         f" - Spearman rank correlation: {spearman_corr:.3f}\n"
         f" - Bias ratio (pred/obs): {bias_metrics['overall_bias_ratio']:.3f}\n"
     )
-    if pred_type == "state":
-        logger.info(
-            "\n"
-            f" - R2 (std, not back-transformed): {r2_std_trans:.3f}\n"
-            f" - R2 (var expl, not back-transformed): {r2_var_trans:.3f}\n"
-        )
 
     # Metrics for bottom quartile
     bottom_quartile_true = y_true[bottom_indices]
     bottom_quartile_pred = y_pred[bottom_indices]
 
     r2_std_bottom = r2_score(bottom_quartile_true, bottom_quartile_pred)
-    if model_type == "lmm" and mode == "crossval":
+    if model_type == "glmm" and mode == "crossval":
+        if y_pred_re is None:
+            y_pred_re = df.get_column("Predicted_RE").to_numpy()
         r2_var_bottom = np.var(bottom_quartile_pred) / (
             np.var(y_pred_re[bottom_indices])
             + np.var(bottom_quartile_true - bottom_quartile_pred)
@@ -302,15 +296,18 @@ def calculate_performance_metrics(
     median_abs_error_bottom = median_absolute_error(
         bottom_quartile_true, bottom_quartile_pred
     )
-    pearson_corr_bottom, _ = pearsonr(bottom_quartile_true, bottom_quartile_pred)
-    spearman_corr_bottom, _ = spearmanr(bottom_quartile_true, bottom_quartile_pred)
+    pearson_corr_bottom, spearman_corr_bottom = _safe_corr(
+        bottom_quartile_true, bottom_quartile_pred, "Bottom quartile"
+    )
 
     # Metrics for top quartile
     top_quartile_true = y_true[top_indices]
     top_quartile_pred = y_pred[top_indices]
 
     r2_std_top = r2_score(top_quartile_true, top_quartile_pred)
-    if model_type == "lmm" and mode == "crossval":
+    if model_type == "glmm" and mode == "crossval":
+        if y_pred_re is None:
+            y_pred_re = df.get_column("Predicted_RE").to_numpy()
         r2_var_top = np.var(top_quartile_pred) / (
             np.var(y_pred_re[top_indices])
             + np.var(top_quartile_true - top_quartile_pred)
@@ -322,29 +319,8 @@ def calculate_performance_metrics(
 
     mean_abs_error_top = mean_absolute_error(top_quartile_true, top_quartile_pred)
     median_abs_error_top = median_absolute_error(top_quartile_true, top_quartile_pred)
-    pearson_corr_top, _ = pearsonr(top_quartile_true, top_quartile_pred)
-    spearman_corr_top, _ = spearmanr(top_quartile_true, top_quartile_pred)
-
-    # Log quartile-specific metrics
-    logger.info(
-        "\nBottom quartile performance:\n"
-        f" - R2 (standard): {r2_std_bottom:.3f}\n"
-        f" - R2 (variance explained): {r2_var_bottom:.3f}\n"
-        f" - Mean absolute error: {mean_abs_error_bottom:.3f}\n"
-        f" - Median absolute error: {median_abs_error_bottom:.3f}\n"
-        f" - Pearson correlation: {pearson_corr_bottom:.3f}\n"
-        f" - Spearman rank correlation: {spearman_corr_bottom:.3f}\n"
-        f" - Bias ratio (pred/obs): {bias_metrics['bias_bottom']:.3f}\n"
-    )
-    logger.info(
-        "\nTop quartile performance:\n"
-        f" - R2 (standard): {r2_std_top:.3f}\n"
-        f" - R2 (variance explained): {r2_var_top:.3f}\n"
-        f" - Mean absolute error: {mean_abs_error_top:.3f}\n"
-        f" - Median absolute error: {median_abs_error_top:.3f}\n"
-        f" - Pearson correlation: {pearson_corr_top:.3f}\n"
-        f" - Spearman rank correlation: {spearman_corr_top:.3f}\n"
-        f" - Bias ratio (pred/obs): {bias_metrics['bias_top']:.3f}\n"
+    pearson_corr_top, spearman_corr_top = _safe_corr(
+        top_quartile_true, top_quartile_pred, "Top quartile"
     )
 
     # Return all metrics
@@ -374,7 +350,10 @@ def calculate_performance_metrics(
 
 
 def calculate_bias_metrics(
-    y_true: np.array, y_pred: np.array, bottom_indices: np.array, top_indices: np.array
+    y_true: np.array,
+    y_pred: np.array,
+    bottom_indices: np.array,
+    top_indices: np.array,
 ) -> dict[str, Any]:
     """
     Calculate the bias (mean predicted / mean observed) for overall, bottom,
@@ -388,31 +367,79 @@ def calculate_bias_metrics(
         - bias_dict: Dictionary containing overall bias, bias per decile,
           and quartile-specific biases.
     """
+
+    def _safe_bias_ratio(
+        y_true_slice: np.ndarray,
+        y_pred_slice: np.ndarray,
+        label: str,
+    ) -> float:
+        def _slice_summary(values: np.ndarray) -> str:
+            if values.size == 0:
+                return "n=0"
+            min_val = float(np.min(values))
+            max_val = float(np.max(values))
+            zero_frac = float(np.isclose(values, 0.0).mean())
+            one_frac = float(np.isclose(values, 1.0).mean())
+            return (
+                f"n={values.size}, min={min_val:.4g}, max={max_val:.4g}, "
+                f"zero_frac={zero_frac:.3f}, one_frac={one_frac:.3f}"
+            )
+
+        if y_true_slice.size == 0 or y_pred_slice.size == 0:
+            logger.warning(
+                "Bias ratio '%s' skipped: empty slice (true: %s, pred: %s).",
+                label,
+                _slice_summary(y_true_slice),
+                _slice_summary(y_pred_slice),
+            )
+            return np.nan
+        mean_true = float(np.mean(y_true_slice))
+        if np.isnan(mean_true) or np.isclose(mean_true, 0.0):
+            logger.warning(
+                "Bias ratio '%s' skipped: mean observed is %.4g (true: %s).",
+                label,
+                mean_true,
+                _slice_summary(y_true_slice),
+            )
+            return np.nan
+        return float(np.mean(y_pred_slice)) / mean_true
+
     # Overall bias
-    overall_bias_ratio = np.mean(y_pred) / np.mean(y_true)
+    overall_bias_ratio = _safe_bias_ratio(y_true, y_pred, "overall")
 
     # Bottom and top quartiles
-    bias_bottom = np.mean(y_pred[bottom_indices]) / np.mean(y_true[bottom_indices])
-    bias_top = np.mean(y_pred[top_indices]) / np.mean(y_true[top_indices])
+    bias_bottom = _safe_bias_ratio(
+        y_true[bottom_indices], y_pred[bottom_indices], "bottom_quartile"
+    )
+    bias_top = _safe_bias_ratio(
+        y_true[top_indices], y_pred[top_indices], "top_quartile"
+    )
 
-    # Decile-based bias
-    deciles = np.percentile(y_true, np.arange(10, 100, 10))
+    # Decile-based bias (rank-based to handle tied values)
     bias_per_decile = []
-    indices_remaining = np.arange(len(y_true))
-
-    for threshold in deciles:
-        indices_below_threshold = indices_remaining[
-            y_true[indices_remaining] < threshold
-        ]
-        bias = np.mean(y_pred[indices_below_threshold]) / np.mean(
-            y_true[indices_below_threshold]
-        )
-        bias_per_decile.append(bias)
-        indices_remaining = np.setdiff1d(indices_remaining, indices_below_threshold)
-
-    # Final group for remaining values
-    bias = np.mean(y_pred[indices_remaining]) / np.mean(y_true[indices_remaining])
-    bias_per_decile.append(bias)
+    order = np.argsort(y_true)
+    n_obs = order.size
+    if n_obs == 0:
+        logger.warning("Decile bins skipped: no observations.")
+        bias_per_decile = [np.nan] * 10
+    else:
+        edges = np.linspace(0, n_obs, 11, dtype=int)
+        for idx in range(10):
+            start = int(edges[idx])
+            end = int(edges[idx + 1])
+            bin_idx = order[start:end]
+            if bin_idx.size == 0:
+                logger.warning(
+                    "Decile bin %d empty (range %d:%d).", idx + 1, start, end
+                )
+                bias_per_decile.append(np.nan)
+                continue
+            bias = _safe_bias_ratio(
+                y_true[bin_idx],
+                y_pred[bin_idx],
+                f"decile_{idx + 1}",
+            )
+            bias_per_decile.append(bias)
 
     return {
         "overall_bias_ratio": overall_bias_ratio,
@@ -420,35 +447,3 @@ def calculate_bias_metrics(
         "bias_top": bias_top,
         "bias_per_decile": bias_per_decile,
     }
-
-
-def _inverse_transform_response(y: np.array, method: str) -> np.array:
-    """
-    Back-transform the response variable (predictions or observed values) to
-    the original scale.
-
-    Args:
-        - y: The predicted / observed data from the model.
-        - method: Method used to originally transform the response variable.
-        - adjust: Adjustment value used during the transformation.
-
-    Returns:
-        - res: The back-transformed response variable.
-    """
-    if method == "logit":
-        res = expit(y)  # Inverse logit transformation
-    elif method == "sqrt":
-        res = np.square(y)  # Inverse square-root transformation
-    elif method == "adjust":
-        adjust = 0.001
-        res = np.where(
-            y < adjust,  # If y is less than the adjustment threshold
-            0,
-            np.where(
-                y > (1 - adjust), 1, y  # If y is greater than the upper threshold
-            ),
-        )
-    else:
-        res = y
-
-    return res

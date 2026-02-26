@@ -63,7 +63,7 @@ class GenerateFeaturesTask:
 
     def run_task(self) -> None:
         """
-        The following key processing steps are performed:
+        Perform the following processing steps:
             - Generate dummy variables (one-hot encoding) for the categorical
                 land-use data.
             - Combine land-use type and intensity into one column and generate
@@ -84,20 +84,44 @@ class GenerateFeaturesTask:
         validate_input_files(file_paths=[self.combined_data_path])
         df = pl.read_parquet(self.combined_data_path, columns=self.cols_to_keep)
 
-        # Create dummy variables for land-use related columns
+        # Create dummy variables for categorical land-use related columns
         df = self.create_land_use_dummies(df)
         df = self.combine_land_use_intensity_columns(df)
         df = self.group_land_use_types_and_intensities(df)
 
-        # Generate non-linear transformations for population and road density
-        # NOTE: Consider doing this for bioclimatic and topographic variables
-        df, new_cols = self.transform_continuous_covariates(df)
+        # Rescale WorldClim data (temperature and precipitation)
+        df = self.rescale_continuous_covariates(df, variables=self.bioclimatic_vars)
+
+        # Generate non-linear transformations for continuous variables
+        # All variables are given sublinear transformations (log, sqrt), while
+        # only bioclimatic and topographic variables are given exponential
+        sublinear_vars = (
+            self.density_vars + self.bioclimatic_vars + self.topographic_vars
+        )
+        exponential_vars = self.bioclimatic_vars + self.topographic_vars
+        df, new_cols = self.transform_continuous_covariates(
+            df, sublinear=sublinear_vars, exponential=exponential_vars
+        )
+
+        # TODO: Generate interaction terms (instead of model data task)
 
         # Calculate mean values for population and road density
-        # NOTE: Consider bioclimate and topographic variables as controls
-        df = GenerateFeaturesTask.calculate_study_mean_densities(
+        # NOTE: Should be expanded if we build an explanatory model, in which
+        # case site values should be expressed relative to the study mean
+        # values (also for bioclimatic and topographic variables)
+        df = self.calculate_study_mean_densities(
             df, variables=self.density_vars + new_cols  # Include transformed cols
         )
+
+        # Handle any invalid values in continuous columns
+        all_continuous_vars = (
+            self.density_vars + self.bioclimatic_vars + self.topographic_vars + new_cols
+        )
+        df = self.handle_invalid_values(df, columns=all_continuous_vars)
+
+        # Create a custom species grouping logic that is used in the alpha and
+        # beta diversity tasks
+        df = self.create_custom_taxonomic_grouping(df)
 
         # Save the final dataframe to disk
         validate_output_files(
@@ -110,7 +134,8 @@ class GenerateFeaturesTask:
 
     def create_land_use_dummies(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Generate dummy columns for each value in the 'Predominant_land_use' column.
+        Generate dummy columns for each value in the 'Predominant_land_use'
+        column.
 
         Args:
             - df: Dataframe containing a 'Predominant_land_use' column.
@@ -122,7 +147,7 @@ class GenerateFeaturesTask:
         logger.info("Creating land-use dummy columns.")
 
         # Generate dummy columns for the land-use column
-        df_dummies_lu = GenerateFeaturesTask._create_dummy_columns(
+        df_dummies_lu = self._create_dummy_columns(
             df=df,
             column_name="Predominant_land_use",
             prefix_to_strip="Predominant_land_use",
@@ -156,7 +181,7 @@ class GenerateFeaturesTask:
         )
 
         # Generate dummy columns for the combined land-use and intensity column
-        df_dummies_comb = GenerateFeaturesTask._create_dummy_columns(
+        df_dummies_comb = self._create_dummy_columns(
             df=df,
             column_name="LU_type_intensity",
             prefix_to_strip="LU_type_intensity",
@@ -176,7 +201,7 @@ class GenerateFeaturesTask:
         De Palma et al (2019). This is mainly motivated by limited data in
         these land use types. It includes the following groupings:
             - All secondary vegetation types are combined into one column, but
-                with different levels of intensity.
+                still with different levels of intensity.
             - Plantation forest is grouped with secondary vegetation.
             - Urban land use of all intensities are combined into one column.
             - Light and intense use of cropland and pasture are combined.
@@ -231,7 +256,7 @@ class GenerateFeaturesTask:
         )
 
         # Create dummy columns from the combined secondary vegetation column
-        df_dummies_secondary_veg = GenerateFeaturesTask._create_dummy_columns(
+        df_dummies_secondary_veg = self._create_dummy_columns(
             df=df,
             column_name="Secondary_veg_intensity",
             prefix_to_strip="Secondary_veg_intensity",
@@ -241,15 +266,30 @@ class GenerateFeaturesTask:
         # Combine the original dataframe with the dummy columns
         df_res = pl.concat([df, df_dummies_secondary_veg], how="horizontal")
 
-        # Combine urban land use of all intensities
+        # Combine all intensities for urban, cropland and pasture
+        # The urban variable is used in both BII models (alpha and beta),
+        # while cropland and pasture are only used in the beta model
         df_res = df_res.with_columns(
             pl.when(pl.col("Predominant_land_use") == "Urban")
             .then(1)
             .otherwise(0)
             .alias("Urban_All uses")
         )
+        df_res = df_res.with_columns(
+            pl.when(pl.col("Predominant_land_use") == "Cropland")
+            .then(1)
+            .otherwise(0)
+            .alias("Cropland_All uses")
+        )
+        df_res = df_res.with_columns(
+            pl.when(pl.col("Predominant_land_use") == "Pasture")
+            .then(1)
+            .otherwise(0)
+            .alias("Pasture_All uses")
+        )
 
-        # Combine light and intense use for cropland and pasture
+        # Combine light and intense use for cropland and pasture (used in the
+        # BII alpha model)
         df_res = df_res.with_columns(
             pl.when(
                 (pl.col("Predominant_land_use") == "Cropland")
@@ -270,20 +310,79 @@ class GenerateFeaturesTask:
             .alias("Pasture_Light_Intense")
         )
 
+        df_res = df_res.with_columns(
+            pl.when(
+                (pl.col("Predominant_land_use") == "Primary vegetation")
+                & (pl.col("Use_intensity").is_in(["Light use", "Intense use"]))
+            )
+            .then(1)
+            .otherwise(0)
+            .alias("Primary vegetation_Light_Intense")
+        )
+
+        df_res = df_res.with_columns(
+            pl.when(
+                (pl.col("Predominant_land_use").str.contains("(?i)secondary"))
+                & (pl.col("Use_intensity").is_in(["Light use", "Intense use"]))
+            )
+            .then(1)
+            .otherwise(0)
+            .alias("Secondary vegetation_Light_Intense")
+        )
+
         return df_res
+
+    def rescale_continuous_covariates(
+        self,
+        df: pl.DataFrame,
+        variables: list[str],
+    ) -> pl.DataFrame:
+        """
+        Rescale bioclimatic data from WorldClim. The original temperature data
+        is in degrees C multiplied by 10 (to reduce filesize). Precipitation
+        data in in mm. Both are rescaled by dividing them by 10.
+
+        Args:
+            - df: Dataframe containing the variables to be rescaled.
+            - variables: List of column names to evaluate and rescale.
+
+        Returns:
+            - Updated Polars DataFrame with rescaled columns.
+        """
+        logger.info("Rescaling temperature and precipitation variables.")
+
+        for var in variables:
+            if "temp" in var.lower() or "precip" in var.lower():
+                df = df.with_columns(
+                    pl.when(pl.col(var).is_not_null())
+                    .then(pl.col(var) / 10)
+                    .otherwise(pl.col(var))
+                    .alias(var)
+                )
+                logger.info(f"Rescaled variable: {var}")
+
+        logger.info("Finished rescaling variables.")
+
+        return df
 
     def transform_continuous_covariates(
         self,
         df: pl.DataFrame,
+        sublinear: list[str],
+        exponential: list[str],
     ) -> pl.DataFrame:
         """
         Applies a set of transformations to all continuous variables in the
         dataset and adds the transformed columns to the dataframe. The
-        transformations include log, square root and cube root.
+        transformations include the natural log, square root and cube root, as
+        well as square and exponential transformations.
 
         Args:
             - df: Dataframe containing all covariates to be transformed.
-            - variables: The columns that should be transformed.
+            - sublinear: List of variables to be transformed with sublinear
+                transformations (log, sqrt, cbrt).
+            - exponential: List of variables to be transformed with
+                exponential transformations (square).
 
         Returns:
             - df: Updated df with transformed columns added.
@@ -291,19 +390,80 @@ class GenerateFeaturesTask:
         logger.info("Creating transformations for density variables.")
 
         new_cols = []
-        for col in self.density_vars:
-            df = df.with_columns((pl.col(col) + 1).log().alias(f"{col}_log"))  # Log
+        for col in sublinear:
+            # Natural logarithm
+            df = df.with_columns((pl.col(col) + 1).log().alias(f"{col}_log"))
             new_cols.append(f"{col}_log")
-            df = df.with_columns(pl.col(col).sqrt().alias(f"{col}_sqrt"))  # Square root
+
+            # Square root
+            df = df.with_columns(pl.col(col).sqrt().alias(f"{col}_sqrt"))
             new_cols.append(f"{col}_sqrt")
-            df = df.with_columns(
-                pl.col(col).pow(1 / 3).alias(f"{col}_cbrt")
-            )  # Cube root
+
+            # Cube root (for BII compatibility only)
+            df = df.with_columns(pl.col(col).pow(1 / 3).alias(f"{col}_cbrt"))
             new_cols.append(f"{col}_cbrt")
+
+        for col in exponential:
+            # Square
+            df = df.with_columns(pl.col(col).pow(2).alias(f"{col}_square"))
+            new_cols.append(f"{col}_square")
 
         logger.info("Finished creating transformations.")
 
         return df, new_cols
+
+    def create_custom_taxonomic_grouping(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Create a custom species grouping logic that is used as a grouping
+        variable in the alpha and beta diversity tasks, complementing standard
+        taxonomic levels like Kingdom, Phylum, etc.
+
+        Args:
+            - df: Dataframe containing taxonomic data data.
+
+        Returns:
+            - df: Dataframe with a column representing the new species grouping.
+        """
+        df = df.with_columns(
+            [
+                pl.when(pl.col("Phylum") == "Arthropoda")
+                .then(  # Split between insects and other arthropods
+                    pl.when(pl.col("Class") == "Insecta")
+                    .then(pl.lit("Insecta"))
+                    .otherwise(pl.lit("Other Arthropoda"))
+                )
+                .when(pl.col("Phylum") == "Chordata")
+                .then(  # Split birds and mammals
+                    pl.when(pl.col("Class").is_in(["Aves", "Mammalia"]))
+                    .then(pl.col("Class"))  # Combine amphibians and reptiles (?)
+                    .when(pl.col("Class").is_in(["Amphibia", "Reptilia"]))
+                    .then(pl.lit("Amphibia_Reptilia"))
+                    .otherwise(pl.lit("Other Chordata"))
+                )
+                .when(pl.col("Phylum") == "Tracheophyta")
+                .then(
+                    pl.lit("Tracheophyta")
+                )  # Keep all vascular plants as one group (?)
+                .when(pl.col("Kingdom") == "Fungi")  # No splits at all here
+                .then(pl.lit("Fungi"))
+                .otherwise(
+                    pl.lit("Other ") + pl.col("Kingdom")
+                )  # Other animals and plants
+                .alias("Custom_taxonomic_group")
+            ]
+        )
+
+        # Filter out rows with null taxonomic group
+        # This happens because protozoa is not included in the custom grouping
+        n_obs_before = df.height
+        df = df.filter(pl.col("Custom_taxonomic_group").is_not_null())
+        n_obs_after = df.height
+        logger.info(
+            f"Filtered out {n_obs_before - n_obs_after} rows with null "
+            "Custom_taxonomic_group."
+        )
+
+        return df
 
     @staticmethod
     def calculate_study_mean_densities(
@@ -317,7 +477,8 @@ class GenerateFeaturesTask:
 
         NOTE: Doing the same for bioclimatic and topographic variables should
         be considered, as they can act as control variables for environmental
-        factors that might otherwise bias the inference.
+        factors that might otherwise bias the inference. This is important if
+        we attempt to build an explanatory model.
 
         Args:
             - df: Dataframe containing all columns in the 'variables' list.
@@ -329,9 +490,16 @@ class GenerateFeaturesTask:
         """
         logger.info(f"Calculating study-mean values for {variables}")
 
+        # Only do calculations for population and road density variables
+        target_vars = [
+            col
+            for col in variables
+            if "pop_density" in col.lower() or "road_density" in col.lower()
+        ]
+
         # Calculate the mean values at different resolutions
         mean_expressions = [
-            pl.col(col).mean().alias(f"Mean_{col.lower()}") for col in variables
+            pl.col(col).mean().alias(f"Mean_{col.lower()}") for col in target_vars
         ]
         df_study_mean = df.group_by("SS").agg(mean_expressions)
 
@@ -375,3 +543,124 @@ class GenerateFeaturesTask:
 
         logger.info(f"Finished creating dummy columns for {column_name}.")
         return df_dummies
+
+    @staticmethod
+    def handle_invalid_values(df: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
+        """
+        Imputes invalid (NaN, null, infinite) values in a specified list of
+        continuous variables using a three-level fallback:
+        1. Block-level mean ('SSB')
+        2. Study-level mean ('SS')
+        3. Global mean
+
+        Parameters:
+        - df: Input dataframe containing all continuous variables.
+        - columns: List of column names to check and impute.
+
+        Returns:
+        - df: DataFrame with imputed values.
+        """
+        logger.info("Handling invalid values in specified (continuous) columns.")
+        total_rows = df.height
+
+        for col in columns:
+            if col not in df.columns:
+                logger.warning(f"Column '{col}' not found in the DataFrame.")
+                continue
+
+            invalid_mask = (
+                pl.col(col).is_nan() | pl.col(col).is_null() | pl.col(col).is_infinite()
+            )
+            total_invalid = df.filter(invalid_mask).height
+
+            if total_invalid == 0:
+                logger.info(f"No invalid values found in column '{col}'.")
+                continue
+
+            logger.warning(
+                f"Column '{col}' contains {total_invalid} invalid values. "
+                "Imputing missing values based on block or study mean values."
+            )
+
+            # Step 1: Block-level imputation (SSB)
+            valid_df = df.filter(~invalid_mask)
+            block_means = valid_df.group_by("SSB").agg(
+                pl.col(col).mean().alias("mean_block")
+            )
+            df = df.join(block_means, on="SSB", how="left")
+
+            df = df.with_columns(
+                pl.when(invalid_mask)
+                .then(pl.col("mean_block"))
+                .otherwise(pl.col(col))
+                .alias(col)
+            ).drop("mean_block")
+
+            # Step 2: Study-level imputation (SS)
+            invalid_mask = (
+                pl.col(col).is_nan() | pl.col(col).is_null() | pl.col(col).is_infinite()
+            )
+            remaining_invalid = df.filter(invalid_mask).height
+
+            if remaining_invalid > 0:
+                study_means = (
+                    df.filter(~invalid_mask)
+                    .group_by("SS")
+                    .agg(pl.col(col).mean().alias("mean_study"))
+                )
+                df = df.join(study_means, on="SS", how="left")
+
+                df = df.with_columns(
+                    pl.when(invalid_mask)
+                    .then(pl.col("mean_study"))
+                    .otherwise(pl.col(col))
+                    .alias(col)
+                ).drop("mean_study")
+
+            # Check before global mean fallback
+            nan_count = df.filter(pl.col(col).is_nan()).height
+            null_count = df.filter(pl.col(col).is_null()).height
+            inf_count = df.filter(pl.col(col).is_infinite()).height
+            total_left = nan_count + null_count + inf_count
+
+            if total_left > 0:
+                logger.warning(
+                    f"Imputation still incomplete for '{col}': "
+                    f"{nan_count} NaNs ({nan_count / total_rows:.1%}), "
+                    f"{null_count} NULLs ({null_count / total_rows:.1%}), "
+                    f"{inf_count} Inf ({inf_count / total_rows:.1%}) remaining. "
+                    "Falling back to global mean values."
+                )
+
+            # Step 3: Global mean fallback
+            invalid_mask = (
+                pl.col(col).is_nan() | pl.col(col).is_null() | pl.col(col).is_infinite()
+            )
+            still_invalid = df.filter(invalid_mask).height
+
+            if still_invalid > 0:
+                global_mean = df.filter(~invalid_mask).select(pl.col(col).mean()).item()
+                df = df.with_columns(
+                    pl.when(invalid_mask)
+                    .then(pl.lit(global_mean))
+                    .otherwise(pl.col(col))
+                    .alias(col)
+                )
+
+            # Final check
+            nan_count = df.filter(pl.col(col).is_nan()).height
+            null_count = df.filter(pl.col(col).is_null()).height
+            inf_count = df.filter(pl.col(col).is_infinite()).height
+            total_left = nan_count + null_count + inf_count
+
+            if total_left > 0:
+                logger.warning(
+                    f"Imputation incomplete for '{col}': "
+                    f"{nan_count} NaNs ({nan_count / total_rows:.1%}), "
+                    f"{null_count} NULLs ({null_count / total_rows:.1%}), "
+                    f"{inf_count} Inf ({inf_count / total_rows:.1%}) remaining."
+                )
+            else:
+                logger.info(f"Successfully imputed all values in column '{col}'.")
+
+        return df

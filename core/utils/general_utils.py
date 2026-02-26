@@ -38,16 +38,6 @@ def create_logger(
     logger = logging.getLogger(module_name)
     logger.setLevel(logging.DEBUG)
 
-    # Create and configure file handler
-    # filename = "_".join(
-    # [module_name, "_logs_", datetime.datetime.now().strftime(filename_date_format)]
-    # )
-    # logging_path = "".join([output_path, filename, file_ending])
-    # file_handler = logging.FileHandler(logging_path)
-    # file_handler.setLevel(logging.DEBUG)
-    # file_format = logging.Formatter(logger_format, datefmt=logger_date_format)
-    # file_handler.setFormatter(file_format)
-
     # Create and configure stream handler (printing to the console)
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.DEBUG)
@@ -62,10 +52,29 @@ def create_logger(
     return logger
 
 
-def create_run_folder_path(base_path: str = configs.run_folder_path) -> str:
-    """Generates a new folder for the current run, based on current date and time."""
-    run_folder_name = "run_folder_" + datetime.datetime.now().strftime("%Y-%m-%d_%H.%M")
-    run_folder_path = os.path.join(base_path, run_folder_name)
-    os.makedirs(run_folder_path, exist_ok=True)
+def create_run_folder_path(
+    base_path: str = configs.run_folder_path,
+    suffix: str | None = None,
+) -> str:
+    """
+    Generate a unique run folder based on the current date and time.
 
-    return run_folder_path
+    Args:
+        base_path: Base directory where run folders are created.
+        suffix: Optional suffix appended to the run folder name.
+    """
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
+    run_folder_name = f"run_folder_{timestamp}"
+    if suffix:
+        safe_suffix = suffix.replace(" ", "_")
+        run_folder_name = f"{run_folder_name}_{safe_suffix}"
+
+    base_candidate = os.path.join(base_path, run_folder_name)
+    counter = 1
+    while True:
+        candidate = base_candidate if counter == 1 else f"{base_candidate}_{counter}"
+        try:
+            os.makedirs(candidate, exist_ok=False)
+            return candidate
+        except FileExistsError:
+            counter += 1

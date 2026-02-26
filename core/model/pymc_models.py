@@ -1,1280 +1,678 @@
 from typing import Any
 
+import arviz as az
 import numpy as np
 import pymc as pm
 import pytensor.tensor as pt
+from pymc.math import clip, invlogit, logit
 
 
-def general_hierarchical_model(
-    model_data: dict[str, Any],
-    settings: dict[str, Any],
-) -> pm.Model:
+class GeneralHierarchicalModel:
+    """
+    Build PyMC models with a hierarchical structure with up to three levels.
+    Supports Gaussian and Beta likelihoods with varying intercepts and slopes.
+    Control variables for study and block random effects are included during
+    training to account for study design variation.
+    """
 
-    # Unpack the required model data from the dictionary
-    coords = model_data["coords"]
-    y_obs = model_data["y_obs"]
-    x_obs = model_data["x_obs"]
-    level_1_idx = model_data["level_1_idx"]
-    level_2_idx = model_data["level_2_idx"]
-    level_3_idx = model_data["level_3_idx"]
-    level_2_to_level_1_idx = model_data["level_2_to_level_1_idx"]
-    level_3_to_level_2_idx = model_data["level_3_to_level_2_idx"]
-    site_idx = model_data["site_idx"]
+    def __init__(self, settings: dict[str, Any], epsilon: float) -> None:
+        """
+        Store settings after validating required configuration fields.
 
-    # Unpack model settings
-    likelihood = settings["likelihood"]
-    hierarchical_levels = settings["hierarchical_levels"]
-    most_granular_slope_level = settings["most_granular_slope_level"]
-    prior_values = settings["prior_values"]
-    intercept_hyperprior_mean = prior_values["intercept_hyperprior_mean"]
-    coef_prior_var = prior_values["coef_prior_var"]
-    gaussian_noise = prior_values["gaussian_noise"]
-    alpha_var_param = prior_values["alpha_var_param"]
-    beta_var_param = prior_values["beta_var_param"]
+        Attributes:
+            - settings: Dictionary of model configuration settings.
+            - eps: Small value for clipping values, e.g. in Beta likelihoods.
+            - hierarchical_levels: Number of hierarchical levels (1, 2, or 3).
+            - likelihood: Likelihood distribution to use ('gaussian' or 'beta').
+            - priors: Dictionary of prior settings for the selected likelihood.
+        """
+        validate_model_settings(settings)
+        self.settings = settings
+        self.eps = epsilon
+        self.hierarchical_levels = self.settings["hierarchical_levels"]
+        self.likelihood = self.settings["likelihood"]
+        self.priors = self.settings["priors"][self.likelihood]
 
-    with pm.Model(coords=coords) as model:
-        # Observed data variables; updated when predicting on test data
-        y_obs = pm.Data("y_obs", y_obs, dims="idx")
-        x_obs = pm.Data("x_obs", x_obs, dims=("idx", "x_vars"))
-        level_1_idx = pm.Data("level_1_idx", level_1_idx, dims="idx")
-        level_2_idx = pm.Data("level_2_idx", level_2_idx, dims="idx")
-        level_3_idx = pm.Data("level_3_idx", level_3_idx, dims="idx")
-        site_idx = pm.Data("site_idx", site_idx, dims="idx")  # noqa: F841
+    def build_training_model(self, model_data: dict[str, Any]) -> pm.Model:
+        """
+        Build the training model with hierarchical priors and likelihood.
 
-        # Hyperpriors for intercept and slope terms
-        mu_a = pm.Normal("mu_a", mu=intercept_hyperprior_mean, sigma=coef_prior_var)
-        sigma_a = pm.HalfNormal("sigma_a", sigma=coef_prior_var)
-        mu_b = pm.Normal("mu_b", mu=0, sigma=coef_prior_var, dims="x_vars")
-        sigma_b = pm.HalfNormal("sigma_b", sigma=coef_prior_var, dims="x_vars")
+        Args:
+            - model_data: Dictionary of arrays and coords from data preparation.
 
-        # Top-level intercept and slope priors (non-centered parameterization)
-        level_1_offset_1 = pm.Normal(
-            "level_1_offset_1", mu=0, sigma=1, dims="level_1_values"
-        )
-        alpha_level_1 = pm.Deterministic(
-            "alpha_level_1", mu_a + level_1_offset_1 * sigma_a
-        )
+        Returns:
+            - model: PyMC model instance for training.
+        """
+        # Get key settings from configuration
 
-        if most_granular_slope_level >= 1:
-            level_1_offset_2 = pm.Normal(
-                "level_1_offset_2", mu=0, sigma=1, dims=("level_1_values", "x_vars")
-            )
-            beta_level_1 = pm.Deterministic(
-                "beta_level_1", mu_b + level_1_offset_2 * sigma_b
+        with pm.Model(coords=model_data["coords"]) as model:
+            # Set up data nodes and hierarchical indexing
+            self.add_data_nodes(model_data, self.settings)
+
+            # Define hierarchical priors for the intercepts and slopes
+            # Returns the most granular level, which is used in the likelihood
+            alpha, beta = self.define_hierarchical_normal_priors(
+                model_data,
+                priors=self.priors,
+                hierarchical_levels=self.hierarchical_levels,
+                varying_slope_level=self.settings["varying_slope_level"],
             )
 
-        # Expected values (linear) at level 1
-        if hierarchical_levels == 1:
-            if most_granular_slope_level == 1:  # L1 varying slopes
-                y_hat_linear = alpha_level_1[level_1_idx] + pt.sum(
-                    x_obs * beta_level_1[level_1_idx], axis=1
-                )
-            elif most_granular_slope_level == 0:  # L1 varying intercepts
-                y_hat_linear = alpha_level_1[level_1_idx] + pt.sum(x_obs * mu_b, axis=1)
+            # Get priors for study and block control variables, used in training
+            # but not for out-of-sample prediction
+            gamma_block = self.define_control_variable_priors(
+                model_data,
+                priors=self.priors,
+            )
 
-        # Second-level intercept and slope priors
-        # The mean values are sampled from the first level priors
+            # Compute linear conditional mean and intercept
+            level_idx = model[f"level_{self.hierarchical_levels}_idx"]
+            y_cond_linear = (
+                alpha[level_idx]
+                + pt.sum(model["x_obs"] * beta[level_idx], axis=1)
+                + gamma_block[model["block_idx"]]
+            )
+            y_intercept_linear = alpha[level_idx] + gamma_block[model["block_idx"]]
+
+            # Define data variance prior
+            sigma_y = self.define_data_variance_prior(
+                likelihood=self.likelihood,
+                y_cond_linear=y_cond_linear,
+                priors=self.priors,
+            )
+
+            # Add likelihood function and other model outputs
+            add_likelihood_outputs(
+                likelihood=self.likelihood,
+                y_cond_linear=y_cond_linear,
+                y_intercept_linear=y_intercept_linear,
+                mode="train",
+                eps=self.eps,
+                observed=model["y_obs"],
+                sigma_y=sigma_y,
+            )
+
+            return model
+
+    def build_prediction_model(self, model_data: dict[str, Any]) -> pm.Model:
+        """
+        Build a prediction model that reuses the trained hierarchical
+        parameters, but injects new data.
+
+        Args:
+            - model_data: Dictionary of arrays and coords for prediction data.
+
+        Returns:
+            - pred_model: PyMC model for posterior predictive sampling.
+        """
+        with pm.Model(coords=model_data["coords"]) as pred_model:
+            # Set up data nodes and hierarchical indexing
+            self.add_data_nodes(model_data, self.settings)
+
+            # Get the most granular hierarchical level
+            level = self.settings["hierarchical_levels"]
+
+            # Get posterior samples from the training model for this level
+            alpha = pm.Flat(f"alpha_{level}", dims=f"level_{level}_values")
+            beta = pm.Flat(f"beta_{level}", dims=(f"level_{level}_values", "x_vars"))
+            level_idx = model_data[f"level_{level}_idx"]
+
+            # Linear conditional mean and intercept
+            y_cond_linear = alpha[level_idx] + pt.sum(
+                pred_model["x_obs"] * beta[level_idx], axis=1
+            )
+            y_intercept_linear = alpha[level_idx]
+
+            # Data variance placeholders, depending on likelihood
+            sigma_y = pm.Flat("sigma_y") if self.likelihood == "gaussian" else None
+            sigma_raw = pm.Flat("sigma_raw") if self.likelihood == "beta" else None
+
+            add_likelihood_outputs(
+                likelihood=self.likelihood,
+                y_cond_linear=y_cond_linear,
+                y_intercept_linear=y_intercept_linear,
+                mode="test",
+                eps=self.eps,
+                sigma_y=sigma_y,
+                sigma_raw=sigma_raw,
+            )
+
+            return pred_model
+
+    def add_data_nodes(self, model_data: dict, settings: dict[str, Any]) -> None:
+        """Add input data nodes to the PyMC model."""
+        pm.Data("x_obs", model_data["x_obs"], dims=("idx", "x_vars"))
+        pm.Data("site_idx", model_data["site_idx"], dims="idx")
+        pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
+        if self.likelihood == "beta":
+            y_obs = np.clip(model_data["y_obs"], self.eps, 1 - self.eps)
+        else:
+            y_obs = model_data["y_obs"]
+        pm.Data("y_obs", y_obs, dims="idx")
+
+        # Random effects for studies and blocks
+        pm.Data("study_idx", model_data["study_idx"], dims="idx")
+        pm.Data("block_idx", model_data["block_idx"], dims="idx")
+        pm.Data(
+            "block_to_study_idx", model_data["block_to_study_idx"], dims="block_names"
+        )
+
+        # Process each hierarchical level and add relevant indices and mappings
+        hierarchical_levels = settings["hierarchical_levels"]
+        if hierarchical_levels >= 1:
+            pm.Data("level_1_idx", model_data["level_1_idx"], dims="idx")
         if hierarchical_levels >= 2:
-            mu_a_level_2 = pm.Deterministic(
-                "mu_a_level_2", alpha_level_1[level_2_to_level_1_idx]
+            pm.Data("level_2_idx", model_data["level_2_idx"], dims="idx")
+            pm.Data(
+                "level_2_to_level_1_idx",
+                model_data["level_2_to_level_1_idx"],
+                dims="level_2_values",
             )
-            sigma_a_level_2 = pm.HalfNormal("sigma_a_level_2", sigma=coef_prior_var)
-            level_2_offset_1 = pm.Normal(
-                "level_2_offset_1", mu=0, sigma=1, dims="level_2_values"
-            )
-            alpha_level_2 = pm.Deterministic(
-                "alpha_level_2", mu_a_level_2 + level_2_offset_1 * sigma_a_level_2
-            )
-
-            if most_granular_slope_level >= 2:
-                mu_b_level_2 = pm.Deterministic(
-                    "mu_b_level_2", beta_level_1[level_2_to_level_1_idx]
-                )
-                sigma_b_level_2 = pm.HalfNormal("sigma_b_level_2", sigma=coef_prior_var)
-                level_2_offset_2 = pm.Normal(
-                    "level_2_offset_2", mu=0, sigma=1, dims=("level_2_values", "x_vars")
-                )
-                beta_level_2 = pm.Deterministic(
-                    "beta_level_2", mu_b_level_2 + level_2_offset_2 * sigma_b_level_2
-                )
-
-        # Expected values (linear) at level 2
-        if hierarchical_levels == 2:
-            if most_granular_slope_level == 2:  # L2 varying slopes
-                y_hat_linear = alpha_level_2[level_2_idx] + pt.sum(
-                    x_obs * beta_level_2[level_2_idx], axis=1
-                )
-            elif most_granular_slope_level == 1:  # L2 intercepts, L1 slopes
-                y_hat_linear = alpha_level_2[level_2_idx] + pt.sum(
-                    x_obs * beta_level_1[level_1_idx], axis=1
-                )
-            elif most_granular_slope_level == 0:  # L2 intercepts, no varying slopes
-                y_hat_linear = alpha_level_2[level_2_idx] + pt.sum(x_obs * mu_b, axis=1)
-
-        # Third-level intercept and slope priors
         if hierarchical_levels == 3:
-            mu_a_level_3 = pm.Deterministic(
-                "mu_a_level_3", alpha_level_2[level_3_to_level_2_idx]
-            )
-            sigma_a_level_3 = pm.HalfNormal("sigma_a_level_3", sigma=coef_prior_var)
-            level_3_offset_1 = pm.Normal(
-                "level_3_offset_1", mu=0, sigma=1, dims="level_3_values"
-            )
-            alpha_level_3 = pm.Deterministic(
-                "alpha_level_3", mu_a_level_3 + level_3_offset_1 * sigma_a_level_3
+            pm.Data("level_3_idx", model_data["level_3_idx"], dims="idx")
+            pm.Data(
+                "level_3_to_level_2_idx",
+                model_data["level_3_to_level_2_idx"],
+                dims="level_3_values",
             )
 
-            if most_granular_slope_level == 3:
-                mu_b_level_3 = pm.Deterministic(
-                    "mu_b_level_3", beta_level_2[level_3_to_level_2_idx]
+    def define_hierarchical_normal_priors(
+        self,
+        model_data: dict,
+        priors: dict,
+        hierarchical_levels: int,
+        varying_slope_level: int,
+    ) -> tuple[pm.Deterministic, pm.Deterministic]:
+        """
+        Define hierarchical normal priors for varying intercepts and slopes, up
+        to three levels. Slopes are only modeled down to varying_slope_level.
+        """
+        priors_config = self.settings["priors"]
+        use_group_size_shrinkage = bool(priors_config["group_size_shrinkage"])
+        shrinkage_scaling = priors_config["group_size_shrinkage_scaling"]
+
+        def _group_prior_sd_beta(level: str) -> float:
+            level_key = f"group_prior_sd_beta_level_{level}"
+            if level_key not in priors:
+                raise ValueError(
+                    "Missing slope prior for hierarchical level: " f"{level_key}."
                 )
-                sigma_b_level_3 = pm.HalfNormal("sigma_b_level_3", sigma=coef_prior_var)
-                level_3_offset_2 = pm.Normal(
-                    "level_3_offset_2", mu=0, sigma=1, dims=("level_3_values", "x_vars")
+            return priors[level_key]
+
+        def _make_level(
+            level: str,
+            parent_alpha: Any,
+            parent_beta: Any,
+            dims: str,
+            make_slopes: bool,
+            n_studies: np.ndarray,
+        ) -> tuple[pm.Deterministic, pm.Deterministic]:
+            # Global scale parameters for the level
+            tau_alpha = pm.HalfNormal(
+                f"tau_alpha_{level}", sigma=priors["group_prior_sd_alpha"]
+            )
+
+            # Offsets for non-centered parameterization
+            offset_alpha = pm.Normal(f"offset_alpha_{level}", mu=0, sigma=1, dims=dims)
+
+            # Final hierarchical priors for intercepts
+            if use_group_size_shrinkage:
+                # Optional dynamic shrinkage based on group size.
+                # One scale is computed and reused for alpha and beta.
+                n_studies_values = n_studies.astype(float)
+                if (not np.isfinite(n_studies_values).all()) or (
+                    n_studies_values <= 0
+                ).any():
+                    raise ValueError(
+                        f"Invalid n_studies for level {level}. "
+                        "All values must be finite and > 0 when "
+                        "group_size_shrinkage is enabled."
+                    )
+                if shrinkage_scaling == "sqrt":
+                    raw_scale = np.sqrt(n_studies_values) - 1.0
+                else:  # "log"
+                    raw_scale = np.log(n_studies_values) - 1.0
+                scale = np.maximum(raw_scale, self.eps)
+
+                sigma_alpha = pm.Deterministic(
+                    f"sigma_alpha_{level}",
+                    tau_alpha * scale,
+                    dims=dims,
                 )
-                beta_level_3 = pm.Deterministic(
-                    "beta_level_3", mu_b_level_3 + level_3_offset_2 * sigma_b_level_3
+                alpha = pm.Deterministic(
+                    f"alpha_{level}", parent_alpha + sigma_alpha * offset_alpha
+                )
+            else:
+                alpha = pm.Deterministic(
+                    f"alpha_{level}", parent_alpha + tau_alpha * offset_alpha
                 )
 
-        # Expected values (linear) at level 3
+            # Final hierarchical priors for slopes.
+            # For levels deeper than varying_slope_level, slopes are inherited
+            # from the parent level (no new slope priors at this level).
+            if make_slopes:
+                tau_beta = pm.HalfNormal(
+                    f"tau_beta_{level}", sigma=_group_prior_sd_beta(level)
+                )
+                offset_beta = pm.Normal(
+                    f"offset_beta_{level}", mu=0, sigma=1, dims=(dims, "x_vars")
+                )
+                if use_group_size_shrinkage:
+                    sigma_beta = pm.Deterministic(
+                        f"sigma_beta_{level}",
+                        tau_beta * scale,
+                        dims=dims,
+                    )
+                    beta = pm.Deterministic(
+                        f"beta_{level}", parent_beta + sigma_beta[:, None] * offset_beta
+                    )
+                else:
+                    beta = pm.Deterministic(
+                        f"beta_{level}", parent_beta + tau_beta * offset_beta
+                    )
+            else:
+                if parent_beta.ndim == 1:
+                    n_groups = offset_alpha.shape[0]
+                    n_x = parent_beta.shape[-1]
+                    beta = pm.Deterministic(
+                        f"beta_{level}",
+                        pt.broadcast_to(parent_beta, (n_groups, n_x)),
+                    )
+                else:
+                    beta = pm.Deterministic(f"beta_{level}", parent_beta)
+
+            return alpha, beta
+
+        # Global hyperpriors for intercept and slopes, depending on likelihood
+        if self.likelihood == "gaussian":
+            mu_alpha_mean = priors["alpha_hyper_mean"]
+        elif self.likelihood == "beta":
+            mu_alpha_mean = logit(priors["alpha_hyper_mean_mu"])
+
+        mu_alpha = pm.Normal(
+            "mu_alpha", mu=mu_alpha_mean, sigma=priors["hyperprior_sd_alpha"]
+        )
+        mu_beta = pm.Normal(
+            "mu_beta", mu=0, sigma=priors["hyperprior_sd_beta"], dims="x_vars"
+        )
+
+        # Level 1 priors
+        alpha, beta = _make_level(
+            level="1",
+            parent_alpha=mu_alpha,
+            parent_beta=mu_beta,
+            dims="level_1_values",
+            make_slopes=1 <= varying_slope_level,
+            n_studies=model_data["level_1_n_studies"],
+        )
+
+        # Level 2 priors, if applicable
+        if hierarchical_levels >= 2:
+            idx_2_to_1 = model_data["level_2_to_level_1_idx"]
+            alpha, beta = _make_level(
+                level="2",
+                parent_alpha=alpha[idx_2_to_1],
+                parent_beta=beta[idx_2_to_1],
+                dims="level_2_values",
+                make_slopes=2 <= varying_slope_level,
+                n_studies=model_data["level_2_n_studies"],
+            )
+
+        # Level 3 priors, if applicable
         if hierarchical_levels == 3:
-            if most_granular_slope_level == 3:  # L3 varying slopes
-                y_hat_linear = alpha_level_3[level_3_idx] + pt.sum(
-                    x_obs * beta_level_3[level_3_idx], axis=1
-                )
-            elif most_granular_slope_level == 2:  # L3 intercepts, L2 slopes
-                y_hat_linear = alpha_level_3[level_3_idx] + pt.sum(
-                    x_obs * beta_level_2[level_2_idx], axis=1
-                )
-            elif most_granular_slope_level == 1:  # L3 intercepts, L1 slopes
-                y_hat_linear = alpha_level_3[level_3_idx] + pt.sum(
-                    x_obs * beta_level_1[level_1_idx], axis=1
-                )
-            elif most_granular_slope_level == 0:  # L3 intercepts, no varying slopes
-                y_hat_linear = alpha_level_3[level_3_idx] + pt.sum(x_obs * mu_b, axis=1)
+            idx_3_to_2 = model_data["level_3_to_level_2_idx"]
+            alpha, beta = _make_level(
+                level="3",
+                parent_alpha=alpha[idx_3_to_2],
+                parent_beta=beta[idx_3_to_2],
+                dims="level_3_values",
+                make_slopes=3 <= varying_slope_level,
+                n_studies=model_data["level_3_n_studies"],
+            )
 
-        # For Gaussian likelihood, the identity link function is used
-        # The variance is assumed to be independent within and between studies
+        return alpha, beta
+
+    def define_control_variable_priors(
+        self,
+        model_data: dict[str, Any],
+        priors: dict[str, Any],
+    ) -> pt.TensorVariable:
+        """
+        Define random effects for study and block intercepts. These are used as
+        control variables during training.
+
+        Args:
+            - model_data: Dictionary of arrays and coords from the data task.
+            - priors: Prior settings for random intercepts.
+        """
+        # Priors on study and block IDs
+        mu_gamma = pm.Normal(
+            "mu_gamma",
+            mu=0,
+            sigma=priors["random_intercept_sd"],
+        )
+
+        # Study level priors
+        sigma_gamma_study = pm.HalfNormal(
+            "sigma_gamma_study", sigma=priors["random_intercept_sd"]
+        )
+        offset_gamma_study = pm.Normal(
+            "offset_gamma_study", mu=0, sigma=1, dims="study_names"
+        )
+        gamma_study = pm.Deterministic(
+            "gamma_study", mu_gamma + sigma_gamma_study * offset_gamma_study
+        )
+
+        # Block level priors
+        block_to_study_idx = model_data["block_to_study_idx"]
+        sigma_gamma_block = pm.HalfNormal(
+            "sigma_gamma_block", sigma=priors["random_intercept_sd"]
+        )
+        offset_gamma_block = pm.Normal(
+            "offset_gamma_block", mu=0, sigma=1, dims="block_names"
+        )
+        gamma_block = pm.Deterministic(
+            "gamma_block",
+            gamma_study[block_to_study_idx] + sigma_gamma_block * offset_gamma_block,
+        )
+
+        return gamma_block
+
+    def define_data_variance_prior(
+        self,
+        likelihood: str,
+        y_cond_linear: pt.TensorVariable,
+        priors: dict[str, Any],
+    ) -> pt.TensorVariable:
+        """
+        Define the observation noise prior for the given likelihood.
+
+        Args:
+            - likelihood: Either "gaussian" or "beta".
+            - y_cond_linear: Linear conditional mean from the model.
+            - priors: Likelihood-specific prior settings.
+        """
         if likelihood == "gaussian":
-            y_hat = pm.Deterministic("y_hat", y_hat_linear)
-            sigma_y = pm.HalfNormal("sigma_y", sigma=gaussian_noise)
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
+            sigma_y = pm.HalfNormal("sigma_y", sigma=priors["sigma_y_sd"])
 
-        # For Beta likelihood, the expected values are transformed to 0-1 range
-        # using the inverse logit link function The Beta distribution is
-        # parameterized by the mean and variance
         elif likelihood == "beta":
-            y_hat = pm.Deterministic("y_hat", pm.math.invlogit(y_hat_linear))
-            sigma_raw = pm.Beta("sigma_raw", alpha=alpha_var_param, beta=beta_var_param)
+            sigma_raw = pm.Beta(
+                "sigma_raw",
+                alpha=priors["beta_likelihood"]["alpha"],
+                beta=priors["beta_likelihood"]["beta"],
+            )
+            y_cond = clip(invlogit(y_cond_linear), self.eps, 1 - self.eps)
             sigma_y = pm.Deterministic(
-                "sigma", sigma_raw * pt.sqrt(y_hat * (1 - y_hat))
-            )  # Upper bound is a function of the mean parameter
-            y_like = pm.Beta(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
+                "sigma_y", sigma_raw * pt.sqrt(y_cond * (1 - y_cond))
             )
 
-        return model
+        return sigma_y
 
 
-def two_level_varying_slope_gaussian_likelihood(model_data: dict[str, Any]) -> pm.Model:
+def add_likelihood_outputs(
+    likelihood: str,
+    y_cond_linear: pt.TensorVariable,
+    y_intercept_linear: pt.TensorVariable,
+    mode: str,
+    eps: float,
+    observed: pt.TensorVariable | None = None,
+    sigma_y: pt.TensorVariable | None = None,
+    sigma_raw: pt.TensorVariable | None = None,
+) -> None:
     """
-    Define a generic hierarchical model with two levels of grouping, normal
-    intercept and slope priors (half-normal for variance terms), and a Gaussian
-    likelihood function. Both intercept and slope terms are assumed to vary at
-    the second level of grouping.
-
-    Args:
-        model_data: A dictionary containing all the data used by the model.
-
-    Returns:
-        model: A PyMC model object with the defined hierarchical model.
+    Add shared model outputs: conditional mean (y_cond), likelihood predictions,
+    and intercepts for training or test models.
     """
+    pred_name = "y_like" if mode == "train" else "y_pred"
 
-    # Unpack the required model data from the dictionary
-    coords = model_data["coords"]
-    y_obs = model_data["y_obs"]
-    x_obs = model_data["x_obs"]
-    level_2_idx = model_data["level_2_idx"]
-    level_2_to_level_1_idx = model_data["level_2_to_level_1_idx"]
-    site_idx = model_data["site_idx"]
+    # Gaussian likelihood case
+    if likelihood == "gaussian":
+        pm.Deterministic("y_cond", y_cond_linear, dims="idx")
+        pm.Deterministic("y_intercept", y_intercept_linear, dims="idx")
 
-    with pm.Model(coords=coords) as model:
-        # Observed data variables. Updated when predicting on test data
-        y_obs = pm.Data("y_obs", y_obs, dims="idx")
-        x_obs = pm.Data("x_obs", x_obs, dims=("idx", "x_vars"))
-        level_2_idx = pm.Data("level_2_idx", level_2_idx, dims="idx")
-        site_idx = pm.Data("site_idx", site_idx, dims="idx")  # noqa: F841
+        # For posterior predictive / predictions, observed is not provided
+        if observed is None:
+            pm.Normal(pred_name, mu=y_cond_linear, sigma=sigma_y, dims="idx")
+        # For training model with observed data
+        else:
+            pm.Normal(
+                pred_name,
+                mu=y_cond_linear,
+                sigma=sigma_y,
+                observed=observed,
+                dims="idx",
+            )
 
-        # Hyperpriors for intercept and slope terms
-        mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.05)
-        sigma_a = pm.HalfNormal("sigma_a", sigma=0.05)
-        mu_b = pm.Normal("mu_b", mu=0, sigma=0.05, dims="x_vars")
-        sigma_b = pm.HalfNormal("sigma_b", sigma=0.05, dims="x_vars")
+    # Beta likelihood case
+    elif likelihood == "beta":
+        y_cond = clip(invlogit(y_cond_linear), eps, 1 - eps)
+        y_intercept = clip(invlogit(y_intercept_linear), eps, 1 - eps)
+        pm.Deterministic("y_cond", y_cond, dims="idx")
+        pm.Deterministic("y_intercept", y_intercept, dims="idx")
 
-        # Top-level priors (non-centered parameterization)
-        level_1_offset_1 = pm.Normal(
-            "level_1_offset_1", mu=0, sigma=1, dims="level_1_values"
+        # For posterior predictive / predictions, compute sigma_y from sigma_raw
+        if sigma_y is None:
+            sigma_y = pm.Deterministic(
+                "sigma_y", sigma_raw * pt.sqrt(y_cond * (1 - y_cond))
+            )
+
+        # For posterior predictive / predictions, observed is not provided
+        if observed is None:
+            pm.Beta(pred_name, mu=y_cond, sigma=sigma_y, dims="idx")
+
+        # For training model with observed data
+        else:
+            pm.Beta(pred_name, mu=y_cond, sigma=sigma_y, observed=observed, dims="idx")
+
+
+def validate_model_settings(settings: dict[str, Any]) -> None:
+    """Validate and extract configuration settings for the model."""
+    # Required top-level fields
+    required_fields = {
+        "likelihood",
+        "hierarchical_levels",
+        "varying_slope_level",
+        "priors",
+        "hierarchy",
+    }
+
+    for field in required_fields:
+        if field not in settings:
+            raise ValueError(f"Missing required setting: '{field}'")
+
+    #  Likelihood structure
+    allowed_distributions = {"gaussian", "beta"}
+    distribution = settings["likelihood"]
+
+    if distribution not in allowed_distributions:
+        raise ValueError(f"Unsupported likelihood. Allowed: {allowed_distributions}")
+
+    # Hierarchy structure
+    hierarchy = settings["hierarchy"]
+    for level in ["level_1", "level_2", "level_3"]:
+        if level not in hierarchy:
+            raise ValueError(f"Missing hierarchy key: {level}")
+        if not isinstance(hierarchy[level], list):
+            raise ValueError(f"Hierarchy '{level}' must be a list.")
+        if not all(isinstance(col, str) for col in hierarchy[level]):
+            raise ValueError(f"All entries in hierarchy '{level}' must be strings.")
+
+    # Value range checks
+    if not (1 <= settings["hierarchical_levels"] <= 3):
+        raise ValueError("hierarchical_levels must be 1, 2, or 3")
+
+    if not (1 <= settings["varying_slope_level"] <= settings["hierarchical_levels"]):
+        raise ValueError("varying_slope_level must be <= hierarchical_levels")
+
+    priors_cfg = settings["priors"]
+    if "group_size_shrinkage" not in priors_cfg:
+        raise ValueError("Missing required setting: priors.group_size_shrinkage")
+    if not isinstance(priors_cfg["group_size_shrinkage"], bool):
+        raise ValueError("priors.group_size_shrinkage must be a boolean.")
+
+    if "group_size_shrinkage_scaling" not in priors_cfg:
+        raise ValueError(
+            "Missing required setting: priors.group_size_shrinkage_scaling"
         )
-        level_1_offset_2 = pm.Normal(
-            "level_1_offset_2", mu=0, sigma=1, dims=("level_1_values", "x_vars")
-        )
-        alpha_level_1 = pm.Deterministic(
-            "alpha_level_1", mu_a + level_1_offset_1 * sigma_a
-        )
-        beta_level_1 = pm.Deterministic(
-            "beta_level_1", mu_b + level_1_offset_2 * sigma_b
-        )
-
-        # Second-level intercept and slope priors
-        # The mean values are sampled from the first level priors
-        mu_a_level_2 = pm.Deterministic(
-            "mu_a_level_2", alpha_level_1[level_2_to_level_1_idx]
-        )
-        mu_b_level_2 = pm.Deterministic(
-            "mu_b_level_2", beta_level_1[level_2_to_level_1_idx]
-        )
-        sigma_a_level_2 = pm.HalfNormal("sigma_a_level_2", sigma=0.05)
-        sigma_b_level_2 = pm.HalfNormal("sigma_b_level_2", sigma=0.05)
-
-        level_2_offset_1 = pm.Normal(
-            "level_2_offset_1", mu=0, sigma=1, dims="level_2_values"
-        )
-        level_2_offset_2 = pm.Normal(
-            "level_2_offset_2", mu=0, sigma=1, dims=("level_2_values", "x_vars")
-        )
-        alpha_level_2 = pm.Deterministic(
-            "alpha_level_2", mu_a_level_2 + level_2_offset_1 * sigma_a_level_2
-        )
-        beta_level_2 = pm.Deterministic(
-            "beta_level_2", mu_b_level_2 + level_2_offset_2 * sigma_b_level_2
-        )
-
-        # Data variance assumed to be independent within and between studies
-        # NOTE: Should check this assumption for the scaled data
-        sigma_y = pm.HalfNormal("sigma_y", sigma=0.05)
-
-        # Formula for the expected values, with varying intercepts and slopes
-        # at the second level of grouping
-        y_hat = pm.Deterministic(
-            "y_hat",
-            alpha_level_2[level_2_idx]
-            + pt.sum(x_obs * beta_level_2[level_2_idx], axis=1),
-        )
-
-        # Likelihood function
-        y_like = pm.Normal(  # noqa: F841
-            "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-        )
-
-        return model
+    shrinkage_scaling = priors_cfg["group_size_shrinkage_scaling"]
+    if shrinkage_scaling not in {"sqrt", "log"}:
+        raise ValueError("priors.group_size_shrinkage_scaling must be 'sqrt' or 'log'.")
 
 
-def two_level_varying_slope_beta_likelihood(model_data: dict[str, Any]) -> pm.Model:
-    """
-    Define a generic hierarchical model with two levels of grouping, normal
-    intercept and slope priors (half-normal for variance terms), and a Beta
-    likelihood function. Both intercept and slope terms are assumed to vary at
-    the second level of grouping.
-
-    Args:
-        model_data: A dictionary containing all the data used by the model.
-
-    Returns:
-        model: A PyMC model object with the defined hierarchical model.
-    """
-
-    # Unpack the required model data from the dictionary
-    coords = model_data["coords"]
-    y_obs = model_data["y_obs"]
-    x_obs = model_data["x_obs"]
-    level_2_idx = model_data["level_2_idx"]
-    level_2_to_level_1_idx = model_data["level_2_to_level_1_idx"]
-    site_idx = model_data["site_idx"]
-
-    with pm.Model(coords=coords) as model:
-        # Observed data variables. Updated when predicting on test data
-        y_obs = pm.Data("y_obs", y_obs, dims="idx")
-        x_obs = pm.Data("x_obs", x_obs, dims=("idx", "x_vars"))
-        level_2_idx = pm.Data("level_2_idx", level_2_idx, dims="idx")
-        site_idx = pm.Data("site_idx", site_idx, dims="idx")  # noqa: F841
-
-        # Hyperpriors for intercept and slope terms
-        mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.05)
-        sigma_a = pm.HalfNormal("sigma_a", sigma=0.05)
-        mu_b = pm.Normal("mu_b", mu=0, sigma=0.05, dims="x_vars")
-        sigma_b = pm.HalfNormal("sigma_b", sigma=0.05, dims="x_vars")
-
-        # Top-level priors (non-centered parameterization)
-        level_1_offset_1 = pm.Normal(
-            "level_1_offset_1", mu=0, sigma=1, dims="level_1_values"
-        )
-        level_1_offset_2 = pm.Normal(
-            "level_1_offset_2", mu=0, sigma=1, dims=("level_1_values", "x_vars")
-        )
-        alpha_level_1 = pm.Deterministic(
-            "alpha_level_1", mu_a + level_1_offset_1 * sigma_a
-        )
-        beta_level_1 = pm.Deterministic(
-            "beta_level_1", mu_b + level_1_offset_2 * sigma_b
-        )
-
-        # Second-level intercept and slope priors
-        # The mean values are sampled from the first level priors
-        mu_a_level_2 = pm.Deterministic(
-            "mu_a_level_2", alpha_level_1[level_2_to_level_1_idx]
-        )
-        mu_b_level_2 = pm.Deterministic(
-            "mu_b_level_2", beta_level_1[level_2_to_level_1_idx]
-        )
-        sigma_a_level_2 = pm.HalfNormal("sigma_a_level_2", sigma=0.05)
-        sigma_b_level_2 = pm.HalfNormal("sigma_b_level_2", sigma=0.05)
-
-        level_2_offset_1 = pm.Normal(
-            "level_2_offset_1", mu=0, sigma=1, dims="level_2_values"
-        )
-        level_2_offset_2 = pm.Normal(
-            "level_2_offset_2", mu=0, sigma=1, dims=("level_2_values", "x_vars")
-        )
-        alpha_level_2 = pm.Deterministic(
-            "alpha_level_2", mu_a_level_2 + level_2_offset_1 * sigma_a_level_2
-        )
-        beta_level_2 = pm.Deterministic(
-            "beta_level_2", mu_b_level_2 + level_2_offset_2 * sigma_b_level_2
-        )
-
-        # Formula for the expected values, with varying intercepts and slopes
-        # at the second level of grouping
-        y_hat = pm.Deterministic(
-            "y_hat",
-            pm.math.invlogit(
-                alpha_level_2[level_2_idx]
-                + pt.sum(x_obs * beta_level_2[level_2_idx], axis=1),
-            ),
-        )
-
-        # Variance that satisfies mean-variance relationship for the Beta distr
-        # 0 < sigma < sqrt(mu * (1 - mu))
-        sigma_raw = pm.Beta("sigma_raw", alpha=2, beta=5)  # Raw sigma in (0, 1)
-        sigma_y = pm.Deterministic("sigma", sigma_raw * pt.sqrt(y_hat * (1 - y_hat)))
-
-        # Likelihood function
-        y_like = pm.Beta(  # noqa: F841
-            "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-        )
-
-        return model
-
-
-def three_level_varying_slope_gaussian_likelihood(
-    model_data: dict[str, Any]
+def rolled_up_prediction_model(
+    model_data: dict[str, Any],
+    trace: az.InferenceData,
+    settings: dict[str, Any],
+    mode: str,
+    epsilon: float,
 ) -> pm.Model:
     """
-    Defines a generic hierarchical model with three levels of grouping, normal
-    intercept and slope priors (half-normal for variance terms), and a Gaussian
-    likelihood function. Both intercept and slope terms are assumed to vary at
-    each level of grouping.
+    Build a prediction model that applies rolled-up fallback logic.
 
-    Args:
-        model_data: A dictionary containing all the data used by the model.
+    For each observation, the model uses parameters from the most specific
+    hierarchical level available (level 3/2/1). If the observation belongs to
+    a group that does not meet the study threshold, it falls back to the parent
+    level, and ultimately to population-level parameters.
 
-    Returns:
-        model: A PyMC model object with the defined hierarchical model.
+    This model is used with pm.sample_posterior_predictive(trace, ...) to draw
+    conditional means and posterior predictive samples for new data.
     """
+    hierarchical_levels = settings["hierarchical_levels"]
+    likelihood = settings["likelihood"]
+    eps = epsilon
 
-    # Unpack the required model data from the dictionary
-    coords = model_data["coords"]
-    y_obs = model_data["y_obs"]
-    x_obs = model_data["x_obs"]
-    level_3_idx = model_data["level_3_idx"]
-    level_2_to_level_1_idx = model_data["level_2_to_level_1_idx"]
-    level_3_to_level_2_idx = model_data["level_3_to_level_2_idx"]
-    site_idx = model_data["site_idx"]
+    def _update_coords_from_trace(
+        existing_coords: dict[str, Any],
+        trace: az.InferenceData,
+    ) -> dict[str, Any]:
+        coords = dict(existing_coords)  # start from model_data's coords
+        for v in trace.posterior.variables:
+            dims = trace.posterior[v].dims
+            shape = trace.posterior[v].shape
+            for dim, size in zip(dims, shape):
+                if dim not in ("chain", "draw") and dim not in coords:
+                    coords[dim] = np.arange(size)
+        return coords
 
-    with pm.Model(coords=coords) as model:
-        # Observed data variables. Updated when predicting on test data
-        y_obs = pm.Data("y_obs", y_obs, dims="idx")
-        x_obs = pm.Data("x_obs", x_obs, dims=("idx", "x_vars"))
-        level_3_idx = pm.Data("level_3_idx", level_3_idx, dims="idx")
-        site_idx = pm.Data("site_idx", site_idx, dims="idx")  # noqa: F841
+    # Update coords from trace, so all dims needed for Flat variables are present
+    coords = _update_coords_from_trace(model_data["coords"], trace)
 
-        # Hyperpriors for intercept and slope terms
-        mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.1)
-        sigma_a = pm.HalfNormal("sigma_a", sigma=0.1)
-        mu_b = pm.Normal("mu_b", mu=0, sigma=0.1, dims="x_vars")
-        sigma_b = pm.HalfNormal("sigma_b", sigma=0.1, dims="x_vars")
+    with pm.Model(coords=coords) as prediction_model:
+        # Data nodes
+        x_obs = pm.Data("x_obs", model_data["x_obs"], dims=("idx", "x_vars"))
+        pm.Data("site_idx", model_data["site_idx"], dims="idx")
+        pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
+        if likelihood == "beta":
+            y_obs = np.clip(model_data["y_obs"], eps, 1 - eps)
+        else:
+            y_obs = model_data["y_obs"]
+        pm.Data("y_obs", y_obs, dims="idx")
 
-        # Top-level priors (Level 1)
-        level_1_offset_1 = pm.Normal(
-            "level_1_offset_1", mu=0, sigma=1, dims="level_1_values"
+        level_assignment = pm.Data(
+            "level_assignment", model_data["level_assignment"], dims="idx"
         )
-        level_1_offset_2 = pm.Normal(
-            "level_1_offset_2", mu=0, sigma=1, dims=("level_1_values", "x_vars")
-        )
-        alpha_level_1 = pm.Deterministic(
-            "alpha_level_1", mu_a + level_1_offset_1 * sigma_a
-        )
-        beta_level_1 = pm.Deterministic(
-            "beta_level_1", mu_b + level_1_offset_2 * sigma_b
-        )
+        pm.Data("level_1_idx", model_data["level_1_idx"], dims="idx")
+        if hierarchical_levels >= 2:
+            pm.Data("level_2_idx", model_data["level_2_idx"], dims="idx")
+        if hierarchical_levels == 3:
+            pm.Data("level_3_idx", model_data["level_3_idx"], dims="idx")
 
-        # Second-level priors
-        mu_a_level_2 = pm.Deterministic(
-            "mu_a_level_2", alpha_level_1[level_2_to_level_1_idx]
-        )
-        mu_b_level_2 = pm.Deterministic(
-            "mu_b_level_2", beta_level_1[level_2_to_level_1_idx]
-        )
-        sigma_a_level_2 = pm.HalfNormal("sigma_a_level_2", sigma=0.1)
-        sigma_b_level_2 = pm.HalfNormal("sigma_b_level_2", sigma=0.1)
+        # Load sampled posterior variables with matching dims
+        mu_alpha = pm.Flat("mu_alpha")
+        mu_beta = pm.Flat("mu_beta", dims="x_vars")
+        alpha_1 = pm.Flat("alpha_1", dims="alpha_1_dim_0")
+        beta_1 = pm.Flat("beta_1", dims=("beta_1_dim_0", "beta_1_dim_1"))
+        if hierarchical_levels >= 2:
+            alpha_2 = pm.Flat("alpha_2", dims="alpha_2_dim_0")
+            beta_2 = pm.Flat("beta_2", dims=("beta_2_dim_0", "beta_2_dim_1"))
+        if hierarchical_levels == 3:
+            alpha_3 = pm.Flat("alpha_3", dims="alpha_3_dim_0")
+            beta_3 = pm.Flat("beta_3", dims=("beta_3_dim_0", "beta_3_dim_1"))
 
-        level_2_offset_1 = pm.Normal(
-            "level_2_offset_1", mu=0, sigma=1, dims="level_2_values"
-        )
-        level_2_offset_2 = pm.Normal(
-            "level_2_offset_2", mu=0, sigma=1, dims=("level_2_values", "x_vars")
-        )
-        alpha_level_2 = pm.Deterministic(
-            "alpha_level_2", mu_a_level_2 + level_2_offset_1 * sigma_a_level_2
-        )
-        beta_level_2 = pm.Deterministic(
-            "beta_level_2", mu_b_level_2 + level_2_offset_2 * sigma_b_level_2
-        )
+        # Initialize linear predictors
+        y_cond_linear = pt.zeros_like(model_data["y_obs"])
+        y_intercept_linear = pt.zeros_like(model_data["y_obs"])
 
-        # Third-level priors
-        mu_a_level_3 = pm.Deterministic(
-            "mu_a_level_3", alpha_level_2[level_3_to_level_2_idx]
-        )
-        mu_b_level_3 = pm.Deterministic(
-            "mu_b_level_3", beta_level_2[level_3_to_level_2_idx]
-        )
-        sigma_a_level_3 = pm.HalfNormal("sigma_a_level_3", sigma=0.1)
-        sigma_b_level_3 = pm.HalfNormal("sigma_b_level_3", sigma=0.1)
+        def _set_level_prediction(
+            y_cond_linear: pt.TensorVariable,
+            y_intercept_linear: pt.TensorVariable,
+            mask: pt.TensorVariable,
+            x_obs: pt.TensorVariable,
+            group_idx: Any,
+            alpha: Any,
+            beta: Any,
+        ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
+            obs_idx = pt.nonzero(mask)[0]
+            groups = pt.take(group_idx, obs_idx)
+            alpha_sel = pt.take(alpha, groups)
+            beta_sel = pt.take(beta, groups, axis=0)  # Symbolic batch gather
+            x_sel = pt.take(x_obs, obs_idx, axis=0)
+            y_pred = alpha_sel + pt.sum(x_sel * beta_sel, axis=1)
+            y_cond_linear = pt.set_subtensor(y_cond_linear[obs_idx], y_pred)
+            y_intercept_linear = pt.set_subtensor(
+                y_intercept_linear[obs_idx], alpha_sel
+            )
 
-        level_3_offset_1 = pm.Normal(
-            "level_3_offset_1", mu=0, sigma=1, dims="level_3_values"
-        )
-        level_3_offset_2 = pm.Normal(
-            "level_3_offset_2", mu=0, sigma=1, dims=("level_3_values", "x_vars")
-        )
-        alpha_level_3 = pm.Deterministic(
-            "alpha_level_3", mu_a_level_3 + level_3_offset_1 * sigma_a_level_3
-        )
-        beta_level_3 = pm.Deterministic(
-            "beta_level_3", mu_b_level_3 + level_3_offset_2 * sigma_b_level_3
-        )
+            return y_cond_linear, y_intercept_linear
 
-        # Data variance assumed to be independent within and between studies
-        sigma_y = pm.HalfNormal("sigma_y", sigma=0.1)
+        # Population-level fallback (level 0)
+        mask_0 = pt.eq(level_assignment, 0)
+        obs_idx_0 = pt.nonzero(mask_0)[0]
+        x_sel_0 = pt.take(x_obs, obs_idx_0, axis=0)
+        y_pred_0 = mu_alpha + pt.sum(x_sel_0 * mu_beta, axis=1)
+        y_cond_linear = pt.set_subtensor(y_cond_linear[obs_idx_0], y_pred_0)
+        y_intercept_linear = pt.set_subtensor(y_intercept_linear[obs_idx_0], mu_alpha)
 
-        # Expected values with varying intercepts and slopes at Level 3
-        y_hat = pm.Deterministic(
-            "y_hat",
-            alpha_level_3[level_3_idx]
-            + pt.sum(x_obs * beta_level_3[level_3_idx], axis=1),
-        )
-
-        # Likelihood function
-        y_like = pm.Normal(  # noqa: F841
-            "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-        )
-
-        return model
-
-
-def biome_realm_ecoregion_slope_model(model_data: dict[str, Any]) -> pm.Model:
-    """
-    Defines the hierarchical model, starting with hyperparameters for the
-    biome-level intercept and slope terms. The model then samples the
-    intercept and slope terms for the realm and ecoregion levels from the
-    corresponding biome and realm level parameters. The numeric priors are
-    defined in this model object.
-
-    Args:
-        model_data: A dictionary containing all the data used by the model.
-
-    Returns:
-        model: A PyMC model object with the defined hierarchical model.
-    """
-
-    # Unpack the required model data from dictionary
-    coords = model_data["coords"]
-    y = model_data["y"]
-    x = model_data["x"]
-    realm_to_biome_idx = model_data["realm_to_biome_idx"]
-    eco_to_realm_idx = model_data["eco_to_realm_idx"]
-    biome_realm_eco_idx = model_data["biome_realm_eco_idx"]
-    biome_realm_idx = model_data["biome_realm_idx"]
-
-    with pm.Model(coords=coords) as model:
-        # Observed data variables
-        y_obs = pm.Data("y_obs", y, dims="idx")
-        x_obs = pm.Data("x_obs", x, dims=("idx", "x_vars"))
-        biome_realm_eco_idx = pm.Data(
-            "biome_realm_eco_idx", biome_realm_eco_idx, dims="idx"
-        )
-        biome_realm_idx = pm.Data("biome_realm_idx", biome_realm_idx, dims="idx")
-        site_idx = pm.Data(  # noqa: F841
-            "site_idx", model_data["site_idx"], dims="idx"
-        )  # This index is updated when predicting on test data
-
-        # Hyperpriors for biome-level intercept and slope terms
-        mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.1)
-        sigma_a = pm.HalfNormal("sigma_a", sigma=0.1)
-        mu_b = pm.Normal("mu_b", mu=0, sigma=0.1, dims="x_vars")
-        sigma_b = pm.HalfNormal("sigma_b", sigma=0.1, dims="x_vars")
-
-        # Biome-level priors (non-centered parameterization)
-        biome_offset_1 = pm.Normal("biome_offset_1", mu=0, sigma=1, dims="biomes")
-        biome_offset_2 = pm.Normal(
-            "biome_offset_2", mu=0, sigma=1, dims=("biomes", "x_vars")
-        )
-        alpha_biome = pm.Deterministic("alpha_biome", mu_a + biome_offset_1 * sigma_a)
-        beta_biome = pm.Deterministic("beta_biome", mu_b + biome_offset_2 * sigma_b)
-
-        # Realm-level intercepts and slopes, sampled from the corresponding biomes
-        mu_a_realm = pm.Deterministic("mu_a_realm", alpha_biome[realm_to_biome_idx])
-        mu_b_realm = pm.Deterministic("mu_b_realm", beta_biome[realm_to_biome_idx])
-        sigma_a_realm = pm.HalfNormal("sigma_a_realm", sigma=0.1)
-        sigma_b_realm = pm.HalfNormal("sigma_b_realm", sigma=0.1)
-
-        realm_offset_1 = pm.Normal("realm_offset_1", mu=0, sigma=1, dims="biome_realm")
-        realm_offset_2 = pm.Normal(
-            "realm_offset_2", mu=0, sigma=1, dims=("biome_realm", "x_vars")
+        # Level 1
+        mask_1 = pt.eq(level_assignment, 1)
+        y_cond_linear, y_intercept_linear = _set_level_prediction(
+            y_cond_linear,
+            y_intercept_linear,
+            mask_1,
+            x_obs,
+            model_data["level_1_idx"],
+            alpha_1,
+            beta_1,
         )
 
-        alpha_realm = pm.Deterministic(
-            "alpha_realm", mu_a_realm + realm_offset_1 * sigma_a_realm
-        )
-        beta_realm = pm.Deterministic(
-            "beta_realm", mu_b_realm + realm_offset_2 * sigma_b_realm
-        )
+        # Level 2
+        if hierarchical_levels >= 2:
+            mask_2 = pt.eq(level_assignment, 2)
+            y_cond_linear, y_intercept_linear = _set_level_prediction(
+                y_cond_linear,
+                y_intercept_linear,
+                mask_2,
+                x_obs,
+                model_data["level_2_idx"],
+                alpha_2,
+                beta_2,
+            )
 
-        # Ecoregion-level intercepts and slopes, sampled from realms
-        mu_a_eco = pm.Deterministic("mu_a_eco", alpha_realm[eco_to_realm_idx])
-        mu_b_eco = pm.Deterministic("mu_b_eco", beta_realm[eco_to_realm_idx])
-        sigma_a_eco = pm.HalfNormal("sigma_a_eco", sigma=0.1)
-        sigma_b_eco = pm.HalfNormal("sigma_b_eco", sigma=0.1)
+        # Level 3
+        if hierarchical_levels == 3:
+            mask_3 = pt.eq(level_assignment, 3)
+            y_cond_linear, y_intercept_linear = _set_level_prediction(
+                y_cond_linear,
+                y_intercept_linear,
+                mask_3,
+                x_obs,
+                model_data["level_3_idx"],
+                alpha_3,
+                beta_3,
+            )
 
-        eco_offset_1 = pm.Normal("eco_offset_1", mu=0, sigma=1, dims="biome_realm_eco")
-        eco_offset_2 = pm.Normal(
-            "eco_offset_2", mu=0, sigma=1, dims=("biome_realm_eco", "x_vars")
-        )
+        # Data variance placeholders, depending on likelihood
+        sigma_y = pm.Flat("sigma_y") if likelihood == "gaussian" else None
+        sigma_raw = pm.Flat("sigma_raw") if likelihood == "beta" else None
 
-        alpha_eco = pm.Deterministic("alpha_eco", mu_a_eco + eco_offset_1 * sigma_a_eco)
-        beta_eco = pm.Deterministic("beta_eco", mu_b_eco + eco_offset_2 * sigma_b_eco)
-
-        # Variance assumed independent within and between studies
-        sigma_y = pm.HalfNormal("sigma_y", sigma=0.1)
-
-        # Expected values
-        y_hat = pm.Deterministic(
-            "y_hat",
-            alpha_eco[biome_realm_eco_idx]
-            + pt.sum(x_obs * beta_eco[biome_realm_eco_idx], axis=1),
-        )
-
-        # Ecoregion intercepts at the site level
-        # Used for final scaling of outputs (dividing prediction by intercept)
-        alpha_eco_site = pm.Deterministic(  # noqa: F841
-            "alpha_eco_site", alpha_eco[biome_realm_eco_idx]
-        )
-
-        # Likelihood function
-        y_like = pm.Normal(  # noqa: F841
-            "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
+        add_likelihood_outputs(
+            likelihood=likelihood,
+            y_cond_linear=y_cond_linear,
+            y_intercept_linear=y_intercept_linear,
+            mode=mode,
+            eps=eps,
+            sigma_y=sigma_y,
+            sigma_raw=sigma_raw,
         )
 
-        return model
-
-
-class CompletePoolingModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        x = model_data["x"]
-
-        with pm.Model(coords=coords) as model:
-            # Observed data variables
-            y_obs = pm.Data("y_obs", y, dims="idx")
-            x_obs = pm.Data("x_obs", x, dims=("idx", "x_vars"))
-
-            # Priors on intercept and slopes
-            alpha = pm.Normal("alpha", mu=0.5, sigma=0.25)
-            beta = pm.Normal("beta", mu=0, sigma=0.1, dims="x_vars")
-
-            # Independent noise
-            sigma_y = pm.HalfNormal("sigma_y", sigma=0.25)
-
-            # Expected values
-            y_hat = pm.Deterministic("y_hat", alpha + pt.dot(x_obs, beta))
-
-            # Likelihood function
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
-
-        return model
-
-
-class StudyInterceptModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        x = model_data["x"]
-        study_idx = model_data["study_idx"]
-
-        with pm.Model(coords=coords) as model:
-            # Observed data variables
-            y_obs = pm.Data("y_obs", y, dims="idx")
-            x_obs = pm.Data("x_obs", x, dims=("idx", "x_vars"))
-
-            # Hyperpriors for study-level intercept terms
-            mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.25)
-            sigma_a = pm.HalfNormal("sigma_a", sigma=0.25)
-
-            # Study-level intercept priors (non-centered parameterization)
-            study_offset = pm.Normal("study_offset", mu=0, sigma=1, dims="studies")
-            alpha_study = pm.Deterministic("alpha_study", mu_a + study_offset * sigma_a)
-
-            # Population level priors for slope parameters
-            beta = pm.Normal("beta", mu=0, sigma=0.1, dims="x_vars")
-
-            # Variance assumed independent within and between studies
-            sigma_y = pm.HalfNormal("sigma_y", sigma=0.25)
-
-            # Expected values
-            y_hat = pm.Deterministic(
-                "y_hat", alpha_study[study_idx] + pt.dot(x_obs, beta)
-            )
-
-            # Likelihood function
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
-
-        return model
-
-
-class StudyBlockInterceptModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        x = model_data["x"]
-        block_idx = model_data["block_idx"]
-        block_to_study_idx = model_data["block_to_study_idx"]
-
-        with pm.Model(coords=coords) as model:
-            # Observed data variables
-            y_obs = pm.Data("y_obs", y, dims="idx")
-            x_obs = pm.Data("x_obs", x, dims=("idx", "x_vars"))
-
-            # Hyperpriors for study-level intercept terms
-            mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.25)
-            sigma_a = pm.HalfNormal("sigma_a", sigma=0.25)
-
-            # Study-level intercept priors (non-centered parameterization)
-            study_offset = pm.Normal("study_offset", mu=0, sigma=1, dims="studies")
-            alpha_study = pm.Deterministic("alpha_study", mu_a + study_offset * sigma_a)
-
-            # Block-level intercepts, sampled from the corresponding studies
-            mu_block = pm.Deterministic("mu_block", alpha_study[block_to_study_idx])
-            sigma_block = pm.HalfNormal("sigma_block", sigma=0.1)
-            block_offset = pm.Normal("block_offset", mu=0, sigma=1, dims="blocks")
-            alpha_block = pm.Deterministic(
-                "alpha_block", mu_block + block_offset * sigma_block
-            )
-
-            # Population level fixed effects priors for slope parameters
-            beta = pm.Normal("beta", mu=0, sigma=0.1, dims="x_vars")
-
-            # Variance assumed independent within and between studies and blocks
-            sigma_y = pm.HalfNormal("sigma_y", sigma=0.25)
-
-            # Expected values
-            y_hat = pm.Deterministic(
-                "y_hat", alpha_block[block_idx] + pt.dot(x_obs, beta)
-            )
-
-            # Likelihood function
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
-
-            return model
-
-
-class StudySlopeModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        z = model_data["z"]
-        x_z_diff = model_data["x_z_diff"]
-        study_idx = model_data["study_idx"]
-        block_to_study_idx = model_data["block_to_study_idx"]
-        block_idx = model_data["block_idx"]
-
-        with pm.Model(coords=coords) as model:
-            # Observed data variables
-            y_obs = pm.Data("y_obs", y, dims="idx")
-            z_obs = pm.Data("z_study", z, dims=("idx", "z_vars"))
-            x_res = pm.Data("x_res", x_z_diff, dims=("idx", "x_z_diff_vars"))
-
-            # Hyperpriors for study-level intercept and slopes
-            mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.25)
-            mu_b = pm.Normal("mu_b", mu=0, sigma=0.1, dims="z_vars")
-
-            # Biome-level priors with covariance structure, on some slopes
-            # (non-centered parameterization)
-            z_dim = len(coords["z_vars_int"])
-            sd_study = pm.Exponential.dist(lam=1, shape=z_dim)
-            chol_study, _, _ = pm.LKJCholeskyCov(
-                "chol_study", n=z_dim, eta=2, sd_dist=sd_study
-            )
-            study_offset = pm.Normal(
-                "study_offset", mu=0, sigma=1, dims=("studies", "z_vars_int")
-            )
-            alpha_beta_study = pm.Deterministic(
-                "alpha_beta_study",
-                pt.concatenate([pt.reshape(mu_a, (1,)), mu_b], axis=0)
-                + pt.dot(chol_study, study_offset.T).T,
-                dims=("studies", "z_vars_int"),
-            )
-
-            # Block-level intercepts, sampled from the corresponding studies
-            mu_block = pm.Deterministic(
-                "mu_block", alpha_beta_study[block_to_study_idx, 0]
-            )
-            sigma_block = pm.HalfNormal("sigma_block", sigma=0.1)
-            block_offset = pm.Normal("block_offset", mu=0, sigma=1, dims="blocks")
-            alpha_block = pm.Deterministic(
-                "alpha_block", mu_block + block_offset * sigma_block
-            )
-
-            # Population-level priors for the other slope parameters
-            beta = pm.Normal("beta", mu=0, sigma=0.1, dims="x_z_diff_vars")
-
-            # Variance assumed independent within and between studies
-            sigma_y = pm.HalfNormal("sigma_y", sigma=0.25)
-
-            # Expected values
-            y_hat = pm.Deterministic(
-                "y_hat",
-                alpha_block[block_idx]
-                + pt.sum(z_obs * alpha_beta_study[study_idx, 1:], axis=1)
-                + pt.dot(x_res, beta),
-            )
-
-            # Likelihood function
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
-
-            return model
-
-
-class BiomeRealmIndependentModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        x = model_data["x"]
-        biome_realm_idx = model_data["biome_realm_idx"]
-        realm_to_biome_idx = model_data["realm_to_biome_idx"]
-
-        with pm.Model(coords=coords) as model:
-            # Observed data variables
-            y_obs = pm.Data("y_obs", value=y, dims="idx")
-            x_obs = pm.Data("x_obs", value=x, dims=("idx", "x_vars"))
-
-            # Hyperpriors for biome-level intercept and slope terms
-            mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.25)
-            sigma_a = pm.HalfNormal("sigma_a", sigma=0.25)
-            mu_b = pm.Normal("mu_b", mu=0, sigma=0.1, dims="x_vars")
-            sigma_b = pm.HalfNormal("sigma_b", sigma=0.25, dims="x_vars")
-
-            # Biome-level priors (non-centered parameterization)
-            biome_offset_1 = pm.Normal("biome_offset_1", mu=0, sigma=1, dims="biomes")
-            biome_offset_2 = pm.Normal(
-                "biome_offset_2", mu=0, sigma=1, dims=("biomes", "x_vars")
-            )
-            alpha_biome = pm.Deterministic(
-                "alpha_biome", mu_a + biome_offset_1 * sigma_a
-            )
-            beta_biome = pm.Deterministic("beta_biome", mu_b + biome_offset_2 * sigma_b)
-
-            # Realm-level intercepts and slopes, sampled from the corresponding biomes
-            mu_a_realm = pm.Deterministic("mu_a_realm", alpha_biome[realm_to_biome_idx])
-            mu_b_realm = pm.Deterministic("mu_b_realm", beta_biome[realm_to_biome_idx])
-            sigma_a_realm = pm.HalfNormal("sigma_a_realm", sigma=0.25)
-            sigma_b_realm = pm.HalfNormal("sigma_b_realm", sigma=0.25)
-
-            realm_offset_1 = pm.Normal(
-                "realm_offset_1", mu=0, sigma=1, dims="biome_realm"
-            )
-            realm_offset_2 = pm.Normal(
-                "realm_offset_2", mu=0, sigma=1, dims=("biome_realm", "x_vars")
-            )
-
-            alpha_realm = pm.Deterministic(
-                "alpha_realm", mu_a_realm + realm_offset_1 * sigma_a_realm
-            )
-            beta_realm = pm.Deterministic(
-                "beta_realm", mu_b_realm + realm_offset_2 * sigma_b_realm
-            )
-
-            # Variance assumed independent within and between studies
-            sigma_y = pm.HalfNormal("sigma_y", sigma=0.25)
-
-            # Expected values
-            y_hat = pm.Deterministic(
-                "y_hat",
-                alpha_realm[biome_realm_idx]
-                + pt.sum(x_obs * beta_realm[biome_realm_idx], axis=1),
-            )
-
-            # Likelihood function
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
-
-            return model
-
-
-class BiomeRealmEcoInterceptModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        x = model_data["x"]
-        realm_to_biome_idx = model_data["realm_to_biome_idx"]
-        biome_realm_idx = model_data["biome_realm_idx"]
-        biome_realm_eco_idx = model_data["biome_realm_eco_idx"]
-        eco_to_realm_idx = model_data["eco_to_realm_idx"]
-
-        with pm.Model(coords=coords) as model:
-            # Observed data variables
-            y_obs = pm.Data("y_obs", value=y, dims="idx")
-            x_obs = pm.Data("x_obs", value=x, dims=("idx", "x_vars"))
-
-            # Hyperpriors for biome-level intercept and slope terms
-            mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.25)
-            sigma_a = pm.HalfNormal("sigma_a", sigma=0.25)
-            mu_b = pm.Normal("mu_b", mu=0, sigma=0.1, dims="x_vars")
-            sigma_b = pm.HalfNormal("sigma_b", sigma=0.25, dims="x_vars")
-
-            # Biome-level priors (non-centered parameterization)
-            biome_offset_1 = pm.Normal("biome_offset_1", mu=0, sigma=1, dims="biomes")
-            biome_offset_2 = pm.Normal(
-                "biome_offset_2", mu=0, sigma=1, dims=("biomes", "x_vars")
-            )
-            alpha_biome = pm.Deterministic(
-                "alpha_biome", mu_a + biome_offset_1 * sigma_a
-            )
-            beta_biome = pm.Deterministic("beta_biome", mu_b + biome_offset_2 * sigma_b)
-
-            # Realm-level intercepts and slopes, sampled from the corresponding biomes
-            mu_a_realm = pm.Deterministic("mu_a_realm", alpha_biome[realm_to_biome_idx])
-            mu_b_realm = pm.Deterministic("mu_b_realm", beta_biome[realm_to_biome_idx])
-            sigma_a_realm = pm.HalfNormal("sigma_a_realm", sigma=0.1)
-            sigma_b_realm = pm.HalfNormal("sigma_b_realm", sigma=0.1)
-
-            realm_offset_1 = pm.Normal(
-                "realm_offset_1", mu=0, sigma=1, dims="biome_realm"
-            )
-            realm_offset_2 = pm.Normal(
-                "realm_offset_2", mu=0, sigma=1, dims=("biome_realm", "x_vars")
-            )
-
-            alpha_realm = pm.Deterministic(
-                "alpha_realm", mu_a_realm + realm_offset_1 * sigma_a_realm
-            )
-            beta_realm = pm.Deterministic(
-                "beta_realm", mu_b_realm + realm_offset_2 * sigma_b_realm
-            )
-
-            # Ecoregion-level intercepts and slopes, sampled from realms
-            mu_a_eco = pm.Deterministic("mu_a_eco", alpha_realm[eco_to_realm_idx])
-            # mu_b_eco = pm.Deterministic("mu_b_eco", beta_realm[eco_to_realm_idx])
-            sigma_a_eco = pm.HalfNormal("sigma_a_eco", sigma=0.1)
-            # sigma_b_eco = pm.HalfNormal("sigma_b_eco", sigma=0.1)
-
-            eco_offset_1 = pm.Normal(
-                "eco_offset_1", mu=0, sigma=1, dims="biome_realm_eco"
-            )
-            # eco_offset_2 = pm.Normal(
-            # "eco_offset_2", mu=0, sigma=1, dims=("biome_realm_eco", "x_vars")
-            # )
-
-            alpha_eco = pm.Deterministic(
-                "alpha_eco", mu_a_eco + eco_offset_1 * sigma_a_eco
-            )
-            # beta_eco = pm.Deterministic(
-            # "beta_eco", mu_b_eco + eco_offset_2 * sigma_b_eco
-            # )
-
-            # Variance assumed independent within and between studies
-            sigma_y = pm.HalfNormal("sigma_y", sigma=0.25)
-
-            # Expected values
-            y_hat = pm.Deterministic(
-                "y_hat",
-                alpha_eco[biome_realm_eco_idx]
-                + pt.sum(x_obs * beta_realm[biome_realm_idx], axis=1),
-            )
-
-            # Likelihood function
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
-
-            return model
-
-
-class BiomeRealmCovarianceModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        x = model_data["x"]
-        biome_realm_idx = model_data["biome_realm_idx"]
-        realm_to_biome_idx = model_data["realm_to_biome_idx"]
-
-        with pm.Model(coords=coords) as model:
-
-            # Observed data variables
-            y_obs = pm.Data("y_obs", value=y, dims="idx")
-            x_obs = pm.Data("x_obs", value=x, dims=("idx", "x_vars"))
-
-            # Hyperpriors for biome-level intercept and slopes
-            mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.1)
-            mu_b = pm.Normal("mu_b", mu=0, sigma=0.1, dims="x_vars")
-
-            # Biome-level priors with covariance structure
-            # (non-centered parameterization)
-            x_dim = len(coords["x_vars_int"])
-            sd_biome = pm.Exponential.dist(lam=1, shape=x_dim)
-            chol_biome, _, _ = pm.LKJCholeskyCov(
-                "chol_biome", n=x_dim, eta=2, sd_dist=sd_biome
-            )
-            biome_offset = pm.Normal(
-                "biome_offset", mu=0, sigma=1, dims=("biomes", "x_vars_int")
-            )
-            alpha_beta_biome = pm.Deterministic(
-                "alpha_beta_biome",
-                pt.concatenate([pt.reshape(mu_a, (1,)), mu_b], axis=0)
-                + pt.dot(chol_biome, biome_offset.T).T,
-                dims=("biomes", "x_vars_int"),
-            )
-
-            # Realm-level intercepts and slopes, sampled from the corresponding biomes
-            sigma_realm = pm.HalfNormal("sigma_realm", sigma=0.1, dims="x_vars_int")
-            realm_offset = pm.Normal(
-                "realm_offset", mu=0, sigma=1, dims=("biome_realm", "x_vars_int")
-            )
-            alpha_beta_realm = pm.Deterministic(
-                "alpha_beta_realm",
-                alpha_beta_biome[realm_to_biome_idx] + realm_offset * sigma_realm,
-                dims=("biome_realm", "x_vars_int"),
-            )
-
-            # Variance assumed independent within and between studies
-            sigma_y = pm.HalfNormal("sigma_y", sigma=0.25)
-
-            # Expected values
-            y_hat = pm.Deterministic(
-                "y_hat",
-                alpha_beta_realm[biome_realm_idx, 0]
-                + pt.sum(x_obs * alpha_beta_realm[biome_realm_idx, 1:], axis=1),
-            )
-
-            # Likelihood function
-            y_like = pm.Normal(  # noqa: F841
-                "y_like", mu=y_hat, sigma=sigma_y, observed=y_obs, dims="idx"
-            )
-
-            return model
-
-
-class BiomeRealmBetaModel:
-    def __init__(self) -> None:
-        pass
-
-    def model(self, model_data: dict[str, Any]) -> pm.Model:
-        """Docstring."""
-
-        # Unpack the required model data from dictionary
-        coords = model_data["coords"]
-        y = model_data["y"]
-        x = model_data["x"]
-        biome_realm_idx = model_data["biome_realm_idx"]
-        realm_to_biome_idx = model_data["realm_to_biome_idx"]
-
-        with pm.Model(coords=coords) as model:
-            # Observed data variables
-            y_obs = pm.Data("y_obs", value=y, dims="idx")
-            x_obs = pm.Data("x_obs", value=x, dims=("idx", "x_vars"))
-
-            # Hyperpriors for biome-level intercept and slope terms
-            mu_a = pm.Normal("mu_a", mu=0.5, sigma=0.25)
-            sigma_a = pm.HalfNormal("sigma_a", sigma=0.25)
-            mu_b = pm.Normal("mu_b", mu=0, sigma=0.1, dims="x_vars")
-            sigma_b = pm.HalfNormal("sigma_b", sigma=0.25, dims="x_vars")
-
-            # Biome-level priors (non-centered parameterization)
-            biome_offset_1 = pm.Normal("biome_offset_1", mu=0, sigma=1, dims="biomes")
-            biome_offset_2 = pm.Normal(
-                "biome_offset_2", mu=0, sigma=1, dims=("biomes", "x_vars")
-            )
-            alpha_biome = pm.Deterministic(
-                "alpha_biome", mu_a + biome_offset_1 * sigma_a
-            )
-            beta_biome = pm.Deterministic("beta_biome", mu_b + biome_offset_2 * sigma_b)
-
-            # Realm-level intercepts and slopes, sampled from the corresponding biomes
-            mu_a_realm = pm.Deterministic("mu_a_realm", alpha_biome[realm_to_biome_idx])
-            mu_b_realm = pm.Deterministic("mu_b_realm", beta_biome[realm_to_biome_idx])
-            sigma_a_realm = pm.HalfNormal("sigma_a_realm", sigma=0.25)
-            sigma_b_realm = pm.HalfNormal("sigma_b_realm", sigma=0.25)
-
-            realm_offset_1 = pm.Normal(
-                "realm_offset_1", mu=0, sigma=1, dims="biome_realm"
-            )
-            realm_offset_2 = pm.Normal(
-                "realm_offset_2", mu=0, sigma=1, dims=("biome_realm", "x_vars")
-            )
-
-            alpha_realm = pm.Deterministic(
-                "alpha_realm", mu_a_realm + realm_offset_1 * sigma_a_realm
-            )
-            beta_realm = pm.Deterministic(
-                "beta_realm", mu_b_realm + realm_offset_2 * sigma_b_realm
-            )
-
-            y_hat = pm.Deterministic(
-                "y_hat",
-                pm.math.invlogit(
-                    alpha_realm[biome_realm_idx]
-                    + pt.sum(x_obs * beta_realm[biome_realm_idx], axis=1)
-                ),
-            )
-
-            # Variance is defined in relation to the expected value
-            # a = pm.Beta("a", alpha=2, beta=5)
-            # sigma_y = pm.Deterministic("sigma_y", a * pt.sqrt(y_hat * (1 - y_hat)))
-            sigma_y = pm.HalfNormal("sigma_y", sigma=1)
-
-            # Likelihood function
-            y_like = pm.Beta(  # noqa: F841
-                "y_like", alpha=y_hat, beta=sigma_y, observed=y_obs, dims="idx"
-            )
-
-            return model
-
-
-def bii_abund_indep_re(
-    y: np.array,
-    x: np.array,
-    coords: dict[str, np.array],
-    study_idx: np.array,
-    block_idx: np.array,
-    block_to_study_idx: np.array,
-    z_s: np.array = None,
-    z_b: np.array = None,
-    s_intercept: bool = False,
-    b_intercept: bool = False,
-) -> pm.Model:
-    """Docstring."""
-    with pm.Model(coords=coords) as model:
-
-        # Observed data that be changed later on for train-test runs
-        y = pm.MutableData("y", y, dims="idx")
-        x = pm.MutableData("x", x, dims=("idx", "x_var"))
-        if z_s:
-            z_s = pm.MutableData("z_s", z_s, dims=("idx", "z_s_var"))
-        if z_b:
-            z_b = pm.MutableData("z_b", z_b, dims=("idx", "z_b_var"))
-
-        # Population level fixed effects
-        # Priors independently sampled from univariate normal
-        beta = pm.Normal("beta", mu=0, sigma=1, dims="x_var")
-
-        # Random slope priors
-        if z_s:
-            # Study level random effects
-            gamma_s = pm.Normal("gamma_s", mu=0, sigma=1, dims=("studies", "z_s_var"))
-        if z_b:
-            # Block level random effects, sampled hierarchically from study effects
-            gamma_b_mu = gamma_s[block_to_study_idx]
-            gamma_b = pm.Normal(
-                "gamma_b", mu=gamma_b_mu, sigma=1, dims=("blocks", "z_b_var")
-            )
-
-        # Random intercept priors
-        if not z_s and s_intercept:
-            # Study level random intercepts
-            gamma_s = pm.Normal("gamma_s", mu=0, sigma=1, dims="studies")
-
-        if not z_b and b_intercept:
-            # Block level random intercepts
-            gamma_b_mu = gamma_s[block_to_study_idx]
-            gamma_b = pm.Normal("gamma_b", mu=gamma_b_mu, sigma=1, dims="blocks")
-
-        # Expected abundance value based on fixed effects
-        fe_sum = pm.math.sum(x * beta, axis=1)
-
-        re_study_sum, re_block_sum = 0, 0  # Default values
-
-        # Random effects contribution depending on structure
-        if z_s:
-            re_study_sum = pm.math.sum(z_s * gamma_s[study_idx], axis=1)
-        if not z_s and s_intercept:
-            re_study_sum = gamma_s[study_idx]
-
-        if z_b:
-            re_block_sum = pm.math.sum(z_s * gamma_b[block_idx], axis=1)
-        if not z_b and b_intercept:
-            re_block_sum = gamma_b[block_idx]
-
-        # Overall expected value
-        mu_obs = pm.Deterministic("mu_obs", fe_sum + re_study_sum + re_block_sum)
-
-        # Variance assumed independent within and between studies and blocks
-        sigma = pm.HalfNormal("sigma", sigma=1)
-
-        # Likelihood function
-        y_like = pm.Normal(  # noqa: F841
-            "y_like", mu=mu_obs, sigma=sigma, observed=y, dims="idx"
-        )
-
-    return model
-
-
-def bii_abund_corr_re(
-    y: np.array,
-    x: np.array,
-    z_s: np.array,
-    z_b: np.array,
-    coords: dict[str, np.array],
-    study_idx: np.array,
-    block_idx: np.array,
-    block_to_study_idx: np.array,
-) -> pm.Model:
-    """
-    This model is the translation of the BII abundance model to a hiearchical
-    Bayesian setting. The original model is implemented in the R lme4 package.
-
-    Args:
-        y: The response variable vector for the model.
-        x: The design matrix for the model.
-        coords: The coordinates include lists for variables, groups, studies
-            and blocks.
-        group_idx: Observation indexed by the taxonomic group it belongs to.
-        study_idx: Observations indexed by the study they are part of.
-        block_idx: Observations indexed by the spatial block within a study.
-
-    Returns:
-        model: The PyMC model object that can be sampled from.
-    """
-    with pm.Model(coords=coords) as model:
-
-        # Observed data that be changed later on for train-test runs
-        y = pm.MutableData("y", y, dims="idx")
-        x = pm.MutableData("x", x, dims=("idx", "x_var"))
-        z_s = pm.MutableData("z_s", z_s, dims=("idx", "z_s_var"))
-        z_b = pm.MutableData("z_b", z_b, dims=("idx", "z_b_var"))
-
-        # Population level fixed effects
-        # Priors independently sampled from univariate normal
-        beta = pm.Normal("beta", mu=0, sigma=1, dims="x_var")
-
-        # Study level random effects
-        # Priors sampled from multivariate normal
-        # LKJ hyperprior on covariance matrix
-        z_s_dim = len(coords["z_s_var"])
-        sd_s = pm.Exponential.dist(lam=1, shape=z_s_dim)
-        chol_s, corr_s, stds_s = pm.LKJCholeskyCov(  # noqa: F841
-            "chol_s", n=z_s_dim, eta=2, sd_dist=sd_s
-        )
-        print(chol_s.eval().shape)
-        cov_s = pm.Deterministic(  # noqa: F841
-            "cov_s", pm.math.dot(chol_s, chol_s.T), dims=("z_s_var", "z_s_var")
-        )
-        print(cov_s.eval().shape)
-        # Independent, weakly regularizing prior on the mean vector
-        mu_s = pm.Normal("mu_s", mu=0, sigma=1, dims="z_s_var")
-        gamma_s = pm.MvNormal(
-            "gamma_s",
-            mu=mu_s,
-            chol=chol_s,
-            dims=("studies", "z_s_var"),
-        )
-
-        # Block level random effects
-        z_b_dim = len(coords["z_b_var"])
-        sd_b = pm.Exponential.dist(lam=1, shape=z_b_dim)
-        chol_b, corr_b, stds_b = pm.LKJCholeskyCov(
-            "chol_b", n=z_b_dim, eta=2, sd_dist=sd_b
-        )
-        gamma_b = pm.MvNormal(
-            "gamma_b",
-            mu=mu_s[study_idx],
-            chol=chol_b,
-            dims=("blocks", "z_b_var"),
-        )
-
-        # Expected abundance value based on fixed and random effects
-        fe_sum = pm.math.sum(x * beta, axis=1)
-        re_study_sum = pm.math.sum(z_s * gamma_s[study_idx], axis=1)
-        re_block_sum = pm.math.sum(z_b * gamma_b[block_idx], axis=1)
-        mu_obs = pm.Deterministic("mu_obs", fe_sum + re_study_sum + re_block_sum)
-
-        # Variance assumed independent within and between studies and blocks
-        sigma = pm.HalfNormal("sigma", sigma=1)
-
-        # Likelihood function
-        y_like = pm.Normal(  # noqa: F841
-            "y_like", mu=mu_obs, sigma=sigma, observed=y, dims="idx"
-        )
-
-    return model
+    return prediction_model
