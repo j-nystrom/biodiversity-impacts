@@ -1,6 +1,6 @@
 
 # Configuration file for the Tasks and methods in the data processing pipeline
-# This includes all the scripts in the 'data' folder
+# This includes all the scripts in the 'data' project folder
 # The output file paths are also used in the feature engineering pipeline
 # (scripts in the 'features' folder)
 
@@ -11,8 +11,8 @@ predicts:
   predicts_2016_path: "../../../data/PREDICTS/PREDICTS_2016/data.csv"
   predicts_2022_path: "../../../data/PREDICTS/PREDICTS_2022/data.csv"
   merged_data_path: "../../../data/output/predicts/all_predicts.parquet"
-  # The raw PREDICTS columns are not organized in a logical way. This list
-  # specifies the order of columns in the final dataframe
+  infer_schema_length: 100000  # Number of rows for schema inference when loading CSVs
+  # This list specifies the order of columns in the final dataframe
   output_col_order:
   - _id
   - Source_ID
@@ -88,16 +88,16 @@ predicts:
 
 site_geodata:
   site_required_cols: [SSBS, Longitude, Latitude]  # Columns required for site data
-  polygon_sizes_km: [1, 5, 10, 50] # Must match ALL buffer sizes below
-  polygon_type: square  # Type of site polygon, either 'square' or 'circle'
+  polygon_sizes_km: [1, 5, 10, 50] # Must match ALL buffer sizes used in tasks below
+  polygon_type: round  # Type of site polygon, either 'square' or 'round'
   site_coords_crs: "EPSG:4326"  # Reference system of site coordinates
   site_coords_path: "../../../data/output/site_coords/all_site_coords.shp"
-  global_polygon_paths:  # Output paths of buffered polygons in global format
+  global_polygon_paths:  # Output paths for buffered polygons in global format
     - "../../../data/output/buff_polygons/glob_buff_polygons_1km.shp"
     - "../../../data/output/buff_polygons/glob_buff_polygons_5km.shp"
     - "../../../data/output/buff_polygons/glob_buff_polygons_10km.shp"
     - "../../../data/output/buff_polygons/glob_buff_polygons_50km.shp"
-  utm_polygon_paths:  # Output paths of buffered polygons in local UTM format
+  utm_polygon_paths:  # Output paths for buffered polygons in local UTM format
     - "../../../data/output/buff_polygons/utm_buff_polygons_1km.shp"
     - "../../../data/output/buff_polygons/utm_buff_polygons_5km.shp"
     - "../../../data/output/buff_polygons/utm_buff_polygons_10km.shp"

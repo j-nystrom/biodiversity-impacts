@@ -5,12 +5,11 @@ from datetime import timedelta
 
 import geopandas as gpd
 import pandas as pd
+import rasterstats
 from box import Box
 
-from core.data.data_processing import calculate_raster_stats
 from core.utils.general_utils import create_logger
 
-# Load config file
 script_dir = os.path.dirname(os.path.abspath(__file__))
 configs = Box.from_yaml(filename=os.path.join(script_dir, "data_configs.yaml"))
 
@@ -23,12 +22,7 @@ class CalculateRasterStatsTask:
     polygons, and a raster dataset containing some information. Separate
     classes for specific raster datasets, that inherit from this class, are
     implemented further down.
-
-    Future improvement: Separate non-overlapping and overlapping polygons.
-    Process the first group using pygeoprocessing for increased speed. See:
-    https://stackoverflow.com/questions/47471872/find-non-overlapping-polygons-in-geodataframe
-
-    TODO: Refactor to use polars instead of pandas
+    TODO: Low prio: Refactor to use polars instead of pandas.
     """
 
     def __init__(self) -> None:
@@ -51,16 +45,27 @@ class CalculateRasterStatsTask:
         The 'mode' argument determines the raster data sources to use, e.g. for
         population density or bioclimatic variables. These correspond to unique
         input data paths in the 'data_configs.yaml' file.
+
+        Attributes:
+            mode: One of 'pop_density', 'bioclimatic', 'topographic'.
+            polygon_sizes: List of polygon buffer sizes (in km) to process.
+            raster_paths: List of raster dataset paths to process for this mode.
+            result_col_names: List of column names for the results dataframe,
+                including the type of data and the polygon size.
+            agg_metrics: List of metrics to compute from the raster data. Right
+                now only using the mean.
+            include_all_pixels: Whether to include all pixels that touch the
+                polygon boundaries or just pixels with center points within it.
+            output_paths: List of output paths for saving the result dataframes.
         """
-        assert mode in [
-            "pop_density",
-            "bioclimatic",
-            "topographic",
-        ], "'mode' needs to be in ['pop_density', 'bioclimatic', 'topographic']"
+        if mode not in ["pop_density", "bioclimatic", "topographic"]:
+            raise ValueError(
+                "'mode' needs to be in ['pop_density', 'bioclimatic', 'topographic']"
+            )
         logger.info(f"Starting raster data extraction for mode {mode}.")
         start = time.time()
 
-        # Load the geodataframe that will hold the results, keeping the site id
+        # Load the dataframe that will hold the results, keeping the site id
         df_sites = pd.DataFrame(gpd.read_file(self.all_site_coords)["SSBS"])
 
         # Get the configs for this particular mode
@@ -91,10 +96,10 @@ class CalculateRasterStatsTask:
                 start_step = time.time()
 
                 # Calculate the statistics for the current polygon and raster
-                stats = calculate_raster_stats(
+                stats = self.calculate_raster_stats(
                     polygon_path,
                     raster_path,
-                    metric=self.agg_metrics,
+                    metrics=self.agg_metrics,
                     include_all_pixels=self.include_all_pixels,
                 )
 
@@ -111,6 +116,41 @@ class CalculateRasterStatsTask:
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Raster data extraction finished in {runtime}.")
+
+    @staticmethod
+    def calculate_raster_stats(
+        polygon_path: str,
+        raster_path: str,
+        metrics: list[str] = ["mean"],
+        include_all_pixels: bool = True,
+    ) -> list[float]:
+        """
+        Compute statistical metrics for raster pixels that overlap with the
+        polygons (representing sampling sites) that should be analyzed.
+
+        Args:
+            polygon_path: Path to polygon shapefile with sampling sites.
+            raster_path: Path to raster file containing data for extraction.
+            metrics: Statistical metrics to compute. Defaults to 'mean'.
+            include_all_pixels: Whether to include all pixels that touch the
+                polygon boundaries, or just pixels with center points within it.
+
+        Returns:
+            result: List of computed values, one for each polygon.
+        """
+
+        # Calculate zonal statistics
+        stats = rasterstats.zonal_stats(
+            vectors=polygon_path,
+            raster=raster_path,
+            stats=metrics,
+            all_touched=include_all_pixels,
+        )
+
+        # Extract stats from each dictionary in the output list
+        result = [x[metrics] for x in stats]
+
+        return result
 
 
 class PopulationDensityTask(CalculateRasterStatsTask):

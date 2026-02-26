@@ -1,9 +1,8 @@
 import os
-from typing import Union
+from typing import Any, Union
 
 import geopandas as gpd
 import polars as pl
-import rasterstats
 import shapely
 from box import Box
 from pyproj import Transformer
@@ -162,7 +161,7 @@ def buffer_points_in_utm(
     return utm_coords_buffered
 
 
-def create_site_coord_geometries(self, df: pl.DataFrame) -> gpd.GeoDataFrame:
+def create_site_coord_geometries(self: Any, df: pl.DataFrame) -> gpd.GeoDataFrame:
     """
     Generate a geodataframe with Point geometries for each unique site
     based on longitude and latitude, and add UN region information for
@@ -219,41 +218,6 @@ def create_site_coord_geometries(self, df: pl.DataFrame) -> gpd.GeoDataFrame:
     logger.info("Finished creating Point geometries.")
 
     return gdf_site_coords
-
-
-def calculate_raster_stats(
-    polygon_path: str,
-    raster_path: str,
-    metrics: list[str] = ["mean"],
-    include_all_pixels: bool = True,
-) -> list[float]:
-    """
-    Compute statistical metrics for raster pixels that overlap with the
-    polygons (representing sampling sites) that should be analyzed.
-
-    Args:
-        polygon_path: Path to polygon shapefile with sampling sites.
-        raster_path: Path to raster file containing data for extraction.
-        metrics: Statistical metrics to compute. Defaults to 'mean'.
-        include_all_pixels: Whether to include all pixels that touch the
-            polygon boundaries, or just pixels with center points within it.
-
-    Returns:
-        result: List of computed values, one for each polygon in the shapefile.
-    """
-
-    # Calculate zonal statistics
-    stats = rasterstats.zonal_stats(
-        vectors=polygon_path,
-        raster=raster_path,
-        stats=metrics,
-        all_touched=include_all_pixels,
-    )
-
-    # Extract stats from each dictionary in the output list
-    result = [x[metrics] for x in stats]
-
-    return result
 
 
 def split_multi_line_strings(linestrings: gpd.GeoSeries) -> gpd.GeoDataFrame:

@@ -31,9 +31,6 @@ class SiteBufferingTask:
     and reprojection the polygons to global format. The reason for this is to
     achieve equal-sized polygons around each site, later used for extracting
     various features from raster data and shapefiles.
-
-    NOTE: This can be applied to other input data than PREDICTS, as long as
-    it contains site coordinates in a specified reference format.
     """
 
     def __init__(self, run_folder_path: str) -> None:
@@ -433,7 +430,6 @@ class Projections:
         Returns:
             global_polygon: The buffered site Polygon in global coordinates.
         """
-
         # Fetch existing or initialize new Transformer object for reprojection
         # always_xy implies that the method expects coordinates as long-lat
         if epsg_code in self.global_transformer_dict.keys():
