@@ -1,5 +1,4 @@
 from core.dags.dag_setup import BaseDAG, parse_args, run_dags
-from core.data.land_use_fraction_task import LandUseFractionTask
 from core.data.predicts_task import PredictsConcatenationTask
 from core.data.raster_stats_task import (
     BioclimaticFactorsTask,
@@ -57,23 +56,12 @@ class TopographicFactorsDAG(BaseDAG):
         self.tasks = [TopographicFactorsTask]
 
 
-class LandUseFractionDAG(BaseDAG):
-    """
-    Extract land use fractions around sampling sites.
-    NOTE: Not used in the publication, should be removed.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.tasks = [LandUseFractionTask]
-
-
-class CombineDataDAG(BaseDAG):
+class FeatureDAG(BaseDAG):
     """Combine data from the DAGs above into a single dataset."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.tasks = [CombineDataTask]
+        self.tasks = [CombineDataTask, GenerateFeaturesTask]
 
 
 class AlphaDiversityDAG(BaseDAG):
@@ -84,7 +72,7 @@ class AlphaDiversityDAG(BaseDAG):
 
     def __init__(self) -> None:
         super().__init__()
-        self.tasks = [CombineDataTask, GenerateFeaturesTask, AlphaDiversityTask]
+        self.tasks = [AlphaDiversityTask]
 
 
 class BetaDiversityDAG(BaseDAG):
@@ -95,7 +83,7 @@ class BetaDiversityDAG(BaseDAG):
 
     def __init__(self) -> None:
         super().__init__()
-        self.tasks = [CombineDataTask, GenerateFeaturesTask, BetaDiversityTask]
+        self.tasks = [BetaDiversityTask]
 
 
 class ModelTrainingDAG(BaseDAG):
@@ -114,6 +102,12 @@ class CrossValidationDAG(BaseDAG):
         self.tasks = [ModelDataTask, CrossValidationTask]
 
 
+class ModelDataDAG(BaseDAG):
+    def __init__(self) -> None:
+        super().__init__(mode="crossval")
+        self.tasks = [ModelDataTask]
+
+
 # Mapping of DAG command line names to their corresponding classes
 # E.g. running python dags.py predicts will trigger the PredictsProcessingDAG
 dag_mapping = {
@@ -122,12 +116,12 @@ dag_mapping = {
     "roads": RoadDensityDAG,
     "bioclimatic": BioclimaticFactorsDAG,
     "topographic": TopographicFactorsDAG,
-    "landuse": LandUseFractionDAG,
-    "combine": CombineDataDAG,
+    "features": FeatureDAG,
     "alpha": AlphaDiversityDAG,
     "beta": BetaDiversityDAG,
     "training": ModelTrainingDAG,
     "crossval": CrossValidationDAG,
+    "model_data": ModelDataDAG,
 }
 
 

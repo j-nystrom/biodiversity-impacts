@@ -1,4 +1,5 @@
 import argparse
+import os
 from typing import Optional, Type
 
 from core.utils.general_utils import create_logger, create_run_folder_path
@@ -26,7 +27,12 @@ class BaseDAG:
                 cross-validation modes for model-related DAGs.
         """
         self.tasks: list = []
-        self.run_folder_path = create_run_folder_path()
+        run_folder_override = os.environ.get("RUN_FOLDER_PATH")
+        if run_folder_override:
+            os.makedirs(run_folder_override, exist_ok=True)
+            self.run_folder_path = run_folder_override
+        else:
+            self.run_folder_path = create_run_folder_path()
         self.mode = mode
 
     def run_dag(self) -> None:
