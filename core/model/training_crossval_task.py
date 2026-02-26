@@ -1,23 +1,19 @@
+import gc
 import json
 import os
+import shutil
 import time
 from datetime import timedelta
 from typing import Any, Union
 
 import dill
 import polars as pl
-import pymer4 as pymer
 import yaml
 from box import Box
 
-from core.model.hierarchical_model import BayesianHierarchicalModel
-from core.model.linear_mixed_model import LinearMixedModel
-from core.model.model_utils import (
-    approximate_change_predictions,
-    augment_prediction_dataframe,
-    calculate_performance_metrics,
-)
-from core.model.random_forest_model import RandomForestModel
+from core.model.bhm_model import BayesianHierarchicalModel
+from core.model.glmm_model import GeneralizedLinearMixedModel
+from core.model.model_utils import calculate_performance_metrics
 from core.tests.shared.validate_shared import (
     validate_input_files,
     validate_output_files,
@@ -25,7 +21,10 @@ from core.tests.shared.validate_shared import (
 from core.utils.general_utils import create_logger
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-configs = Box.from_yaml(filename=os.path.join(script_dir, "model_configs.yaml"))
+model_config_path = os.environ.get(
+    "MODEL_CONFIG_PATH", os.path.join(script_dir, "model_configs.yaml")
+)
+configs = Box.from_yaml(filename=model_config_path)
 
 logger = create_logger(__name__)
 
@@ -44,18 +43,16 @@ class BaseModelTask:
         General:
             run_folder_path: Path to folder where all run outputs are stored.
             mode: Either 'training' or 'crossval'.
+            random_seed: Random seed for model reproducibility.
+            epsilon: Small value to prevent numerical issues in models, e.g.
+                when using beta likelihood.
 
         Config settings used by all models and modes
             - diversity_type: Diversity metric to be used ('alpha' or 'beta').
-            - model_type: Type of model to be used ('bayesian', 'lmm', or
-                'random_forest').
+            - model_type: Type of model to be used ('bayesian' or 'glmm').
             - model_settings: Model settings for the specified model type.
             - model_vars: Response variable and covariates for the model.
             - continuous_vars: List of covariates that are continuous.
-            - response_var_transform: Transformation applied to the response
-                variable (if applicable).
-            - change_pred_approx: Whether to approximate model performance for
-                predicting the impact of changes in land use.
 
         Shared data paths:
             - interaction_terms_path: Path to JSON file containing all
@@ -66,21 +63,25 @@ class BaseModelTask:
             - hierarchy_mapping_path: Path to JSON file containing a fixed
                 mapping of parent-child relationships for hierarchical levels.
             - site_mapping_path: Mapping of site names to indices.
+            - taxonomic_resolution: Used to check if taxon mapping is needed.
+            - taxon_mapping_path: Path to JSON file containing a fixed mapping
+                of taxon names to indices.
         """
         # General
         self.run_folder_path: str = run_folder_path
         self.mode: str = mode
+        self.random_seed: int = configs.random_seed
+        self.epsilon: float = configs.epsilon
 
         # Config settings used by all models and modes (but model-specific)
         self.diversity_type: str = configs.data_scope.diversity_type
+        self.taxonomic_resolution: str = configs.data_scope.taxonomic.resolution
         self.model_type: str = configs.run_settings.model_type
         self.model_settings: dict[str, Any] = configs.run_settings[self.model_type]
         self.model_vars: dict[str, Any] = configs.model_variables[
             configs.run_settings.model_variables
         ]
         self.continuous_vars: list[str] = self.model_vars["continuous_vars"]
-        self.response_var_transform: str = self.model_vars["response_var_transform"]
-        self.change_pred_approx: bool = configs.run_settings.change_pred_approx
 
         # Shared data paths
         self.interaction_terms_path: str = os.path.join(
@@ -88,15 +89,28 @@ class BaseModelTask:
         )
         self.site_info_path: str = os.path.join(run_folder_path, "site_info.parquet")
 
-        # Model-specific data paths
-        if self.model_type == "bayesian" or self.model_type == "random_forest":
-            self.hierarchy_mapping_path: str = os.path.join(
-                run_folder_path, "hierarchy_mapping.json"
-            )
+        # Model-specific data paths for the Bayesian hierarchical model
         if self.model_type == "bayesian":
+            self.hierarchy_mapping_path: str = os.path.join(
+                run_folder_path, "complete_hierarchy_mapping.json"
+            )
             self.site_mapping_path: str = os.path.join(
                 run_folder_path, "site_mapping.json"
             )
+            self.save_models_and_traces: bool = self.model_settings[
+                "save_models_and_traces"
+            ]
+            self.save_predictive_distributions: bool = self.model_settings[
+                "save_predictive_distributions"
+            ]
+            if self.model_settings["rolled_up_predictions"]:
+                self.rolled_up_mapping_path = os.path.join(
+                    run_folder_path, "rolled_up_hierarchy_mapping.json"
+                )
+            if self.taxonomic_resolution != "All_species":
+                self.taxon_mapping_path: str = os.path.join(
+                    run_folder_path, "taxon_mapping.json"
+                )
 
     def load_input_data(self) -> None:
         """Validate required input files and load shared resources."""
@@ -105,110 +119,71 @@ class BaseModelTask:
         self.df_site_info = pl.read_parquet(self.site_info_path)
 
         # Load generated interaction terms
-        # NOTE: Should be removed if generation is moved to the feature pipeline
         with open(self.interaction_terms_path) as f:
             self.model_vars["interaction_terms"] = json.load(f)
 
         # Load hierarchical mapping and site mapping if applicable
-        if self.model_type == "bayesian" or self.model_type == "random_forest":
+        if self.model_type == "bayesian":
             validate_input_files(file_paths=[self.hierarchy_mapping_path])
             with open(self.hierarchy_mapping_path) as f:
                 self.hierarchy_mapping = json.load(f)
+            if self.model_settings["rolled_up_predictions"]:
+                validate_input_files(file_paths=[self.rolled_up_mapping_path])
+                with open(self.rolled_up_mapping_path) as f:
+                    self.rolled_up_mapping = json.load(f)
 
         if self.model_type == "bayesian":
-            validate_input_files(
-                file_paths=[self.site_mapping_path, self.hierarchy_mapping_path]
-            )
+            validate_input_files(file_paths=[self.site_mapping_path])
             with open(self.site_mapping_path) as f:
                 self.site_name_to_idx = json.load(f)
 
+            if self.taxonomic_resolution != "All_species":
+                validate_input_files(file_paths=[self.taxon_mapping_path])
+                with open(self.taxon_mapping_path) as f:
+                    self.taxon_name_to_idx = json.load(f)
+
     def initialize_model(
         self,
-    ) -> Union[BayesianHierarchicalModel, LinearMixedModel, RandomForestModel]:
+    ) -> Union[
+        BayesianHierarchicalModel,
+        GeneralizedLinearMixedModel,
+    ]:
         """Instantiate the appropriate model class based on the model type."""
         model_classes = {
             "bayesian": BayesianHierarchicalModel,
-            "lmm": LinearMixedModel,
-            "random_forest": RandomForestModel,
+            "glmm": GeneralizedLinearMixedModel,
         }
         # Shared model class attributes
         model_init_kwargs = {
+            "random_seed": self.random_seed,
+            "epsilon": self.epsilon,
             "model_settings": self.model_settings,
             "model_vars": self.model_vars,
             "logger": logger,
             "mode": self.mode,
         }
-        # Add specific attributes for Bayesian and random forest models
-        if self.model_type == "bayesian" or self.model_type == "random_forest":
-            model_init_kwargs["hierarchy_mapping"] = self.hierarchy_mapping
+        # Add specific attributes for Bayesian models
         if self.model_type == "bayesian":
+            model_init_kwargs["hierarchy_mapping"] = self.hierarchy_mapping
             model_init_kwargs["site_name_to_idx"] = self.site_name_to_idx
+            model_init_kwargs["save_predictive_distributions"] = (
+                self.save_predictive_distributions
+            )
+            if self.model_settings["rolled_up_predictions"]:
+                model_init_kwargs["rolled_up_mapping"] = self.rolled_up_mapping
+            if self.taxonomic_resolution != "All_species":
+                model_init_kwargs["taxon_name_to_idx"] = self.taxon_name_to_idx
+
+        if self.model_type == "glmm":
+            model_init_kwargs["run_folder_path"] = self.run_folder_path
 
         return model_classes[self.model_type](**model_init_kwargs)
 
-    def evaluate_model_performance(
-        self,
-        df_pred: pl.DataFrame,
-        augment_frame: bool = False,
-    ) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, float], dict[str, float]]:
-        """
-        Evaluate model performance by calculating various metric based on
-        predictions. For the training task, predictions are calculated on the
-        training data. For the cross-validation task, performance is evaluated
-        both on the training and test data.
-
-        Args:
-            df_pred: DataFrame containing the model predictions.
-            augment_frame: Whether to include and evaluate predictions before
-                back-transformation and clipping.
-
-        Returns:
-            df_pred: DataFrame with back-transformed and clipped predictions.
-            df_pred_change: DataFrame with approximate change predictions.
-            state_metrics: Dictionary containing performance metrics for state
-                predictions.
-            change_metrics: Dictionary containing performance metrics for
-                change predictions.
-        """
-        # Clip and back-transform state predictions, get performance metrics
-        logger.info("Performance metrics for state predictions:")
-
-        # Back-transform and clip values where applicable
-        df_pred = augment_prediction_dataframe(
-            df_pred,
-            model_type=self.model_type,
-            response_transform=self.response_var_transform,
-        )
-        state_metrics = calculate_performance_metrics(
-            df_pred,
-            model_type=self.model_type,
-            mode=self.mode,
-            pred_type="state",
-        )
-
-        # Calculate approximate change predictions and performance metrics
-        if self.change_pred_approx:
-            logger.info("Performance metrics for change predictions:")
-            df_pred_change = approximate_change_predictions(
-                df_pred,
-                self.df_site_info,
-                model_type=self.model_type,
-                mode=self.mode,
-            )
-            change_metrics = calculate_performance_metrics(
-                df_pred_change,
-                model_type=self.model_type,
-                mode=self.mode,
-                pred_type="change",
-            )
-        else:
-            df_pred_change = pl.DataFrame()
-            change_metrics = {}
-
-        return df_pred, df_pred_change, state_metrics, change_metrics
-
     def save_outputs(
-        self, outputs: list[dict[str, Any]], output_paths: list[str]
+        self,
+        outputs: list[dict[str, Any]],
+        output_paths: list[str],
+        save_config: bool = True,
     ) -> None:
         """Save outputs and configuration."""
         # Validate and save output dictionary
@@ -217,17 +192,22 @@ class BaseModelTask:
             with open(path, "wb") as out_stream:
                 dill.dump(file, out_stream)
 
-        # Save model configurations for reproducibility
-        config_output_path = os.path.join(self.run_folder_path, "model_configs.yaml")
-        validate_output_files([config_output_path], [configs])
-        with open(config_output_path, "w") as outfile:
-            yaml.dump(configs, outfile, default_flow_style=False)
+        if save_config:
+            # Save model configurations for reproducibility
+            config_output_path = os.path.join(
+                self.run_folder_path, "model_configs.yaml"
+            )
+            validate_output_files([config_output_path], [configs])
+            with open(config_output_path, "w") as outfile:
+                yaml.dump(configs, outfile, default_flow_style=False)
 
-    def save_pymer_model(self, model_instance: pymer.Lmer, path_suffix: str) -> None:
-        """Save Pymer model separately since it cannot be pickled."""
-        pymer_model_path = os.path.join(self.run_folder_path, path_suffix)
-        validate_output_files([pymer_model_path], [model_instance])
-        pymer.save_model(model=model_instance, filepath=pymer_model_path)
+    def save_glmm_model(self, model_path: str, output_name: str) -> None:
+        """Save the fitted GLMM RDS file to the run folder."""
+        if not model_path:
+            raise ValueError("GLMM model path is empty")
+        validate_input_files(file_paths=[model_path])
+        output_path = os.path.join(self.run_folder_path, output_name)
+        shutil.copy2(model_path, output_path)
 
 
 class ModelTrainingTask(BaseModelTask):
@@ -237,6 +217,11 @@ class ModelTrainingTask(BaseModelTask):
     """
 
     def __init__(self, run_folder_path: str, mode: str) -> None:
+        """
+        Attributes:
+            training_data_path: Path to Parquet file containing training data,
+                located inside run folder.
+        """
         super().__init__(run_folder_path, mode)
         self.training_data_path: str = os.path.join(
             self.run_folder_path, "training_data.parquet"
@@ -265,7 +250,7 @@ class ModelTrainingTask(BaseModelTask):
         # Initialize model, prepare data, and train it
         logger.info("Preparing model data and training the model.")
         model = self.initialize_model()
-        train_data = model.prepare_data(df_train)
+        train_data, _ = model.prepare_data(df_train, df_train)
         model.fit(train_data)
 
         # Make predictions on in-sample data and evaluate performance
@@ -275,47 +260,87 @@ class ModelTrainingTask(BaseModelTask):
         else:
             df_pred = model.predict(train_data, pred_mode="train")
 
-        df_pred, df_pred_change, state_metrics, change_metrics = (
-            self.evaluate_model_performance(df_pred, augment_frame=True)
+        pred_metrics = calculate_performance_metrics(
+            df_pred,
+            model_type=self.model_type,
+            mode=self.mode,
         )
 
-        # Create two dictionaries of outputs to be saved
+        # Write predictions to disk for consistent loading
+        key_output_dir = os.path.join(self.run_folder_path, "key_output")
+        os.makedirs(key_output_dir, exist_ok=True)
+        df_pred.write_parquet(os.path.join(key_output_dir, "train_predictions.parquet"))
+
+        # Create output directories
         logger.info("Saving model outputs.")
-        key_output = {
-            "state_predictions": df_pred,
-            "state_metrics": state_metrics,
-        }
-        if self.change_pred_approx:
-            key_output["change_predictions"] = df_pred_change
-            key_output["change_metrics"] = change_metrics
+        additional_output_dir = os.path.join(self.run_folder_path, "additional_output")
+        os.makedirs(additional_output_dir, exist_ok=True)
 
-        if self.model_type == "bayesian":
-            key_output["predictive_distribution"] = df_pred_distr
+        # Save key outputs
+        metrics_path = os.path.join(key_output_dir, "train_metrics.pkl")
+        self.save_outputs(
+            outputs=[{"metrics": pred_metrics}],
+            output_paths=[metrics_path],
+        )
 
-        additional_output = {
-            "data": train_data,
-            "df_train": df_train,
-        }
-        if self.model_type == "bayesian" or self.model_type == "random_forest":
-            additional_output["model"] = model.model_instance
-        if self.model_type == "bayesian":
-            additional_output["prior_predictive"] = (
-                model.prior_predictive  # type: ignore
-            )
-            additional_output["trace"] = model.trace  # type: ignore
-
-        # Save all outputs
-        key_output_path = os.path.join(self.run_folder_path, "key_output.pkl")
-        additional_output_path = os.path.join(
-            self.run_folder_path, "additional_output.pkl"
+        # Save additional outputs
+        df_train.write_parquet(
+            os.path.join(additional_output_dir, "train_dataframe.parquet")
         )
         self.save_outputs(
-            outputs=[key_output, additional_output],
-            output_paths=[key_output_path, additional_output_path],
+            outputs=[{"train_data": train_data}],
+            output_paths=[os.path.join(additional_output_dir, "train_model_data.pkl")],
+            save_config=False,
         )
 
-        if self.model_type == "lmm":
-            self.save_pymer_model(model.model_instance, "pymer_model.joblib")
+        # Bayesian model-specific outputs
+        if isinstance(model, BayesianHierarchicalModel):
+            if model.prior_predictive is not None:
+                self.save_outputs(
+                    outputs=[{"prior_predictive": model.prior_predictive}],
+                    output_paths=[
+                        os.path.join(additional_output_dir, "prior_predictive.pkl")
+                    ],
+                    save_config=False,
+                )
+            if self.save_predictive_distributions:
+                df_pred_distr.write_parquet(
+                    os.path.join(
+                        additional_output_dir,
+                        "train_predictive_distribution.parquet",
+                    )
+                )
+            if self.save_models_and_traces:
+                fold_output = {
+                    "trace": model.trace,
+                    "model": model.model_instance,
+                }
+                self.save_outputs(
+                    outputs=[fold_output],
+                    output_paths=[
+                        os.path.join(additional_output_dir, "training_model_trace.pkl")
+                    ],
+                    save_config=False,
+                )
+
+        if isinstance(model, GeneralizedLinearMixedModel):
+            effect_summary = model.extract_effects()
+            effects_output_path = os.path.join(key_output_dir, "train_effects.json")
+            validate_output_files(
+                file_paths=[effects_output_path],
+                files=[effect_summary],
+            )
+            with open(effects_output_path, "w") as out_stream:
+                json.dump(effect_summary, out_stream, indent=2)
+            if model.family == "beta":
+                beta_phi = {"phi": model.extract_beta_phi()}
+                phi_output_path = os.path.join(key_output_dir, "train_phi.json")
+                validate_output_files(
+                    file_paths=[phi_output_path],
+                    files=[beta_phi],
+                )
+                with open(phi_output_path, "w") as out_stream:
+                    json.dump(beta_phi, out_stream, indent=2)
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Model training completed in {runtime}.")
@@ -325,7 +350,12 @@ class CrossValidationTask(BaseModelTask):
     """Class for performing cross-validation on a given model."""
 
     def __init__(self, run_folder_path: str, mode: str) -> None:
-        """Docstring to be added."""
+        """
+        Attributes:
+            cv_folds: Number of cross-validation folds.
+            train_data_paths: List of paths to training data for each fold.
+            test_data_paths: List of paths to test data for each fold.
+        """
         super().__init__(run_folder_path, mode)
         self.cv_folds: int = configs.cv_settings.k
         self.train_data_paths: list[str] = [
@@ -338,6 +368,19 @@ class CrossValidationTask(BaseModelTask):
         ]
 
     def run_task(self) -> None:
+        """
+        Perform the following processing steps:
+            - For each cross-validation fold:
+                - Load training and test data for the fold.
+                - Initialize model and prepare data for specified model type.
+                - Fit the model on training data and make predictions on both
+                  training and test data.
+                - Evaluate model performance on both training and test data.
+            - After all folds are processed:
+                - Concatenate all test predictions and evaluate overall
+                  performance.
+                - Save predictions, evaluation metrics and other outputs.
+        """
         logger.info(
             f"Initiating cross-validation of '{self.model_type}' model "
             f"and diversity type '{self.diversity_type}'."
@@ -348,15 +391,13 @@ class CrossValidationTask(BaseModelTask):
         validate_input_files(file_paths=self.train_data_paths + self.test_data_paths)
         self.load_input_data()
 
-        # Lists for storing outputs of train-test on each fold
-        all_model_data = []
-        all_state_predictions = []
-        all_change_predictions = []
-        all_state_metrics = []
-        all_change_metrics = []
-        all_model_instances = []
-        if self.model_type == "bayesian":
-            all_state_predictions_distr = []
+        # Store per-fold metrics, but do not keep large objects (e.g. traces or
+        # prediction dataframes) in memory across folds.
+        per_fold_metrics = []
+        key_output_dir = os.path.join(self.run_folder_path, "key_output")
+        additional_output_dir = os.path.join(self.run_folder_path, "additional_output")
+        os.makedirs(key_output_dir, exist_ok=True)
+        os.makedirs(additional_output_dir, exist_ok=True)
 
         for fold_idx, (train_path, test_path) in enumerate(
             zip(self.train_data_paths, self.test_data_paths)
@@ -368,8 +409,12 @@ class CrossValidationTask(BaseModelTask):
             # Initialize model, prepare data, and train
             logger.info("Preparing model data and training the model.")
             model = self.initialize_model()
-            train_data = model.prepare_data(df_train)
-            test_data = model.prepare_data(df_test)
+            fold_seed = self.random_seed + fold_idx
+            if hasattr(model, "sampling_seed"):
+                model.sampling_seed = fold_seed
+            if hasattr(model, "random_seed"):
+                model.random_seed = fold_seed
+            train_data, test_data = model.prepare_data(df_train, df_test)
             model.fit(train_data)
 
             # Evaluate on train and test
@@ -386,105 +431,115 @@ class CrossValidationTask(BaseModelTask):
                 df_pred_test = model.predict(test_data, pred_mode="test")
 
             logger.info("Evaluation results on training set:")
-            (
+            pred_metrics_train = calculate_performance_metrics(
                 df_pred_train,
-                df_pred_change_train,
-                state_metrics_train,
-                change_metrics_train,
-            ) = self.evaluate_model_performance(df_pred_train)
-
+                model_type=self.model_type,
+                mode=self.mode,
+            )
             logger.info("Evaluation results on test set")
-            (
+            pred_metrics_test = calculate_performance_metrics(
                 df_pred_test,
-                df_pred_change_test,
-                state_metrics_test,
-                change_metrics_test,
-            ) = self.evaluate_model_performance(df_pred_test)
+                model_type=self.model_type,
+                mode=self.mode,
+            )
+            per_fold_metrics.append(
+                {"train": pred_metrics_train, "test": pred_metrics_test}
+            )
 
-            # Collect outputs
-            all_model_data.append({"train": train_data, "test": test_data})
-            all_state_predictions.append({"train": df_pred_train, "test": df_pred_test})
-            all_change_predictions.append(
-                {"train": df_pred_change_train, "test": df_pred_change_test}
-            )
-            all_state_metrics.append(
-                {"train": state_metrics_train, "test": state_metrics_test}
-            )
-            all_change_metrics.append(
-                {"train": change_metrics_train, "test": change_metrics_test}
-            )
-            all_model_instances.append(model)
+            fold = fold_idx + 1  # Increment fold index for file naming
 
-            # Save full predictive distribution if Bayesian
-            if self.model_type == "bayesian":
-                all_state_predictions_distr.append(
-                    {"train": df_pred_train_distr, "test": df_pred_test_distr}
+            # Save per-fold prediction dataframes to parquet and free memory.
+            train_pred_path = os.path.join(
+                key_output_dir, f"train_predictions_fold_{fold}.parquet"
+            )
+            test_pred_path = os.path.join(
+                key_output_dir, f"test_predictions_fold_{fold}.parquet"
+            )
+            df_pred_train.write_parquet(train_pred_path)
+            df_pred_test.write_parquet(test_pred_path)
+
+            # Save predictive distribution dataframes (optional; can be very large)
+            if (
+                isinstance(model, BayesianHierarchicalModel)
+                and self.save_predictive_distributions
+            ):
+                train_distr_path = os.path.join(
+                    additional_output_dir,
+                    f"train_predictive_distribution_fold_{fold}.parquet",
+                )
+                test_distr_path = os.path.join(
+                    additional_output_dir,
+                    f"test_predictive_distribution_fold_{fold}.parquet",
+                )
+                df_pred_train_distr.write_parquet(train_distr_path)
+                df_pred_test_distr.write_parquet(test_distr_path)
+
+            # Save trace and model per fold (optional; can be very large)
+            if (
+                isinstance(model, BayesianHierarchicalModel)
+                and self.save_models_and_traces
+            ):
+                fold_output = {
+                    "trace": model.trace,
+                    "model": model.model_instance,
+                }
+                fold_path = os.path.join(
+                    additional_output_dir, f"model_trace_fold_{fold}.pkl"
+                )
+                self.save_outputs(
+                    outputs=[fold_output],
+                    output_paths=[fold_path],
+                    save_config=False,
                 )
 
-            # Save Pymer model for the fold if LMM
-            if self.model_type == "lmm":
-                self.save_pymer_model(
-                    model.model_instance, f"pymer_model_fold_{fold_idx + 1}.joblib"
-                )
+            # Free memory between folds
+            del df_train, df_test, train_data, test_data, df_pred_train, df_pred_test
+            if isinstance(model, BayesianHierarchicalModel):
+                del df_pred_train_distr, df_pred_test_distr
+                if hasattr(model, "trace"):
+                    del model.trace
+                if hasattr(model, "prior_predictive"):
+                    del model.prior_predictive
+                if hasattr(model, "model_instance"):
+                    del model.model_instance
+            del model
+            gc.collect()
 
-        # Concatenate all test data and calculate metrics
+        # Aggregate all test fold predictions for overall metrics.
         logger.info("Evaluation results for all test folds:\n")
-        df_pred_test_all = pl.concat([fold["test"] for fold in all_state_predictions])
-        (
-            df_pred_test_all,
-            df_pred_change_test_all,
-            state_metrics_test_all,
-            change_metrics_test_all,
-        ) = self.evaluate_model_performance(df_pred_test_all, augment_frame=False)
-
-        if self.model_type == "bayesian":
-            df_pred_test_all_distr = pl.concat(
-                [fold["test"] for fold in all_state_predictions_distr]
-            )
+        df_pred_test_all_folds = pl.concat(
+            [
+                pl.read_parquet(
+                    os.path.join(
+                        key_output_dir, f"test_predictions_fold_{i + 1}.parquet"
+                    )
+                )
+                for i in range(self.cv_folds)
+            ]
+        )
+        pred_metrics_test_all = calculate_performance_metrics(
+            df_pred_test_all_folds,
+            model_type=self.model_type,
+            mode=self.mode,
+        )
+        all_test_pred_path = os.path.join(
+            key_output_dir, "test_predictions_all_folds.parquet"
+        )
+        df_pred_test_all_folds.write_parquet(all_test_pred_path)
 
         # Save all relevant outputs
         logger.info("Saving cross-validation outputs.")
 
-        # Create the key outputs dictionary
-        key_output = {
-            "state_predictions": all_state_predictions,
-            "state_metrics": all_state_metrics,
-            "change_predictions": all_change_predictions,
-            "change_metrics": all_change_metrics,
-            "all_test_results": {
-                "state_predictions": df_pred_test_all,
-                "state_metrics": state_metrics_test_all,
-                "change_predictions": df_pred_change_test_all,
-                "change_metrics": change_metrics_test_all,
-            },
-        }
-        if self.model_type == "bayesian":
-            key_output["all_test_results"][  # type: ignore
-                "predictive_distributions"
-            ] = df_pred_test_all_distr
-
-        # Create the additional outputs dictionary
-        additional_output = {
-            "data": all_model_data,
-        }
-        if self.model_type == "bayesian":
-            additional_output["models"] = (  # Save Bayesian model instances
-                all_model_instances  # type: ignore
-            )
-            additional_output["traces"] = [  # Save traces for all PyMC models
-                model.trace for model in all_model_instances  # type: ignore
-            ]
-
-        # Define output paths
-        key_output_path = os.path.join(self.run_folder_path, "key_output.pkl")
-        additional_output_path = os.path.join(
-            self.run_folder_path, "additional_output.pkl"
+        # Save metrics in key output directory
+        metrics_per_fold_path = os.path.join(
+            key_output_dir, "crossval_metrics_per_fold.pkl"
         )
-
-        # Validate and save the outputs
+        metrics_overall_path = os.path.join(
+            key_output_dir, "crossval_metrics_overall.pkl"
+        )
         self.save_outputs(
-            outputs=[key_output, additional_output],
-            output_paths=[key_output_path, additional_output_path],
+            outputs=[{"metrics": per_fold_metrics}, {"metrics": pred_metrics_test_all}],
+            output_paths=[metrics_per_fold_path, metrics_overall_path],
         )
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Cross-validation completed in {runtime}.")
