@@ -453,6 +453,16 @@ class GenerateFeaturesTask:
             ]
         )
 
+        # Filter out rows with null taxonomic group
+        # This happens because protozoa is not included in the custom grouping
+        n_obs_before = df.height
+        df = df.filter(pl.col("Custom_taxonomic_group").is_not_null())
+        n_obs_after = df.height
+        logger.info(
+            f"Filtered out {n_obs_before - n_obs_after} rows with null "
+            "Custom_taxonomic_group."
+        )
+
         return df
 
     @staticmethod

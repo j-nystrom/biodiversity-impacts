@@ -116,16 +116,19 @@ class AlphaDiversityTask:
                 on=self.groupby_cols,
                 how="left",
             )
+
             df_res = df_res.join(  # + Geometric mean abundance
                 df_geometric_mean_abund,
                 on=self.groupby_cols,
                 how="left",
             )
+
             df_res = df_res.join(  # + Species richness
                 df_richness,
                 on=self.groupby_cols,
                 how="left",
             )
+
             df_res = df_res.join(  # + Shannon index
                 df_shannon,
                 on=self.groupby_cols,
@@ -134,11 +137,7 @@ class AlphaDiversityTask:
 
             # Finally, include all other attributes in the original dataframe
             # at the right level of aggregation
-            df_res = df_res.join(
-                df_first,
-                on=self.groupby_cols,
-                how="left",
-            )
+            df_res = df_res.join(df_first, on="SSBS", how="left", validate="m:1")
 
             # Save the output file for this level of taxonomic aggregation
             validate_output_files(
@@ -204,7 +203,7 @@ class AlphaDiversityTask:
         metric = "Geometric_mean_abundance"
 
         df = df.with_columns(
-            (pl.col("Effort_corrected_measurement") + 1).log().alias("Log_abundance")
+            pl.col("Effort_corrected_measurement").log1p().alias("Log_abundance")
         )
 
         df_geom_mean = (
@@ -215,7 +214,7 @@ class AlphaDiversityTask:
         )
 
         # Scale within study
-        df_geom_mean = self._scale_by_study_max(df_geom_mean, diversity_metric=metric)
+        df_geom_mean = self.scale_by_study_max(df_geom_mean, diversity_metric=metric)
 
         validate_alpha_diversity_calculations(df_geom_mean, metric_name=metric)
         logger.info("Geometric mean abundance calculations finished.")
@@ -326,10 +325,10 @@ class AlphaDiversityTask:
         )
 
         # Scale the Shannon indices
-        df_shannon = self._scale_by_study_max(
+        df_shannon = self.scale_by_study_max(
             df_shannon, diversity_metric="Shannon_index"
         )
-        df_shannon = self._scale_by_study_max(
+        df_shannon = self.scale_by_study_max(
             df_shannon, diversity_metric="Modified_Shannon_index"
         )
 
@@ -367,7 +366,7 @@ class AlphaDiversityTask:
 
         # Filter dataframe to only include abundance studies
         # NOTE: If richness should be used in the final model, this filtering
-        # should not appply in that case
+        # should not apply in that case
         df = df.filter(pl.col("Diversity_metric_type") == "Abundance")
 
         # Calculate the metric for the given grouping
@@ -376,14 +375,15 @@ class AlphaDiversityTask:
         )
 
         # Scale the metric within each study
-        df_scaled = self._scale_by_study_max(df_metric, diversity_metric=metric_name)
+        df_scaled = self.scale_by_study_max(df_metric, diversity_metric=metric_name)
 
         logger.info(f"{metric_name} calculations finished.")
 
         return df_scaled
 
-    @staticmethod
-    def _scale_by_study_max(df: pl.DataFrame, diversity_metric: str) -> pl.DataFrame:
+    def scale_by_study_max(
+        self, df: pl.DataFrame, diversity_metric: str
+    ) -> pl.DataFrame:
         """
         Scale diversity metrics by dividing them by the maximum value within
         the study to which they belong. This is done to make the metrics
@@ -398,15 +398,19 @@ class AlphaDiversityTask:
         """
         logger.info(f"Scaling {diversity_metric} by max values within studies.")
 
+        # Get the correcting grouping columns
+        tax_cols = [c for c in self.groupby_cols if c not in ("SS", "SSB", "SSBS")]
+        groupby_cols = ["SS"] + tax_cols
+
         # Calculate the max value within each study
-        df_max = df.group_by("SS").agg(
+        df_max = df.group_by(groupby_cols).agg(
             pl.max(diversity_metric).alias(f"Study_max_{diversity_metric}")
         )
 
         # Join the max values back to the original dataframe
         df_scaled = df.join(
-            df_max.select(["SS", f"Study_max_{diversity_metric}"]),
-            on="SS",
+            df_max.select(groupby_cols + [f"Study_max_{diversity_metric}"]),
+            on=groupby_cols,
             how="left",
         )
 

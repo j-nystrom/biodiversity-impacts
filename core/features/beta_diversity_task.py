@@ -6,13 +6,15 @@ import gower
 import numpy as np
 import polars as pl
 from box import Box
-from sklearn.metrics.pairwise import haversine_distances
 
 from core.tests.shared.validate_shared import (
     validate_input_files,
     validate_output_files,
 )
 from core.utils.general_utils import create_logger
+
+# from sklearn.metrics.pairwise import haversine_distances
+
 
 # Load config file
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -97,15 +99,16 @@ class BetaDiversityTask:
         # Get the first row of each site to get site-level attributes
         df_site_attr = df.group_by("SSBS").first()
 
-        # Compute the median of Max_linear_extent_metres among all sites
-        # WHY?
+        # Compute the median of Max_linear_extent_metres among all sites, to
+        # normalize spatial distances
         median_extent_all_data = df_site_attr.get_column(
             "Max_linear_extent_metres"
         ).median()
 
         # Create a list of all features and drop this from the similarity frame
+        # to reduce memory usage
         # They are not needed for this step, but will be used later on
-        all_predictors = (
+        all_predictors_base = (
             self.land_use_col_order
             + self.lui_col_order
             + self.secondary_veg_col_order
@@ -113,6 +116,19 @@ class BetaDiversityTask:
             + self.bioclimatic_vars
             + self.topographic_vars
         )
+
+        # For each base_col, find anything exactly named base_col or a
+        # a transformation of it, which has the same base name
+        all_predictors = []
+        for base_col in all_predictors_base:
+            for col in df.columns:
+                if (
+                    col == base_col
+                    or col.startswith(f"{base_col}_")
+                    or col.startswith("Mean_")
+                ):
+                    all_predictors.append(col)
+
         df_for_similarity = df.drop(all_predictors)
 
         # Iterate through all taxonomic grouping levels (there is one output
@@ -123,12 +139,11 @@ class BetaDiversityTask:
             # Filter down to studies that contain reference sites and meet
             # other criteria
             df_filtered = self.filter_studies(df_for_similarity)
-            logger.info(
-                f"After filtering, {df_filtered['SS'].n_unique()} studies remain."
-            )
+            nb_studies = df_filtered.get_column("SS").n_unique()
+            logger.info(f"After filtering, {nb_studies} studies remain.")
 
             # Get the list of included studies
-            studies = df_filtered["SS"].unique().to_list()
+            studies = sorted(df_filtered.get_column("SS").unique().to_list())
             all_results = []
 
             # Iterate over the filtered studies, processing each one incrementally
@@ -170,6 +185,32 @@ class BetaDiversityTask:
             df_final: pl.DataFrame = pl.concat(all_results)
             df_final = df_final.rename({"Other_site": "SSBS"})
 
+            # Sanity check: Bray_Curtis must not contain NaNs
+            n_nan = df_final.select(pl.col("Bray_Curtis_score").is_nan().sum()).item()
+            if n_nan > 0:
+                logger.error(
+                    f"NaN Bray_Curtis values detected after beta generation: {n_nan}."
+                )
+                raise ValueError("NaN Bray-Curtis values detected.")
+
+            # Visibility log for NULLs (for cases with zero abundance at both sites)
+            n_null = df_final.select(pl.col("Bray_Curtis_score").is_null().sum()).item()
+            logger.info(
+                f"Number of NULL Bray-Curtis values (uninformative pairs): {n_null}."
+            )
+
+            # Verify all grouping columns are present in the final output
+            missing_cols = [
+                col for col in self.groupby_cols if col not in df_final.columns
+            ]
+
+            if missing_cols:
+                raise ValueError(
+                    f"The final beta-diversity dataframe is missing required grouping "
+                    f"columns: {missing_cols}."
+                )
+
+            # Save the output file for this level of taxonomic aggregation
             validate_output_files(
                 file_paths=[path], files=[df_final], allow_overwrite=True
             )
@@ -250,6 +291,11 @@ class BetaDiversityTask:
         the similarity score for each pair of a minimally-used primary
         vegetation site and another site.
 
+        If self.groupby_cols is non-empty, the comparisons are done separately
+        within each taxonomic / grouping unit defined by those columns. That is,
+        site pairs are compared only within matching taxonomic units, and all
+        such comparisons are included in the output.
+
         NOTE: Currently, only the Bray-Curtis similarity metric is implemented.
         If implementing other metrics, this function can be reused with minimal
         refactoring.
@@ -259,12 +305,14 @@ class BetaDiversityTask:
             df_study: Polars dataframe containing data for the study.
 
         Returns:
-            List of results with a dictionary for each site-site pair, that is
-                later used to create the similarity dataframe.
+            List of results with a dictionary for each site-site and taxonomic
+             group pair, that is later used to create the similarity dataframe.
         """
         logger.info(f"Calculating pairwise similarity scores for study: {study_id}")
 
-        # Identify baseline (minimally-used primary vegetation) sites
+        tax_cols = [c for c in self.groupby_cols if c not in ("SS", "SSB", "SSBS")]
+
+        # Identify baseline sites (minimally-used primary vegetation)
         min_primary_sites = (
             df_study.filter(
                 (pl.col("Predominant_land_use") == "Primary vegetation")
@@ -276,14 +324,63 @@ class BetaDiversityTask:
         )
         # Get all the sites in the study, including reference sites
         all_sites = df_study.get_column("SSBS").unique().to_list()
-
+        site_dfs = {site: df_study.filter(pl.col("SSBS") == site) for site in all_sites}
         results = []
+        seen_pairs = set()  # Avoid duplicate ref-ref site comparisons
+
         for site_1 in min_primary_sites:
+            df_1 = site_dfs[site_1]
+
             for site_2 in all_sites:
-                if site_1 != site_2:
+                if site_1 == site_2:
+                    continue
+
+                # Log pair
+                site_a, site_b = sorted([site_1, site_2])
+                pair_key = (site_a, site_b)
+                if pair_key in seen_pairs:
+                    continue
+
+                seen_pairs.add(pair_key)
+
+                df_2 = site_dfs[site_2]
+
+                # Case 1: No taxonomic grouping, single comparison
+                if len(tax_cols) == 0:
                     score = self.calculate_bray_curtis(
-                        df_study, study_id, site_1, site_2
+                        df_1=df_1,
+                        df_2=df_2,
+                        study_id=study_id,
                     )
+                    results.append(score)
+                    continue
+
+                # Case 2: Taxonomic grouping, per-group comparisons
+                taxa_1 = df_1.select(tax_cols).unique(maintain_order=True)
+                taxa_2 = df_2.select(tax_cols).unique(maintain_order=True)
+                shared_taxa = taxa_1.join(taxa_2, on=tax_cols, how="inner")
+                if shared_taxa.height == 0:
+                    continue  # no matching taxonomic units
+
+                for tax_row in shared_taxa.iter_rows(named=True):
+
+                    # Build filter for this taxonomic unit
+                    cond = pl.all_horizontal(
+                        [pl.col(col) == tax_row[col] for col in tax_cols]
+                    )
+                    df_1_tax = df_1.filter(cond)
+                    df_2_tax = df_2.filter(cond)
+                    if df_1_tax.height == 0 or df_2_tax.height == 0:
+                        continue
+
+                    score = self.calculate_bray_curtis(
+                        df_1=df_1_tax,
+                        df_2=df_2_tax,
+                        study_id=study_id,
+                    )
+                    for col in tax_cols:  # add taxonomic info to result
+                        score[col] = tax_row[col]
+
                     results.append(score)
 
         logger.info(f"Finished calculating for study: {study_id}")
@@ -291,7 +388,10 @@ class BetaDiversityTask:
         return results
 
     def calculate_bray_curtis(
-        self, df_study: pl.DataFrame, study_id: str, site_1: str, site_2: str
+        self,
+        df_1: pl.DataFrame,
+        df_2: pl.DataFrame,
+        study_id: str,
     ) -> dict:
         """
         Calculate the Bray-Curtis similarity metric between a pair of sites,
@@ -301,7 +401,8 @@ class BetaDiversityTask:
         corrected one.
 
         Args:
-            df_study: DataFrame containing the study data.
+            df_1: DataFrame for the first site (minimal primary vegetation).
+            df_2: DataFrame for the second site (any other site in the study).
             study_id: ID of the study being processed.
             site_1: ID of the first site (minimal primary vegetation).
             site_2: ID of the second site (any other site in the study).
@@ -309,54 +410,44 @@ class BetaDiversityTask:
         Returns:
             A dictionary with the Bray–Curtis score of the site pair.
         """
-        # Select only the relevant data for each site
-        df_site_1 = (
-            df_study.filter(pl.col("SSBS") == site_1)
-            .select(["SSBS", "Taxon_name_entered", "Measurement"])
-            .sort("Taxon_name_entered")
+
+        df_1 = df_1.select(["SSBS", "Taxon_name_entered", "Measurement"]).sort(
+            "Taxon_name_entered"
         )
-        df_site_2 = (
-            df_study.filter(pl.col("SSBS") == site_2)
-            .select(["SSBS", "Taxon_name_entered", "Measurement"])
-            .sort("Taxon_name_entered")
+        df_2 = df_2.select(["SSBS", "Taxon_name_entered", "Measurement"]).sort(
+            "Taxon_name_entered"
         )
 
         # Calculate total abundance at each site, which is the denominator of
         # the Bray-Curtis formula
-        s1_tot_abund = df_site_1.select(pl.col("Measurement").sum()).item()
-        s2_tot_abund = df_site_2.select(pl.col("Measurement").sum()).item()
+        s1_abundance = df_1["Measurement"].sum()
+        s2_abundance = df_2["Measurement"].sum()
 
         # Handle cases with zero abundance
-        if s1_tot_abund == 0 and s2_tot_abund == 0:
-            bray_curtis_sim = np.nan
-        elif s1_tot_abund == 0 or s2_tot_abund == 0:
-            bray_curtis_sim = 0.0
-        else:
-            # Merge in case taxon sets differ, so we can line up the measurements
-            # for each taxon
-            df_merged = df_site_1.join(
-                df_site_2, on="Taxon_name_entered", how="outer", suffix="_site2"
-            ).fill_null(0)
+        if s1_abundance == 0 and s2_abundance == 0:
+            bray_curtis = None
+        elif s1_abundance == 0 or s2_abundance == 0:
+            bray_curtis = 0.0
 
-            # Convert to NumPy for simple processing
+        else:
             # Calculate the sum of the smaller taxon abundances, which is the
             # numerator of the Bray-Curtis formula
-            arr_merged = np.column_stack(
-                [
-                    df_merged.get_column("Measurement"),
-                    df_merged.get_column("Measurement_site2"),
-                ]
+            df_merged = df_1.join(
+                df_2, on="Taxon_name_entered", how="outer", suffix="_2"
+            ).fill_null(0)
+            arr = np.column_stack(
+                [df_merged["Measurement"], df_merged["Measurement_2"]]
             )
-            min_abundance_sum = np.sum(np.min(arr_merged, axis=1))
+            min_abundance_sum = np.sum(np.min(arr, axis=1))
 
             # Bray–Curtis similarity (1 == identical, 0 == no overlap)
-            bray_curtis_sim = (2.0 * min_abundance_sum) / (s1_tot_abund + s2_tot_abund)
+            bray_curtis = (2.0 * min_abundance_sum) / (s1_abundance + s2_abundance)
 
         return {
             "SS": study_id,
-            "Primary_minimal_site": site_1,
-            "Other_site": site_2,
-            "Bray_Curtis_score": bray_curtis_sim,
+            "Primary_minimal_site": df_1.get_column("SSBS")[0],
+            "Other_site": df_2.get_column("SSBS")[0],
+            "Bray_Curtis_score": bray_curtis,
         }
 
     def pairwise_feature_differences(
@@ -472,25 +563,40 @@ class BetaDiversityTask:
             )
         )
 
-        # Vectorized haversine distance (returns distance in radians)
-        dist_rad = haversine_distances(lat_lon, lat_lon_ref)
-        dist_meters = np.diagonal(dist_rad) * 6371000  # Convert radians to meters
+        lat1, lon1 = lat_lon.T
+        lat2, lon2 = lat_lon_ref.T
 
-        # Create a new distance column in the dataframe
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+        dist_meters = 6_371_000 * 2 * np.arcsin(np.sqrt(a))  # vector length k
+
         df_comp_similarity = df_comp_similarity.with_columns(
-            pl.when(pl.lit(dist_meters) > 0)
-            .then(pl.lit(dist_meters) / median_extent_all_data)
-            .otherwise(pl.lit(np.nan))
-            .alias("Haversine_distance")
+            (pl.lit(dist_meters) / median_extent_all_data).alias("Haversine_distance")
         )
 
-        # Do log and cube root transformations to align with other features
+        # Vectorized haversine distance (returns distance in radians)
+        # dist_rad = haversine_distances(lat_lon, lat_lon_ref)
+        # dist_meters = np.diagonal(dist_rad) * 6371000  # Convert radians to meters
+
+        # Create a new distance column in the dataframe
+        # df_comp_similarity = df_comp_similarity.with_columns(
+        #    pl.when(pl.lit(dist_meters) > 0)
+        #    .then(pl.lit(dist_meters) / median_extent_all_data)
+        #    .otherwise(pl.lit(np.nan))
+        #    .alias("Haversine_distance")
+        # )
+
+        # Do log, sqrt and cube root transformations to align with other features
         # from the GenerateFeaturesTask. Log is used in De Palma et al (2021)
         df_comp_similarity = df_comp_similarity.with_columns(
             ((pl.col("Haversine_distance") + 1).log()).alias("Haversine_distance_log")
         )
         df_comp_similarity = df_comp_similarity.with_columns(
-            (pl.col("Haversine_distance") ** (1 / 3)).alias("Haversine_distance_cbrt")
+            ((pl.col("Haversine_distance") + 1).sqrt()).alias("Haversine_distance_sqrt")
+        )
+        df_comp_similarity = df_comp_similarity.with_columns(
+            (pl.col("Haversine_distance").pow(1 / 3)).alias("Haversine_distance_cbrt")
         )
 
         # Drop reference coordinate columns
@@ -547,13 +653,16 @@ class BetaDiversityTask:
             .alias("Gower_distance")
         )
 
-        # Do log and cube root transformations to align with other features
+        # Do log, sqrt and cube root transformations to align with other features
         # from the GenerateFeaturesTask. Cbrt is used in De Palma et al (2021)
         df_comp_similarity = df_comp_similarity.with_columns(
             ((pl.col("Gower_distance") + 1).log()).alias("Gower_distance_log")
         )
         df_comp_similarity = df_comp_similarity.with_columns(
-            (pl.col("Gower_distance") ** (1 / 3)).alias("Gower_distance_cbrt")
+            ((pl.col("Gower_distance") + 1).sqrt()).alias("Gower_distance_sqrt")
+        )
+        df_comp_similarity = df_comp_similarity.with_columns(
+            (pl.col("Gower_distance").pow(1 / 3)).alias("Gower_distance_cbrt")
         )
 
         logger.info("Finished calculating environmental distances.")
