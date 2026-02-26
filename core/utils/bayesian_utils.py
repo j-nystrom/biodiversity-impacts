@@ -61,35 +61,36 @@ def plot_prior_and_posterior_distributions(
 
 
 def plot_prior_distribution(
-    prior_samples: az.InferenceData, category: str, variable: str
+    prior_samples: az.InferenceData, category_variable_pairs: list[tuple[str, str]]
 ) -> None:
 
-    if category == "prior":
-        data = prior_samples.prior
-    elif category == "prior_predictive":
-        data = prior_samples.prior_predictive
-    else:
-        data = prior_samples.observed_data
+    for category, variable in category_variable_pairs:
+        if category == "prior":
+            data = prior_samples.prior
+        elif category == "prior_predictive":
+            data = prior_samples.prior_predictive
+        else:
+            data = prior_samples.observed_data
 
-    az.plot_dist(
-        data[variable],
-        figsize=(6, 3),
-        kind="hist",
-        color="C1",
-        hist_kwargs=dict(alpha=0.6, bins=50),
-    )
+        az.plot_dist(
+            data[variable],
+            figsize=(6, 3),
+            kind="hist",
+            color="C1",
+            hist_kwargs=dict(alpha=0.6, bins=50),
+        )
 
-    plt.title(f"{category}: {variable}", fontsize=12)
+        plt.title(f"{category}: {variable}", fontsize=12)
 
-    plt.tick_params(axis="x", labelsize=10)
-    plt.tick_params(axis="y", labelsize=10)
+        plt.tick_params(axis="x", labelsize=10)
+        plt.tick_params(axis="y", labelsize=10)
 
-    max_ticks = 15
-    ax = plt.gca()
-    ax.xaxis.set_major_locator(plt.MaxNLocator(max_ticks))
-    plt.xticks(rotation=45)
+        max_ticks = 15
+        ax = plt.gca()
+        ax.xaxis.set_major_locator(plt.MaxNLocator(max_ticks))
+        plt.xticks(rotation=45)
 
-    plt.show()
+        plt.show()
 
 
 def assign_legible_trace_variables(

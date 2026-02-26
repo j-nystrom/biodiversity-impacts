@@ -75,7 +75,8 @@ def plot_calibration_and_residuals(
     bias_metrics = metrics["bias_metrics"]
     bias_values = bias_metrics["bias_per_decile"]
     overall_bias_ratio = bias_metrics["overall_bias_ratio"]
-    r2_std = metrics["r2_std"]
+    pearson_corr = metrics["pearson_corr"]
+    mean_abs_error = metrics["mean_abs_error"]
     r2_var = metrics["r2_var"]
 
     # Create 2x2 subplot grid
@@ -106,7 +107,7 @@ def plot_calibration_and_residuals(
     axes[0, 0].text(
         horizontal_offset,  # Horizontal offset (left aligned)
         1.0 - vertical_offset,  # Top position
-        f"R² (standard def.)= {r2_std:.3f}",
+        f"Pearson correlation = {pearson_corr:.3f}",
         fontsize=11,
         transform=axes[0, 0].transAxes,  # Use axes coordinate system
         verticalalignment="top",  # Align text to top
@@ -114,8 +115,17 @@ def plot_calibration_and_residuals(
     )
     axes[0, 0].text(
         horizontal_offset,
-        1.0 - 3 * vertical_offset,  # Adjust for the second line
-        f"R² (var. explained)= {r2_var:.3f}",
+        1.0 - 4 * vertical_offset,  # Adjust for the second line
+        f"R² = {r2_var:.3f}",
+        fontsize=11,
+        transform=axes[0, 0].transAxes,
+        verticalalignment="top",
+        horizontalalignment="left",
+    )
+    axes[0, 0].text(
+        horizontal_offset,
+        1.0 - 8 * vertical_offset,  # Adjust for the third line
+        f"Mean absolute error = {mean_abs_error:.3f}",
         fontsize=11,
         transform=axes[0, 0].transAxes,
         verticalalignment="top",
@@ -359,26 +369,32 @@ def print_evaluation_metrics_train(metrics: dict[str, Any]) -> None:
     print()
 
     # Bottom quartile metrics
-    print("Bottom quartile metrics:")
-    print(f"  - R² (standard def): {metrics['r2_std_bottom']:.3f}")
-    print(f"  - R² (variance explained): {metrics['r2_var_bottom']:.3f}")
-    print(f"  - Mean absolute error: {metrics['mean_abs_error_bottom']:.3f}")
-    print(f"  - Median absolute error: {metrics['median_abs_error_bottom']:.3f}")
-    print(f"  - Pearson correlation: {metrics['pearson_corr_bottom']:.3f}")
-    print(f"  - Spearman correlation: {metrics['spearman_corr_bottom']:.3f}")
-    print(f"  - Bias ratio: {metrics['bias_metrics']['bias_bottom']:.3f}")
-    print()
+    try:  # Bottom / top quartile metrics not generated for all runs
+        print("Bottom quartile metrics:")
+        print(f"  - R² (standard def): {metrics['r2_std_bottom']:.3f}")
+        print(f"  - R² (variance explained): {metrics['r2_var_bottom']:.3f}")
+        print(f"  - Mean absolute error: {metrics['mean_abs_error_bottom']:.3f}")
+        print(f"  - Median absolute error: {metrics['median_abs_error_bottom']:.3f}")
+        print(f"  - Pearson correlation: {metrics['pearson_corr_bottom']:.3f}")
+        print(f"  - Spearman correlation: {metrics['spearman_corr_bottom']:.3f}")
+        print(f"  - Bias ratio: {metrics['bias_metrics']['bias_bottom']:.3f}")
+        print()
+    except KeyError:
+        pass
 
     # Top quartile metrics
-    print("Top quartile metrics:")
-    print(f"  - R² (standard def): {metrics['r2_std_top']:.3f}")
-    print(f"  - R² (variance explained): {metrics['r2_var_top']:.3f}")
-    print(f"  - Mean absolute error: {metrics['mean_abs_error_top']:.3f}")
-    print(f"  - Median absolute error: {metrics['median_abs_error_top']:.3f}")
-    print(f"  - Pearson correlation: {metrics['pearson_corr_top']:.3f}")
-    print(f"  - Spearman correlation: {metrics['spearman_corr_top']:.3f}")
-    print(f"  - Bias ratio: {metrics['bias_metrics']['bias_top']:.3f}")
-    print()
+    try:
+        print("Top quartile metrics:")
+        print(f"  - R² (standard def): {metrics['r2_std_top']:.3f}")
+        print(f"  - R² (variance explained): {metrics['r2_var_top']:.3f}")
+        print(f"  - Mean absolute error: {metrics['mean_abs_error_top']:.3f}")
+        print(f"  - Median absolute error: {metrics['median_abs_error_top']:.3f}")
+        print(f"  - Pearson correlation: {metrics['pearson_corr_top']:.3f}")
+        print(f"  - Spearman correlation: {metrics['spearman_corr_top']:.3f}")
+        print(f"  - Bias ratio: {metrics['bias_metrics']['bias_top']:.3f}")
+        print()
+    except KeyError:
+        pass
 
 
 def print_evaluation_metrics_crossval(metrics: list[dict[str, Any]]) -> None:
