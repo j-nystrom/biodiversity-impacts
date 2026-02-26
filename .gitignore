@@ -1,6 +1,17 @@
+core/archive/
+notebooks/not_shared/
+notebooks/archive/
+experiments/
+
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+.virtual_documents/
 .DS_Store/
+.DS_Store
 .env
 .vscode/
+.mypy_cache/
+.pytest_cache/
+conda-lock.yml
+.pre-commit-config.yaml
