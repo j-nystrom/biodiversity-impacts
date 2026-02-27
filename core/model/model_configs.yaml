@@ -10,13 +10,13 @@ epsilon: 1e-6  # For clipping, e.g. to avoid exact 0 or 1 in beta distributed mo
 # Data type and scope --------------------------------------
 
 data_scope:
-  diversity_type: alpha  # [alpha, beta]
+  diversity_type: beta  # [alpha, beta]
   min_sites_per_study: 0  # Min number of sites per study to be included in model
   min_ref_sites_for_beta: 0  # Min nb of reference sites for beta diversity models
   exclude_outliers: True  # Use IQR / Tukey rule to exclude outliers in target
   iqr_multiplier: 1.5  # Multiplier for IQR to define outliers
   sub_sampling:
-    fraction: 1  # Fraction of data to include (set to 0.1 for beta diversity)
+    fraction: 0.1  # Fraction of data to include (set to 0.1 for beta diversity)
     level: sites  # [sites, studies]
     min_k_per_study: 300  # For beta: min target number of sites per study
     max_k_per_study: 3000  # For beta: max target number of sites per study
@@ -61,7 +61,7 @@ run_settings:
 
   # Model type and covariates to be used
   model_type: glmm  # [bayesian, glmm]
-  model_variables: glmm_alpha  # See below for model configurations
+  model_variables: glmm_beta  # See below for model configurations
   # GLMM: glmm_alpha, glmm_beta
   # BHM: bayesian_alpha, bayesian_beta
 
@@ -115,8 +115,8 @@ run_settings:
           beta: 12  # alpha: 12, beta: 20
 
     sampler:  # Refer to PyMC documentation for all settings
-      draws: 500
-      tune: 500
+      draws: 1000
+      tune: 1000
       cores: 4
       chains: 4
       target_accept: 0.95
