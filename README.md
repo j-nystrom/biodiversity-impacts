@@ -218,7 +218,7 @@ The tree below reflects the paths currently referenced in:
     │   ├── americas/groads-v1-americas.shp
     │   ├── asia/groads-v1-asia.shp
     │   ├── europe/groads-v1-europe.shp
-    │   └── oceania/groads-v1-oceania.shp
+    │   └── oceania/groads-v1-oceania.shp (Note: Source consists of two files that need merging)
     ├── WorldClim/
     │   └── Bioclimatic/
     │       ├── wc2.1_30s_bio_1.tif
@@ -235,8 +235,6 @@ The tree below reflects the paths currently referenced in:
     │       ├── slope_1KMmn_GMTEDmd.tif
     │       ├── roughness_1KMmn_GMTEDmd.tif
     │       └── tri_1KMmn_GMTEDmd.tif
-    ├── ESA/
-    │   └── lulc_esa_<year>.tif
     ├── output/
     │   ├── predicts/
     │   │   └── all_predicts.parquet
@@ -276,7 +274,5 @@ The tree below reflects the paths currently referenced in:
     │   ├── beta_diversity/
     │   │   ├── beta_all_species.parquet
     │   │   └── beta_custom.parquet
-    │   └── land_use_fractions/
-    │       └── lu_fractions_<...>.parquet
     └── runs/
 ```
