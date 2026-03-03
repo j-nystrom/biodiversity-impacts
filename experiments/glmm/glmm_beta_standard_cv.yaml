@@ -1,0 +1,21 @@
+glmm_beta_standard_cv:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.10
+      taxonomic:
+        resolution: All_species
+
+    run_settings:
+      model_type: glmm
+      model_variables: glmm_beta
+      glmm:
+        study_effects:
+          type: slope
+        block_effects:
+          type: intercept
+
+    cv_settings:
+      split_level: site

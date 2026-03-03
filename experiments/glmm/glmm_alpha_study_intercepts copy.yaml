@@ -1,0 +1,18 @@
+glmm_alpha_study_block_intercepts:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+
+    run_settings:
+      model_type: glmm
+      model_variables: glmm_alpha
+      glmm:
+        study_effects:
+          type: intercept
+        block_effects:
+          type: intercept

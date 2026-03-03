@@ -1,10 +1,8 @@
 # Biodiversity impacts modeling pipeline
 
-This repository contains the data processing and modeling pipeline used in the manuscript:
+This repository contains the data processing and modeling pipeline used in the manuscript: **_Actionable biodiversity monitoring hinges on representative data and model design_.** (Nyström et al, 2026). Preprint DOI: https://doi.org/10.32942/X2507T.
 
-**Nyström et al. - _Actionable biodiversity monitoring hinges on representative data and model design_.**
-
-The study evaluates how well pressure-response biodiversity models generalize from observed data to new sites and studies. Using 25,987 species inventories from 681 studies, the pipeline compares:
+The study evaluates how well pressure-response biodiversity models generalize from observed data to new sites and studies. Using 25,987 species inventories from 681 studies, the pipeline compares two different model structures, implemented as:
 
 - a generalized linear mixed model (GLMM; `glmmTMB` backend in R), and
 - a biogeographic-taxonomic Bayesian hierarchical model (PyMC).
@@ -185,3 +183,100 @@ If processed diversity datasets already exist under `data/output/`, the shortest
 3. inspect `data/runs/<run_folder>/key_output/`
 
 This reproduces core predictive outputs and metrics without rerunning the full raw geodata processing pipeline.
+
+## Full directory tree
+
+The tree below reflects the paths currently referenced in:
+
+- `core/data/data_configs.yaml`
+- `core/features/feature_configs.yaml`
+- `core/utils/util_configs.yaml`
+
+```text
+<project_parent>/
+├── biodiversity-impacts/
+│   ├── core/
+│   ├── experiments/
+│   ├── notebooks/
+│   ├── env.yaml
+│   ├── setup_conda_path.sh
+│   └── setup_conda_path.bat
+└── data/
+    ├── PREDICTS/
+    │   ├── PREDICTS_2016/
+    │   │   └── data.csv
+    │   └── PREDICTS_2022/
+    │       └── data.csv
+    ├── GPW/
+    │   ├── gpw_v4_2000_30_sec.tif
+    │   ├── gpw_v4_2005_30_sec.tif
+    │   ├── gpw_v4_2010_30_sec.tif
+    │   ├── gpw_v4_2015_30_sec.tif
+    │   └── gpw_v4_2020_30_sec.tif
+    ├── gROADS/
+    │   ├── africa/groads-v1-africa.shp
+    │   ├── americas/groads-v1-americas.shp
+    │   ├── asia/groads-v1-asia.shp
+    │   ├── europe/groads-v1-europe.shp
+    │   └── oceania/groads-v1-oceania.shp
+    ├── WorldClim/
+    │   └── Bioclimatic/
+    │       ├── wc2.1_30s_bio_1.tif
+    │       ├── wc2.1_30s_bio_4.tif
+    │       ├── wc2.1_30s_bio_5.tif
+    │       ├── wc2.1_30s_bio_6.tif
+    │       ├── wc2.1_30s_bio_12.tif
+    │       ├── wc2.1_30s_bio_13.tif
+    │       ├── wc2.1_30s_bio_14.tif
+    │       └── wc2.1_30s_bio_15.tif
+    ├── EarthEnv/
+    │   └── topography/
+    │       ├── elevation_1KMmn_GMTEDmd.tif
+    │       ├── slope_1KMmn_GMTEDmd.tif
+    │       ├── roughness_1KMmn_GMTEDmd.tif
+    │       └── tri_1KMmn_GMTEDmd.tif
+    ├── ESA/
+    │   └── lulc_esa_<year>.tif
+    ├── output/
+    │   ├── predicts/
+    │   │   └── all_predicts.parquet
+    │   ├── site_coords/
+    │   │   └── all_site_coords.shp
+    │   ├── buff_polygons/
+    │   │   ├── glob_buff_polygons_1km.shp
+    │   │   ├── glob_buff_polygons_5km.shp
+    │   │   ├── glob_buff_polygons_10km.shp
+    │   │   ├── glob_buff_polygons_50km.shp
+    │   │   ├── utm_buff_polygons_1km.shp
+    │   │   ├── utm_buff_polygons_5km.shp
+    │   │   ├── utm_buff_polygons_10km.shp
+    │   │   └── utm_buff_polygons_50km.shp
+    │   ├── pop_density/
+    │   │   ├── pop_density_1km.parquet
+    │   │   ├── pop_density_10km.parquet
+    │   │   └── pop_density_50km.parquet
+    │   ├── road_density/
+    │   │   ├── road_density_oceania.parquet
+    │   │   ├── road_density_europe.parquet
+    │   │   ├── road_density_africa.parquet
+    │   │   ├── road_density_asia.parquet
+    │   │   └── road_density_americas.parquet
+    │   ├── environment/
+    │   │   ├── bioclimatic_1km.parquet
+    │   │   ├── bioclimatic_10km.parquet
+    │   │   ├── topography_1km.parquet
+    │   │   └── topography_10km.parquet
+    │   ├── combined/
+    │   │   └── combined_data.parquet
+    │   ├── features/
+    │   │   └── feature_data.parquet
+    │   ├── alpha_diversity/
+    │   │   ├── alpha_all_species.parquet
+    │   │   └── alpha_custom.parquet
+    │   ├── beta_diversity/
+    │   │   ├── beta_all_species.parquet
+    │   │   └── beta_custom.parquet
+    │   └── land_use_fractions/
+    │       └── lu_fractions_<...>.parquet
+    └── runs/
+```
