@@ -1,0 +1,23 @@
+glmm_beta_standard_cv_25:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      min_sites_per_study: 25
+      min_ref_sites_for_beta: 5
+      sub_sampling:
+        fraction: 0.10
+      taxonomic:
+        resolution: All_species
+
+    run_settings:
+      model_type: glmm
+      model_variables: glmm_beta
+      glmm:
+        study_effects:
+          type: slope
+        block_effects:
+          type: intercept
+
+    cv_settings:
+      split_level: site
