@@ -106,7 +106,19 @@ Path definitions are in:
 
 To train and cross-validate models, only the files in the `output/` subdirectory are needed. The rest of the folders contain the source data for data processing and feature engineering.
 
+### Model input/output data package
+
+DOI: [10.17044/scilifelab.31661575](https://doi.org/10.17044/scilifelab.31661575)
+
+This data package contains all inputs required to run the models used in the preprint *Actionable biodiversity monitoring hinges on representative data and model design*. These files are the outputs from the data processing and feature engineering steps of the pipeline, stored in `output/`. It also contains the outputs of all models analyzed in the preprint, stored in `saved_runs/`.
+
 ## Pipeline structure (DAGs and tasks)
+
+In this project, a DAG (Directed Acyclic Graph) is the definition of one
+workflow: an ordered set of tasks that run in sequence without loops. Each DAG
+in `core/dags/dags.py` specifies which task classes to execute for a given
+pipeline step (for example preprocessing, feature generation, training, or
+cross-validation).
 
 Entry point: `core/dags/dags.py`
 
