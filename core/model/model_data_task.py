@@ -32,6 +32,31 @@ feature_configs = Box.from_yaml(filename=feature_config_path)
 logger = create_logger(__name__)
 
 
+def get_ecological_effects_settings(model_run_settings: Box) -> dict[str, Any]:
+    """Return ecological hierarchy settings with legacy config support."""
+    ecological_effects = model_run_settings.get("ecological_effects", {})
+    raw_hierarchy = ecological_effects.get(
+        "hierarchy",
+        model_run_settings.get("hierarchy", {}),
+    )
+    hierarchy = {
+        level: list(raw_hierarchy.get(level, []))
+        for level in ["level_1", "level_2", "level_3"]
+    }
+
+    return {
+        "rolled_up_predictions": ecological_effects.get(
+            "rolled_up_predictions",
+            model_run_settings.get("rolled_up_predictions", False),
+        ),
+        "min_studies_per_group": ecological_effects.get(
+            "min_studies_per_group",
+            model_run_settings.get("min_studies_per_group", 1),
+        ),
+        "hierarchy": hierarchy,
+    }
+
+
 class ModelDataTask:
     """
     Task to prepare data in a format suitable for model training or cross-
@@ -142,13 +167,14 @@ class ModelDataTask:
 
         if self.model_type == "bayesian":  # To create mapping for the hierarchy
             model_run_settings = configs.run_settings[self.model_type]
-            self.rolled_up_predictions: bool = model_run_settings[
-                "rolled_up_predictions"
-            ]
-            self.min_studies_per_group: int = model_run_settings[
-                "min_studies_per_group"
-            ]
-            self.hierarchy: dict[str, list[str]] = model_run_settings["hierarchy"]
+            ecological_effects = get_ecological_effects_settings(model_run_settings)
+            self.rolled_up_predictions: bool = bool(
+                ecological_effects["rolled_up_predictions"]
+            )
+            self.min_studies_per_group: int = int(
+                ecological_effects["min_studies_per_group"]
+            )
+            self.hierarchy: dict[str, list[str]] = ecological_effects["hierarchy"]
 
         # If running cross-validation
         if self.mode == "crossval":

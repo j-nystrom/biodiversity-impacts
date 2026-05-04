@@ -169,8 +169,16 @@ class GeneralHierarchicalModel:
                 y_cond_linear = y_cond_linear + control_linear
                 y_intercept_linear = y_intercept_linear + control_intercept_linear
 
-            sigma_y = pm.Flat("sigma_y") if self.likelihood == "gaussian" else None
-            sigma_raw = pm.Flat("sigma_raw") if self.likelihood == "beta" else None
+            if self.likelihood == "gaussian":
+                sigma_y = pm.HalfNormal("sigma_y", sigma=self.priors["sigma_y_sd"])
+                sigma_raw = None
+            else:
+                sigma_y = None
+                sigma_raw = pm.Beta(
+                    "sigma_raw",
+                    alpha=self.priors["beta_likelihood"]["alpha"],
+                    beta=self.priors["beta_likelihood"]["beta"],
+                )
 
             add_likelihood_outputs(
                 likelihood=self.likelihood,
@@ -597,23 +605,22 @@ class GeneralHierarchicalModel:
         self,
         model_data: dict[str, Any],
     ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
-        """Add sampled study controls to a prediction graph when requested."""
+        """Add sampled study/block controls to a prediction graph when requested."""
         components = self._prediction_components()
         y_template = pt.as_tensor_variable(model_data["y_obs"])
         control_linear = pt.zeros_like(y_template)
         control_intercept = pt.zeros_like(y_template)
-
-        if components.get("study_intercept", False):
-            gamma_study = pm.Flat("gamma_study", dims="study_names")
-            study_intercept = gamma_study[model_data["study_idx"]]
-            control_linear = control_linear + study_intercept
-            control_intercept = control_intercept + study_intercept
 
         if components.get("block_intercept", False):
             gamma_block = pm.Flat("gamma_block", dims="block_names")
             block_intercept = gamma_block[model_data["block_idx"]]
             control_linear = control_linear + block_intercept
             control_intercept = control_intercept + block_intercept
+        elif components.get("study_intercept", False):
+            gamma_study = pm.Flat("gamma_study", dims="study_names")
+            study_intercept = gamma_study[model_data["study_idx"]]
+            control_linear = control_linear + study_intercept
+            control_intercept = control_intercept + study_intercept
 
         if components.get("study_slopes", False):
             delta_study_slope = pm.Flat(
@@ -652,8 +659,9 @@ class GeneralHierarchicalModel:
                 beta=priors["beta_likelihood"]["beta"],
             )
             y_cond = clip(invlogit(y_cond_linear), self.eps, 1 - self.eps)
+            sigma_fraction = clip(sigma_raw, self.eps, 1 - self.eps)
             sigma_y = pm.Deterministic(
-                "sigma_y", sigma_raw * pt.sqrt(y_cond * (1 - y_cond))
+                "sigma_y", sigma_fraction * pt.sqrt(y_cond * (1 - y_cond))
             )
 
         return sigma_y
@@ -702,8 +710,12 @@ def add_likelihood_outputs(
 
         # For posterior predictive / predictions, compute sigma_y from sigma_raw
         if sigma_y is None:
+            if sigma_raw is None:
+                raise ValueError("Beta likelihood requires sigma_raw or sigma_y.")
+            sigma_fraction = clip(sigma_raw, eps, 1 - eps)
+            sigma_name = "sigma_y" if observed is not None else "sigma_y_pred"
             sigma_y = pm.Deterministic(
-                "sigma_y", sigma_raw * pt.sqrt(y_cond * (1 - y_cond))
+                sigma_name, sigma_fraction * pt.sqrt(y_cond * (1 - y_cond))
             )
 
         # For posterior predictive / predictions, observed is not provided
@@ -849,6 +861,7 @@ def rolled_up_prediction_model(
         "hierarchical_levels"
     ]
     likelihood = settings["likelihood"]
+    priors = settings["priors"][likelihood]
     eps = epsilon
 
     def _update_coords_from_trace(
@@ -972,8 +985,16 @@ def rolled_up_prediction_model(
             )
 
         # Data variance placeholders, depending on likelihood
-        sigma_y = pm.Flat("sigma_y") if likelihood == "gaussian" else None
-        sigma_raw = pm.Flat("sigma_raw") if likelihood == "beta" else None
+        if likelihood == "gaussian":
+            sigma_y = pm.HalfNormal("sigma_y", sigma=priors["sigma_y_sd"])
+            sigma_raw = None
+        else:
+            sigma_y = None
+            sigma_raw = pm.Beta(
+                "sigma_raw",
+                alpha=priors["beta_likelihood"]["alpha"],
+                beta=priors["beta_likelihood"]["beta"],
+            )
 
         add_likelihood_outputs(
             likelihood=likelihood,

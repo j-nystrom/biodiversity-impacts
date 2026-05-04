@@ -931,6 +931,7 @@ class BayesianHierarchicalModel:
             raise ValueError(f"Unsupported prediction mode: {mode}")
 
         self.validate_prediction_setup(prediction_data, mode)
+        self.validate_prediction_trace_parameters()
         self.pred_model = self.model.build_prediction_model(
             model_data=prediction_data,
         )
@@ -944,6 +945,43 @@ class BayesianHierarchicalModel:
             )
 
         return prediction_trace
+
+    def validate_prediction_trace_parameters(self) -> None:
+        """Validate posterior parameters that are required by prediction models."""
+        posterior_vars = set(self.trace.posterior.data_vars)
+        likelihood = self.model_settings["likelihood"]
+
+        if likelihood == "beta":
+            if "sigma_raw" not in posterior_vars:
+                raise ValueError(
+                    "Posterior trace is missing sigma_raw, which is required for "
+                    "Beta posterior predictive sampling."
+                )
+
+            sigma_raw = np.asarray(self.trace.posterior["sigma_raw"].values)
+            if not np.isfinite(sigma_raw).all():
+                raise ValueError("Posterior sigma_raw contains non-finite values.")
+
+            sigma_min = float(np.min(sigma_raw))
+            sigma_max = float(np.max(sigma_raw))
+            if sigma_min < -1e-8 or sigma_max > 1 + 1e-8:
+                raise ValueError(
+                    "Posterior sigma_raw is outside the valid Beta scale range "
+                    f"[0, 1]: min={sigma_min:.6g}, max={sigma_max:.6g}."
+                )
+            if sigma_min <= 0 or sigma_max >= 1:
+                self.logger.warning(
+                    "Posterior sigma_raw reached the Beta scale boundary "
+                    f"(min={sigma_min:.6g}, max={sigma_max:.6g}); prediction "
+                    "will clip the scale fraction inside the open interval."
+                )
+
+        elif likelihood == "gaussian":
+            if "sigma_y" not in posterior_vars:
+                raise ValueError(
+                    "Posterior trace is missing sigma_y, which is required for "
+                    "Gaussian posterior predictive sampling."
+                )
 
     def validate_prediction_setup(
         self,
@@ -971,6 +1009,11 @@ class BayesianHierarchicalModel:
             + f"study_slopes={components['study_slopes']}, "
             + f"block_intercept={components['block_intercept']}."
         )
+        if components["study_intercept"] and components["block_intercept"]:
+            self.logger.info(
+                "Prediction uses SSB block intercepts as nested study+block "
+                "intercepts; study intercepts are not added a second time."
+            )
 
         if mode == "test":
             uses_controls = any(

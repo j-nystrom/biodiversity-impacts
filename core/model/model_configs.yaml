@@ -91,11 +91,11 @@ run_settings:
     training_components:  # Parameters fitted in the training model
       ecological: True
       study_intercept: True
-      study_slopes: False
-      block_intercept: True
+      study_slopes: True
+      block_intercept: False
     prediction_components:  # Parameters used when producing prediction outputs
       ecological: True
-      study_intercept: False
+      study_intercept: True
       study_slopes: False
       block_intercept: False
 
@@ -129,8 +129,8 @@ run_settings:
         group_prior_sd_beta_level_1: 0.10
         group_prior_sd_beta_level_2: 0.05
         group_prior_sd_beta_level_3: 0.05
-        random_intercept_sd: 0.10
-        random_slope_sd: 0.05
+        random_intercept_sd: 0.10  # Study and block intercepts
+        random_slope_sd: 0.05  # Study slopes
         sigma_y_sd: 0.20
 
       beta:
