@@ -44,8 +44,7 @@ class BaseModelTask:
             run_folder_path: Path to folder where all run outputs are stored.
             mode: Either 'training' or 'crossval'.
             random_seed: Random seed for model reproducibility.
-            epsilon: Small value to prevent numerical issues in models, e.g.
-                when using beta likelihood.
+            epsilon: Small value to prevent numerical issues in models.
 
         Config settings used by all models and modes
             - diversity_type: Diversity metric to be used ('alpha' or 'beta').
@@ -103,7 +102,7 @@ class BaseModelTask:
             self.save_predictive_distributions: bool = self.model_settings[
                 "save_predictive_distributions"
             ]
-            if self.model_settings["rolled_up_predictions"]:
+            if self.uses_rolled_up_predictions():
                 self.rolled_up_mapping_path = os.path.join(
                     run_folder_path, "rolled_up_hierarchy_mapping.json"
                 )
@@ -127,7 +126,7 @@ class BaseModelTask:
             validate_input_files(file_paths=[self.hierarchy_mapping_path])
             with open(self.hierarchy_mapping_path) as f:
                 self.hierarchy_mapping = json.load(f)
-            if self.model_settings["rolled_up_predictions"]:
+            if self.uses_rolled_up_predictions():
                 validate_input_files(file_paths=[self.rolled_up_mapping_path])
                 with open(self.rolled_up_mapping_path) as f:
                     self.rolled_up_mapping = json.load(f)
@@ -169,7 +168,7 @@ class BaseModelTask:
             model_init_kwargs["save_predictive_distributions"] = (
                 self.save_predictive_distributions
             )
-            if self.model_settings["rolled_up_predictions"]:
+            if self.uses_rolled_up_predictions():
                 model_init_kwargs["rolled_up_mapping"] = self.rolled_up_mapping
             if self.taxonomic_resolution != "All_species":
                 model_init_kwargs["taxon_name_to_idx"] = self.taxon_name_to_idx
@@ -178,6 +177,16 @@ class BaseModelTask:
             model_init_kwargs["run_folder_path"] = self.run_folder_path
 
         return model_classes[self.model_type](**model_init_kwargs)
+
+    def uses_rolled_up_predictions(self) -> bool:
+        """Return legacy rolled-up prediction switch for Bayesian models."""
+        ecological_effects = self.model_settings.get("ecological_effects", {})
+        return bool(
+            ecological_effects.get(
+                "rolled_up_predictions",
+                self.model_settings.get("rolled_up_predictions", False),
+            )
+        )
 
     def save_outputs(
         self,
@@ -250,15 +259,24 @@ class ModelTrainingTask(BaseModelTask):
         # Initialize model, prepare data, and train it
         logger.info("Preparing model data and training the model.")
         model = self.initialize_model()
-        train_data, _ = model.prepare_data(df_train, df_train)
-        model.fit(train_data)
+        if isinstance(model, BayesianHierarchicalModel):
+            bayesian_train_data, _ = model.prepare_data(df_train)
+            model.fit(bayesian_train_data)
 
-        # Make predictions on in-sample data and evaluate performance
-        logger.info("Making predictions and evaluating model performance.")
-        if self.model_type == "bayesian":
-            df_pred, df_pred_distr = model.predict(train_data, pred_mode="train")
+            # Make predictions on in-sample data and evaluate performance
+            logger.info("Making predictions and evaluating model performance.")
+            df_pred, df_pred_distr = model.predict(
+                bayesian_train_data, pred_mode="train"
+            )
+            train_data_to_save: Any = bayesian_train_data
         else:
-            df_pred = model.predict(train_data, pred_mode="train")
+            glmm_train_data, _ = model.prepare_data(df_train, df_train)
+            model.fit(glmm_train_data)
+
+            # Make predictions on in-sample data and evaluate performance
+            logger.info("Making predictions and evaluating model performance.")
+            df_pred = model.predict(glmm_train_data, pred_mode="train")
+            train_data_to_save = glmm_train_data
 
         pred_metrics = calculate_performance_metrics(
             df_pred,
@@ -288,7 +306,7 @@ class ModelTrainingTask(BaseModelTask):
             os.path.join(additional_output_dir, "train_dataframe.parquet")
         )
         self.save_outputs(
-            outputs=[{"train_data": train_data}],
+            outputs=[{"train_data": train_data_to_save}],
             output_paths=[os.path.join(additional_output_dir, "train_model_data.pkl")],
             save_config=False,
         )
@@ -414,12 +432,14 @@ class CrossValidationTask(BaseModelTask):
                 model.sampling_seed = fold_seed
             if hasattr(model, "random_seed"):
                 model.random_seed = fold_seed
-            train_data, test_data = model.prepare_data(df_train, df_test)
-            model.fit(train_data)
 
             # Evaluate on train and test
             logger.info("Making predictions and evaluating model performance.")
-            if self.model_type == "bayesian":
+            if isinstance(model, BayesianHierarchicalModel):
+                train_data, test_data = model.prepare_data(df_train, df_test)
+                model.fit(train_data)
+                if test_data is None:
+                    raise ValueError("Bayesian cross-validation test data is missing.")
                 df_pred_train, df_pred_train_distr = model.predict(
                     train_data, pred_mode="train"
                 )
@@ -427,6 +447,8 @@ class CrossValidationTask(BaseModelTask):
                     test_data, pred_mode="test"
                 )
             else:
+                train_data, test_data = model.prepare_data(df_train, df_test)
+                model.fit(train_data)
                 df_pred_train = model.predict(train_data, pred_mode="train")
                 df_pred_test = model.predict(test_data, pred_mode="test")
 
