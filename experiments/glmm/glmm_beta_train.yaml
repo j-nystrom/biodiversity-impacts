@@ -1,0 +1,18 @@
+glmm_beta_train:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.10
+      taxonomic:
+        resolution: All_species
+
+    run_settings:
+      model_type: glmm
+      model_variables: glmm_beta
+      glmm:
+        study_effects:
+          type: slope
+        block_effects:
+          type: intercept

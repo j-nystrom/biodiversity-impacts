@@ -1,0 +1,35 @@
+bhm_beta_cross_study:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.1
+      taxonomic:
+        resolution: Custom
+
+    run_settings:
+      model_type: bayesian
+      model_variables: bayesian_beta
+      bayesian:
+        priors:
+          group_size_shrinkage_scaling: log
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.25
+            group_prior_sd_alpha: 0.15
+            hyperprior_sd_beta: 0.15
+            group_prior_sd_beta_level_1: 0.12
+            group_prior_sd_beta_level_2: 0.10
+            group_prior_sd_beta_level_3: 0.05
+            random_intercept_sd: 0.10
+            beta_likelihood:
+              alpha: 2
+              beta: 20
+        sampler:
+          draws: 1000
+          tune: 1000
+        rolled_up_predictions: True
+
+    cv_settings:
+      split_level: study

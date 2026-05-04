@@ -1,0 +1,21 @@
+glmm_alpha_cross_study:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+
+    run_settings:
+      model_type: glmm
+      model_variables: glmm_alpha
+      glmm:
+        study_effects:
+          type: slope
+        block_effects:
+          type: intercept
+
+    cv_settings:
+      split_level: study

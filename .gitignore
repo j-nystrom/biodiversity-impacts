@@ -1,7 +1,10 @@
 core/archive/
 notebooks/not_shared/
 notebooks/archive/
-experiments/
+experiments/UPPMAX_COMMANDS.md
+experiments/BASH_COMMANDS.md
+experiments/submit_job.sh
+experiments/__pycache__/
 
 __pycache__/
 *.pyc
