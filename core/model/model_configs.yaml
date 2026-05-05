@@ -114,8 +114,10 @@ run_settings:
         - Pasture_Light use
         - Pasture_Intense use
         - Urban_All uses
-        - Pop_density_10km_log
-        - Road_density_10km_log
+        - Pop_density_1km_log
+        - Pop_density_50km_log
+        - Road_density_1km_log
+        - Road_density_50km_log
 
     likelihood: beta  # [gaussian, beta]
     priors:
@@ -202,8 +204,10 @@ model_variables:
       - Pasture_Intense use
       - Urban_All uses
     continuous_vars:
-      - Pop_density_10km_log
-      - Road_density_10km_log
+      - Pop_density_1km_log
+      - Pop_density_50km_log
+      - Road_density_1km_log
+      - Road_density_50km_log
       - Annual_mean_temp_1km
       - Temp_seasonality_1km
       - Annual_precip_1km
