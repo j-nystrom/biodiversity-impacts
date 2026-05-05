@@ -79,7 +79,7 @@ run_settings:
 
     hierarchical_levels: 2 # Number of hierarchical levels: [1, 2, 3]
     varying_slope_level: 2  # Most granular level at which varying slopes are fitted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  hich varying slopes are estimated
-    rolled_up_predictions: True  # Predictions use higher level params for small groups
+    rolled_up_predictions: False  # Predictions use higher level params for small groups
     min_studies_per_group: 5  # Threshold for rolling up small groups to the next level
     hierarchy:  # Columns that define hierarchy; levels below the number above ignored
       level_1: [Biome, Custom_taxonomic_group]  # e.g. [Biome, Realm]
@@ -115,8 +115,8 @@ run_settings:
           beta: 12  # alpha: 12, beta: 20
 
     sampler:  # Refer to PyMC documentation for all settings
-      draws: 500
-      tune: 500
+      draws: 10
+      tune: 10
       cores: 4
       chains: 4
       target_accept: 0.95
