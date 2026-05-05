@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 from datetime import timedelta
 from typing import Any
@@ -68,6 +69,8 @@ class BayesianHierarchicalModel:
         self.taxon_name_to_idx: dict[str, int] = taxon_name_to_idx
         self.hierarchy_mapping: dict[str, Any] = hierarchy_mapping
         self.sampler_settings: dict[str, Any] = self.model_settings["sampler"]
+        self.prior_predictive: az.InferenceData | None = None
+        self.progressbar: bool = sys.stderr.isatty()
         self.save_predictive_distributions: bool = self.model_settings[
             "save_predictive_distributions"
         ]
@@ -117,6 +120,7 @@ class BayesianHierarchicalModel:
             self.prior_predictive = pm.sample_prior_predictive(
                 draws=1000,
                 model=self.model_instance,
+                progressbar=self.progressbar,
                 random_seed=self.sampling_seed,
             )
             plot_prior_distribution(
@@ -357,6 +361,7 @@ class BayesianHierarchicalModel:
                 chains=self.sampler_settings["chains"],
                 target_accept=self.sampler_settings["target_accept"],
                 nuts_sampler=self.sampler_settings["nuts_sampler"],
+                progressbar=self.progressbar,
                 random_seed=self.sampling_seed,
             )
 
@@ -445,6 +450,7 @@ class BayesianHierarchicalModel:
                         var_names=["y_like", "y_cond", "y_intercept"],
                         predictions=False,
                         extend_inferencedata=True,
+                        progressbar=self.progressbar,
                         random_seed=self.sampling_seed + 1,
                     )
             elif mode == "test":
@@ -454,6 +460,7 @@ class BayesianHierarchicalModel:
                         var_names=["y_pred", "y_cond", "y_intercept"],
                         predictions=True,
                         extend_inferencedata=True,
+                        progressbar=self.progressbar,
                         random_seed=self.sampling_seed + 1,
                     )
         else:
@@ -465,6 +472,7 @@ class BayesianHierarchicalModel:
                         var_names=["y_like", "y_cond", "y_intercept"],
                         predictions=False,
                         extend_inferencedata=True,
+                        progressbar=self.progressbar,
                         random_seed=self.sampling_seed + 1,
                     )
             elif mode == "test":
@@ -477,6 +485,7 @@ class BayesianHierarchicalModel:
                         var_names=["y_pred", "y_cond", "y_intercept"],
                         predictions=True,
                         extend_inferencedata=True,
+                        progressbar=self.progressbar,
                         random_seed=self.sampling_seed + 1,
                     )
 
