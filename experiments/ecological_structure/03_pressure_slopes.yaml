@@ -1,0 +1,31 @@
+alpha_ecostruct_03_pressure_slopes_with_effects:
+  dag: training
+  overrides:
+    run_settings:
+      bayesian:
+        training_components:
+          ecological: True
+          study_intercept: True
+          study_slopes: True
+          block_intercept: True
+        prediction_components:
+          ecological: True
+          study_intercept: True
+          study_slopes: True
+          block_intercept: True
+
+alpha_ecostruct_03_pressure_slopes_fit_only_proxy:
+  dag: training
+  overrides:
+    run_settings:
+      bayesian:
+        training_components:
+          ecological: True
+          study_intercept: True
+          study_slopes: True
+          block_intercept: True
+        prediction_components:
+          ecological: True
+          study_intercept: False
+          study_slopes: False
+          block_intercept: False

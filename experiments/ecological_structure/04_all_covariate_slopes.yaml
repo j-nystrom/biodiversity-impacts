@@ -1,0 +1,79 @@
+alpha_ecostruct_04_all_covariate_slopes_with_effects:
+  dag: training
+  overrides:
+    run_settings:
+      bayesian:
+        training_components:
+          ecological: True
+          study_intercept: True
+          study_slopes: True
+          block_intercept: True
+        prediction_components:
+          ecological: True
+          study_intercept: True
+          study_slopes: True
+          block_intercept: True
+        study_effects:
+          slope_terms:
+            - Primary vegetation_Light use
+            - Primary vegetation_Intense use
+            - Secondary vegetation_Minimal use
+            - Secondary vegetation_Light use
+            - Secondary vegetation_Intense use
+            - Cropland_Minimal use
+            - Cropland_Light use
+            - Cropland_Intense use
+            - Pasture_Minimal use
+            - Pasture_Light use
+            - Pasture_Intense use
+            - Urban_All uses
+            - Pop_density_10km_log
+            - Road_density_10km_log
+            - Annual_mean_temp_1km
+            - Temp_seasonality_1km
+            - Annual_precip_1km
+            - Precip_seasonality_1km
+            - Elevation_1km
+            - Elevation_10km
+            - Terrain_roughness_1km
+            - Terrain_roughness_10km
+
+alpha_ecostruct_04_all_covariate_slopes_fit_only_proxy:
+  dag: training
+  overrides:
+    run_settings:
+      bayesian:
+        training_components:
+          ecological: True
+          study_intercept: True
+          study_slopes: True
+          block_intercept: True
+        prediction_components:
+          ecological: True
+          study_intercept: False
+          study_slopes: False
+          block_intercept: False
+        study_effects:
+          slope_terms:
+            - Primary vegetation_Light use
+            - Primary vegetation_Intense use
+            - Secondary vegetation_Minimal use
+            - Secondary vegetation_Light use
+            - Secondary vegetation_Intense use
+            - Cropland_Minimal use
+            - Cropland_Light use
+            - Cropland_Intense use
+            - Pasture_Minimal use
+            - Pasture_Light use
+            - Pasture_Intense use
+            - Urban_All uses
+            - Pop_density_10km_log
+            - Road_density_10km_log
+            - Annual_mean_temp_1km
+            - Temp_seasonality_1km
+            - Annual_precip_1km
+            - Precip_seasonality_1km
+            - Elevation_1km
+            - Elevation_10km
+            - Terrain_roughness_1km
+            - Terrain_roughness_10km
