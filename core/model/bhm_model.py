@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 from datetime import timedelta
 from typing import Any
@@ -50,6 +51,7 @@ class BayesianHierarchicalModel:
         self.model_vars = model_vars
         self.logger = logger
         self.prior_predictive: az.InferenceData | None = None
+        self.progressbar: bool = sys.stderr.isatty()
 
         # Model covariates
         self.response_var = model_vars["response_var"]
@@ -621,6 +623,7 @@ class BayesianHierarchicalModel:
             self.prior_predictive = pm.sample_prior_predictive(
                 draws=1000,
                 model=self.model_instance,
+                progressbar=self.progressbar,
                 random_seed=self.sampling_seed,
             )
             plot_prior_distribution(
@@ -856,6 +859,7 @@ class BayesianHierarchicalModel:
                 chains=self.sampler_settings["chains"],
                 target_accept=self.sampler_settings["target_accept"],
                 nuts_sampler=self.sampler_settings["nuts_sampler"],
+                progressbar=self.progressbar,
                 random_seed=self.sampling_seed,
             )
 
@@ -941,6 +945,7 @@ class BayesianHierarchicalModel:
                 var_names=["y_pred", "y_cond", "y_intercept"],
                 predictions=True,
                 extend_inferencedata=False,
+                progressbar=self.progressbar,
                 random_seed=self.sampling_seed + 1,
             )
 
