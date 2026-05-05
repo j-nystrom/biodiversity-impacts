@@ -115,8 +115,8 @@ run_settings:
           beta: 12  # alpha: 12, beta: 20
 
     sampler:  # Refer to PyMC documentation for all settings
-      draws: 10
-      tune: 10
+      draws: 500
+      tune: 500
       cores: 4
       chains: 4
       target_accept: 0.95
