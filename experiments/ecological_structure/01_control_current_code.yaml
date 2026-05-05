@@ -1,0 +1,13 @@
+alpha_ecostruct_01_control_current_code_with_study_effects:
+  dag: training
+  overrides:
+    run_settings:
+      bayesian:
+        rolled_up_predictions: False
+
+alpha_ecostruct_01_control_current_code_fit_only_proxy:
+  dag: training
+  overrides:
+    run_settings:
+      bayesian:
+        rolled_up_predictions: True
