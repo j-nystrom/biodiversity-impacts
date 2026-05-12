@@ -1,0 +1,9 @@
+alpha_ecostruct_control_standard_cv_fold_index_fixed:
+  dag: crossval
+  overrides:
+    run_settings:
+      bayesian:
+        rolled_up_predictions: True
+
+    cv_settings:
+      split_level: site
