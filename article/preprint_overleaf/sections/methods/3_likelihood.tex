@@ -1,8 +1,0 @@
-
-\subsection*{Data likelihood function}
-
-The GMA and BC distributions are non-symmetric and bounded between 0 and 1, with substantial inflation of zeros and some inflation of ones in the GMA case (\autoref{fig:response_data_distr}. This suggests that a zero-inflated or zero-one-inflated beta distribution would be the most appropriate likelihood function to describe the data \cite{ospina2010}. The beta distribution is 0-1 bounded and can have a more or less symmetrical shape depending on its parameters. However, since our goal was to predict biodiversity on highly aggregated levels, it seemed counterproductive to explicitly model the zero-inflation, as true absences of entire species groups in a given area are unlikely. Further, the inflated ones are scaling artifacts (due to the inter-study normalization) that did not warrant explicit modeling either. We therefore assumed a regular beta likelihood function, with a logit link function, for all models \cite{ferrari2004}. Further information about how this was implemented can be found in the modeling sections below.
-
-\vspace{\baselineskip}
-
-%During initial testing of the BTMs, we compared the results of a regular beta distribution against a Gaussian likelihood, the latter representing a simplified assumption about the data generating process. Although the shapes of the beta posterior distributions were more similar to the observed data, compared to its Gaussian counterpart, the predictive accuracy of the Gaussian models were generally higher. Since the aim of the study was to benchmark predictive performance, and Gaussian models are computationally simpler, with more interpretable model coefficients, we decided to use Gaussian likelihood functions across all models.
