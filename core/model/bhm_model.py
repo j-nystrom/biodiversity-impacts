@@ -75,6 +75,91 @@ class BayesianHierarchicalModel:
         if rolled_up_mapping:
             self.rolled_up_mapping: dict[str, Any] = rolled_up_mapping
 
+    def apply_fold_rollup(
+        self,
+        df: pl.DataFrame,
+        reference_df: pl.DataFrame,
+    ) -> pl.DataFrame:
+        """Assign prediction roll-up levels using reference-data study counts."""
+        if not (hasattr(self, "rolled_up_mapping") and self.rolled_up_mapping):
+            return df
+
+        levels = [
+            level
+            for level in ["level_1", "level_2", "level_3"]
+            if level in self.hierarchy_mapping.get("column_names", {})
+        ]
+        if not levels:
+            return df.with_columns(
+                [
+                    pl.lit("Population").alias("Final_hierarchical_group"),
+                    pl.lit("Population").alias("Final_hierarchical_level"),
+                    pl.lit(1).cast(pl.Int8).alias("Rolled_up"),
+                ]
+            )
+
+        min_studies = int(self.model_settings["min_studies_per_group"])
+        existing_rollup_cols = [
+            col
+            for col in [
+                "Final_hierarchical_group",
+                "Final_hierarchical_level",
+                "Rolled_up",
+            ]
+            if col in df.columns
+        ]
+        if existing_rollup_cols:
+            df = df.drop(existing_rollup_cols)
+        df = df.with_columns(
+            [
+                pl.lit(None, dtype=pl.Utf8).alias("Final_hierarchical_group"),
+                pl.lit(None, dtype=pl.Utf8).alias("Final_hierarchical_level"),
+            ]
+        )
+
+        for level in reversed(levels):
+            label_col = self.hierarchy_mapping["column_names"][level]
+            counts = (
+                reference_df.select([label_col, "SS"])
+                .unique()
+                .group_by(label_col)
+                .agg(pl.col("SS").n_unique().alias("n_studies"))
+            )
+            df = df.join(counts, on=label_col, how="left")
+            mask = pl.col("Final_hierarchical_group").is_null() & (
+                pl.col("n_studies") >= min_studies
+            )
+            df = df.with_columns(
+                [
+                    pl.when(mask)
+                    .then(pl.col(label_col))
+                    .otherwise(pl.col("Final_hierarchical_group"))
+                    .alias("Final_hierarchical_group"),
+                    pl.when(mask)
+                    .then(pl.lit(level))
+                    .otherwise(pl.col("Final_hierarchical_level"))
+                    .alias("Final_hierarchical_level"),
+                ]
+            ).drop("n_studies")
+
+        most_specific = levels[-1]
+        return df.with_columns(
+            [
+                pl.when(pl.col("Final_hierarchical_group").is_null())
+                .then(pl.lit("Population"))
+                .otherwise(pl.col("Final_hierarchical_group"))
+                .alias("Final_hierarchical_group"),
+                pl.when(pl.col("Final_hierarchical_level").is_null())
+                .then(pl.lit("Population"))
+                .otherwise(pl.col("Final_hierarchical_level"))
+                .alias("Final_hierarchical_level"),
+            ]
+        ).with_columns(
+            (pl.col("Final_hierarchical_level") != most_specific)
+            .cast(pl.Int8)
+            .alias("Rolled_up")
+        )
+
     def prepare_data(
         self, df_train: pl.DataFrame, df_test: pl.DataFrame
     ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -88,6 +173,8 @@ class BayesianHierarchicalModel:
             df_test,
             vars_to_standardize=self.continuous_vars + self.interaction_terms,
         )
+        df_train_std = self.apply_fold_rollup(df_train_std, df_train_std)
+        df_test_std = self.apply_fold_rollup(df_test_std, df_train_std)
 
         # Format data for PyMC model
         train_data = self.format_data_for_pymc_model(df_train_std)
