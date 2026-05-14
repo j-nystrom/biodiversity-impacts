@@ -273,17 +273,25 @@ class BayesianHierarchicalModel:
 
         # ----- Control variables during sampling -----
         # Study and block random effects
-        study_names = df.get_column("SS").unique().to_list()
-        study_idx = df.get_column("SS").cast(pl.Categorical).to_physical().to_numpy()
-        block_names = df.get_column("SSB").unique().to_list()
-        block_idx = df.get_column("SSB").cast(pl.Categorical).to_physical().to_numpy()
-        block_to_study_idx = (
-            df.select(["SS", "SSB"])
-            .unique()
-            .get_column("SS")
-            .cast(pl.Categorical)
-            .to_physical()
-            .to_numpy()
+        study_names = sorted(df.get_column("SS").unique().to_list())
+        study_name_to_idx = {study: idx for idx, study in enumerate(study_names)}
+        study_idx = np.array(
+            [study_name_to_idx[study] for study in df.get_column("SS").to_list()],
+            dtype=np.int32,
+        )
+        block_names = sorted(df.get_column("SSB").unique().to_list())
+        block_name_to_idx = {block: idx for idx, block in enumerate(block_names)}
+        block_idx = np.array(
+            [block_name_to_idx[block] for block in df.get_column("SSB").to_list()],
+            dtype=np.int32,
+        )
+        block_pairs = df.select(["SSB", "SS"]).unique().sort("SSB")
+        block_to_study_idx = np.array(
+            [
+                study_name_to_idx[study]
+                for study in block_pairs.get_column("SS").to_list()
+            ],
+            dtype=np.int32,
         )
 
         # Create response variable vector
