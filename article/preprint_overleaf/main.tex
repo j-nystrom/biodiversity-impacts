@@ -1,0 +1,431 @@
+
+\documentclass[a4paper, 11pt]{article}
+
+% Packages --------------------------------
+\usepackage[top=1in, bottom=1in, left=1in, right=1in]{geometry}
+\usepackage[american]{babel} % Language settings
+\usepackage[T1]{fontenc} % Character support
+\usepackage{microtype}
+\usepackage{changepage} % for adjustwidth
+\usepackage[utf8]{inputenc} % Input encoding
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath, amssymb, amsfonts} % Math formatting, symbols, typesetting
+\usepackage{yhmath}
+\usepackage{nicefrac} % compact symbols for 1/2, etc.
+\usepackage{bm} % Bold symbols, like greek letters
+\usepackage{bbm} % more blackboard math symbols
+\usepackage{xurl} % smart URL breaking
+\usepackage{xurl} % smart URL line breaks (loads url automatically)
+\urlstyle{same}  % same font for URLs
+\usepackage[hidelinks]{hyperref}
+\usepackage{parskip} % Blank line between paragraphs
+\parindent0em % No paragraph indentation
+\linespread{1.1} % Line spacing to improve readability
+\usepackage{booktabs} % formatting tables
+\usepackage{caption} % formatting captions
+\usepackage{subcaption} % subcaptions for figures
+\usepackage{etoolbox} % command patching capabilities
+\usepackage{enumerate} % Roman list numbers
+\usepackage[inline]{enumitem}
+\usepackage{appendix}
+\usepackage{titlesec} % section titles
+\usepackage{xcolor,soul}
+\sethlcolor{yellow} % highlight color
+\usepackage{tabularx}
+\usepackage{makecell}
+\usepackage{float}
+\usepackage{xstring}
+\usepackage{csvsimple}
+\usepackage{placeins}
+
+% Preprint line numbers
+\usepackage[mathlines]{lineno}
+\newcommand*\patchAmsMathEnvironmentForLineno[1]{%
+  \expandafter\pretocmd\csname #1\endcsname{\linenomath}{}{}%
+  \expandafter\apptocmd\csname end#1\endcsname{\endlinenomath}{}{}%
+}
+\newcommand*\patchBothAmsMathEnvironmentsForLineno[1]{%
+  \patchAmsMathEnvironmentForLineno{#1}%
+  \patchAmsMathEnvironmentForLineno{#1*}%
+}
+
+\AtBeginDocument{%
+  % Common display environments
+  \patchBothAmsMathEnvironmentsForLineno{equation}%
+  \patchBothAmsMathEnvironmentsForLineno{align}%
+  \patchBothAmsMathEnvironmentsForLineno{gather}%
+  \patchBothAmsMathEnvironmentsForLineno{multline}%
+  \patchBothAmsMathEnvironmentsForLineno{flalign}%
+  \patchBothAmsMathEnvironmentsForLineno{alignat}%
+}
+
+
+% Section headers --------------------------
+% Section format: bold + Large font, left aligned
+\titleformat{\section}[block] % block = normal paragraph-like section
+  {\bfseries\Large} % format applied to the title
+  {} % label (empty = no numbering)
+  {0pt} % separation between label and title body
+  {} % before-code (nothing extra)
+% Spacing before/after section headings
+\titlespacing*{\section} % * = no indent for first paragraph
+  {0pt} % left margin
+  {1.0\baselineskip} % space before heading
+  {0.25\baselineskip} % space after heading
+
+% Subsection headers: bold, normal size, no extra spacing
+\titleformat{\subsection}
+  {\bfseries\normalsize} % format: bold, normal text size
+  {} % label (empty if no numbering)
+  {0pt} % separation between label and title
+  {} % before-code
+
+\titlespacing*{\subsection}
+  {0pt} % left margin
+  {0pt} % space before
+  {0pt} % space after
+
+% Formatting for figures ----------------------
+% Global figure caption style
+% "Fig. 1 | ..." format
+\DeclareCaptionLabelFormat{pipe}{#1~#2 \,|}
+\captionsetup[figure]{
+  font=small,
+  labelfont=bf,
+  labelsep=space, % remove the default period
+  name=Fig.,
+  justification=justified,
+  singlelinecheck=false,
+  skip=20pt,
+  labelformat=pipe,
+}
+
+% Extended data floats ---------------------------
+% --- Extended Data Figures ---
+\newfloat{extendedfigure}{htbp}{loe}
+\floatname{extendedfigure}{Extended Data Fig.}
+\setcounter{extendedfigure}{0}
+
+% Caption setup for extended data figures
+\DeclareCaptionLabelFormat{extendedpipe}{#1~#2 \,|}
+\captionsetup[extendedfigure]{
+  font=small,
+  labelfont=bf,
+  labelsep=space,
+  justification=justified,
+  singlelinecheck=false,
+  skip=20pt,
+  labelformat=extendedpipe,
+  position=bottom
+}
+% Tell hyperref what to call them in \autoref
+\providecommand*{\extendedfigureautorefname}{Extended Data Fig.}
+
+% --- Extended Data Tables ---
+\newfloat{extendedtable}{htbp}{lot}
+\floatname{extendedtable}{Extended Data Table}
+\setcounter{extendedtable}{0}
+
+\captionsetup[extendedtable]{
+  font=small,
+  labelfont=bf,
+  labelsep=space,
+  justification=justified,
+  singlelinecheck=false,
+  skip=20pt,
+  labelformat=extendedpipe,
+}
+% Tell hyperref what to call them in \autoref
+\providecommand*{\extendedtableautorefname}{Extended Data Table}
+\floatstyle{plaintop}
+\restylefloat{extendedtable}
+
+% Make LaTeX more willing to place figures at the top
+\renewcommand{\topfraction}{0.95} % up to 95% of a page can be top floats
+\renewcommand{\textfraction}{0.05} % only 5% text required with floats
+\renewcommand{\floatpagefraction}{0.9} % allow float pages to be 90% full
+\setcounter{topnumber}{3} % allow up to 3 top floats per page
+\setcounter{totalnumber}{4} % allow more floats overall
+
+% In-text references ------------------
+% \Autoref is for the beginning of the sentence
+\let\orgautoref\autoref
+% Extended data figures
+\providecommand*{\extendedfigureautorefname}{Extended Data Fig.}
+% Extended data tables
+\providecommand*{\extendedtableautorefname}{Extended Data Table}
+% \Autoref is for the beginning of the sentence
+\let\orgautoref\autoref
+\providecommand{\Autoref}
+        {\def\equationautorefname{Equation}%
+         \def\figureautorefname{Figure}%
+         \def\extendedfigureautorefname{Extended Data Fig.}%
+         \def\subfigureautorefname{Figure}%
+         \def\sectionautorefname{Section}%
+         \def\subsectionautorefname{Section}%
+         \def\subsubsectionautorefname{Section}%
+         \def\Itemautorefname{Item}%
+         \def\tableautorefname{Table}%
+         \def\extendedtableautorefname{Extended Data Table}%
+         \orgautoref}
+
+% \Autorefs is plural for the beginning of the sentence
+\providecommand{\Autorefs}
+        {\def\equationautorefname{Equations}%
+         \def\figureautorefname{Figures}%
+         \def\extendedfigureautorefname{Extended Data Figs.}%
+         \def\subfigureautorefname{Figures}%
+         \def\sectionautorefname{Sections}%
+         \def\subsectionautorefname{Sections}%
+         \def\subsubsectionautorefname{Sections}%
+         \def\Itemautorefname{Items}%
+         \def\tableautorefname{Tables}%
+         \def\extendedtableautorefname{Extended Data Tables}%
+         \orgautoref}
+
+% \autoref is used inside a sentence
+\renewcommand{\autoref}
+        {\def\equationautorefname{Eq.}%
+         \def\figureautorefname{Fig.}%
+         \def\extendedfigureautorefname{Extended Data Fig.}%
+         \def\subfigureautorefname{Fig.}%
+         \def\sectionautorefname{Section}%
+         \def\subsectionautorefname{Section}%
+         \def\subsubsectionautorefname{Section}%
+         \def\Itemautorefname{item}%
+         \def\tableautorefname{Table}%
+         \def\extendedtableautorefname{Extended Data Table}%
+         \orgautoref}
+
+% \autorefs is plural for inside a sentence
+\providecommand{\autorefs}
+        {\def\equationautorefname{Eqs.}%
+         \def\figureautorefname{Figs.}%
+         \def\extendedfigureautorefname{Extended Data Figs.}%
+         \def\subfigureautorefname{Figs.}%
+         \def\sectionautorefname{Sections}%
+         \def\subsectionautorefname{Sections}%
+         \def\subsubsectionautorefname{Sections}%
+         \def\Itemautorefname{items}%
+         \def\tableautorefname{Tables}%
+         \def\extendedtableautorefname{Extended Data Tables}%
+         \orgautoref}
+
+% Helper to format list of panel letters with commas
+\newcommand{\panelletters}[1]{%
+  \StrSubstitute{#1}{ }{,}% convert spaces to commas
+}
+
+% Single panel
+\newcommand{\figpanel}[2]{\hyperref[#1]{Fig.~\ref*{#1}\panelletters{#2}}}
+\newcommand{\extfigpanel}[2]{\hyperref[#1]{Extended Data Fig.~\ref*{#1}\panelletters{#2}}}
+
+% Multiple panels
+\newcommand{\figpanels}[2]{\hyperref[#1]{Fig.~\ref*{#1}\panelletters{#2}}}
+\newcommand{\extfigpanels}[2]{\hyperref[#1]{Extended Data Fig.~\ref*{#1}\panelletters{#2}}}
+
+% Multiple figures with panels (e.g. "Figs. 4c and 5c")
+\newcommand{\figrefspanels}[4]{%
+  Figs.~\hyperref[#1]{\ref*{#1}#2} and~\hyperref[#3]{\ref*{#3}#4}%
+}
+\newcommand{\extfigrefspanels}[4]{%
+  Extended Data Figs.~\hyperref[#1]{\ref*{#1}#2} and~\hyperref[#3]{\ref*{#3}#4}%
+}
+
+% ---------------------------------------------------------------------
+% Nature-style grouped figure references
+% Handles mixed cases such as (Figs. 2, 4b,c)
+% ---------------------------------------------------------------------
+
+\usepackage{hyperref,xstring}
+
+% Helper: ensures spaces become commas if given space-separated panels
+\newcommand{\panelcomma}[1]{%
+  \StrSubstitute{#1}{ }{,}%
+}
+
+% Single figure or figure with panel letters
+%   \figsingle{fig:main}{-}   → 2
+%   \figsingle{fig:main}{a,b} → 4a,b
+\newcommand{\figsingle}[2]{%
+  \ifthenelse{\equal{#2}{-}}%
+    {\hyperref[#1]{\ref*{#1}}}%
+    {\hyperref[#1]{\ref*{#1}\panelcomma{#2}}}%
+}
+
+% Group several figures together with commas
+% Usage:
+%   (Figs.~\figgroup{{fig:two}{-}, {fig:four}{b,c}})
+% Produces: (Figs. 2, 4b,c)
+\newcommand{\figgroup}[1]{%
+  Figs.~%
+  \renewcommand{\do}[1]{%
+    \expandafter\figsingle##1%
+    \ifnum\do@count<\do@total,~\fi%
+  }%
+  \docsvlist{#1}%
+}
+
+% Minimal helper: prints a suffix only if provided (not empty or "-")
+\newcommand{\figsuffix}[1]{%
+  \if\relax\detokenize{#1}\relax
+    % empty → no suffix
+  \else
+    \if\relax\detokenize{#1-}\relax
+      % literal "-" → no suffix
+    \else
+      #1%
+    \fi
+  \fi
+}
+
+% Panel formatter: a,b → a,b ; a,b,c → a–c
+\newcommand{\panelrange}[1]{%
+  \StrCount{#1}{,}[\commas]%
+  \ifnum\commas>1
+    \StrBefore{#1}{,}[\first]%
+    \StrBehind[#1]{,}[\last]%
+    \first--\last%
+  \else
+    #1%
+  \fi
+}
+
+% Two-figure reference: Figs. 2 and 4b,c (hyphen only if ≥3 panels)
+% Usage: \FigsTwo{<label1>}{<suffix1>}{<label2>}{<suffix2>}
+% leave suffix empty or "-" for a whole-figure ref
+\newcommand{\FigsTwo}[4]{%
+  Figs.~%
+  \hyperref[#1]{\ref*{#1}\if\relax\detokenize{#2}\relax\else#2\fi}%
+  ~and~%
+  \hyperref[#3]{\ref*{#3}\if\relax\detokenize{#4}\relax\else\panelrange{#4}\fi}%
+}
+
+% Citation and reference styling -----------
+\usepackage{csquotes}
+\usepackage[backend=biber,
+style=nature,
+articletitle=true,
+url=false,
+isbn=false]{biblatex}
+\addbibresource{references.bib}
+\let\cite\supercite
+\AtBeginBibliography{%
+  \renewbibmacro*{byeditor+others}{}%
+}
+
+\AtEveryBibitem{%
+  \clearlist{editor}%
+  \clearfield{month}%
+  \clearfield{day}%
+  \clearfield{date}%
+  \clearfield{issue}%
+  \clearfield{number}%
+  %\clearlist{publisher}%
+  \clearlist{language}%
+}
+
+% --- Dataset entries: repo + DOI + (Year) with correct spacing and wrapping ---
+\DeclareBibliographyDriver{dataset}{%
+  \printnames{author}%
+  \newunit\newblock
+  \printfield[titlecase]{title}%
+  \newunit\newblock
+  \printlist{publisher}%
+  \setunit{\space}% one space before DOI
+  \printfield{doi}%
+  \setunit*{\addspace}% <- ensures exactly one space before the (Year)
+  \printtext{\mkbibparens{\printfield{year}}}%
+  \finentry
+}
+
+% DOIs as URLs (breakable with xurl)
+\DeclareFieldFormat{doi}{%
+  \begingroup
+    \Urlmuskip=0mu plus 2mu\relax % allow flexible breakpoints
+    \href{https://doi.org/#1}{\nolinkurl{https://doi.org/#1}}%
+  \endgroup
+}
+
+% --- Nature-style: book or chapter entries with optional edition and chapter ---
+\DeclareBibliographyDriver{book}{%
+  \printnames{author}%
+  \newunit\newblock
+  \printfield[emph]{title}% italic title
+  % Optional edition
+  \iffieldundef{edition}
+    {}% nothing if missing
+    {%
+      \setunit{\addcomma\space}%
+      \printfield[edition]{edition}%
+      \addspace edn%
+    }%
+  % Optional chapter info stored in Zotero's 'annotation' field
+  \iffieldundef{annotation}
+    {}% nothing if missing
+    {%
+      \setunit{\space}%
+      \printfield{annotation}%
+    }%
+  \addspace% space before parentheses
+  \mkbibparens{%
+    \printlist{publisher}%
+    \setunit{\addcomma\space}%
+    \printfield{year}%
+  }%
+  \finentry
+}
+
+% 1) Make @online titles NOT italic
+\DeclareFieldFormat[online]{title}{#1}
+
+% 2) Only for prepublished @online, print "Preprint at <url> (YEAR)."
+\DeclareBibliographyDriver{online}{%
+  \printnames{author}%
+  \newunit\newblock
+  \printfield[titlecase]{title}%
+  \newunit\newblock
+  \iffieldequalstr{pubstate}{prepublished}
+    {\printtext{Preprint at \printfield{url}}\nopunct%%
+     \newunit\newblock
+     \printtext{\mkbibparens{\printfield{year}}}%
+    }
+    {%
+      % Fallback for normal @online entries (keep whatever you prefer here)
+      \printfield{url}%
+      \newunit\newblock
+      \printtext{\mkbibparens{\printfield{year}}}%
+    }%
+  \finentry
+}
+
+\begin{document}
+\linenumbers
+
+% Cover and abstract
+\input{sections/main/0.1_cover}
+\input{sections/main/0.2_abstract}
+\newpage
+
+% Main article
+\input{sections/main/1_introduction}
+\input{sections/main/2_results}
+\input{sections/main/3_discussion}
+\newpage
+
+% Methods
+\input{sections/methods/1_data}
+\input{sections/methods/2_metrics}
+\input{sections/methods/3_likelihood}
+\input{sections/methods/4_covariates}
+\input{sections/methods/5_lmm}
+\input{sections/methods/6_bhm}
+\input{sections/methods/7_evaluation}
+\newpage
+\printbibliography
+\newpage
+\input{sections/auxiliary_info}
+\newpage
+\input{sections/extended_data}
+
+\end{document}

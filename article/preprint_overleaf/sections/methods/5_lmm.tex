@@ -1,0 +1,25 @@
+
+\subsection*{SBMs: Generalized linear mixed models}
+
+The SBMs were implemented as generalized linear mixed models (GLMMs), using the R package \texttt{glmmTMB} \cite{mcgillycuddy2025}. The model structure consisted of fixed effects, parameters representing average values over all studies in the dataset, and random effects, which quantify group-level variation around the fixed effects \cite{harrison2018,pinheiro2000}. The study-level random intercepts and slopes accounted for inter-study differences in geographic and taxonomic scope, environment, and sampling. For studies that grouped spatially adjacent sites into blocks, corresponding intercepts were included to capture intra-study differences. Since all site-level species observations were aggregated to form the response variables, the fixed effects were estimated as an average of all geographies and taxa in the data\cite{newbold2015,newbold2016,depalma2021}.
+
+We let $\boldsymbol{\beta}$ denote the fixed effects and let  $\boldsymbol{\gamma}_s$ denote the study-level random effects, for the study $s$ that site $i$ belongs to. The spatial block intercepts are denoted by $\gamma_{sb(s)}$ for each block $sb$ within study $s$. These different effects constitute a hierarchical structure, from the population of all studies to individual source studies, and from studies to blocks. As noted above, we used a beta likelihood with a logit link function $g(\cdot)$ across all models\cite{ferrari2004}. The mean of $y_i$, conditional on the covariates, is denoted by $\mu_i$. The site-level regression model for GMA can then be written as
+\vspace{0.25\baselineskip}
+\begin{equation*}
+    g(\mu_{i}) = \mathbf{x}_i^\top \boldsymbol{\beta} + \mathbf{x}_i^\top \boldsymbol{\gamma}_s + \gamma_{sb(s)} = \eta_i,
+\end{equation*}
+
+where $\mu_i = g^{-1}(\eta_i) = e^{\eta_{i}} / (1 + e^{\eta_{i}})$. We fitted a full set of random slopes at the study level, such that the random effect covariates are the same as the fixed effect ones $\mathbf{x}_i$. The $\boldsymbol{\gamma}_s$ parameters are assumed to be uncorrelated and vary around the fixed effects with mean zero and diagonal covariance matrix $\boldsymbol{\Sigma}_{\gamma}$, such that $\boldsymbol{\gamma}_s \sim \mathcal{N}(\bf{0}, \boldsymbol{\Sigma}_{\gamma})$. The variance of the beta distribution, which is dependent on the conditional means, is given by
+\begin{equation*}
+    \text{Var}(y_i | \mu_i, \phi) = \frac{\mu_i(1 - \mu_i)}{1 + \phi}.
+\end{equation*}
+
+The dispersion parameter $\phi$ was assumed to be constant across studies and observations. In the beta diversity model, $y_{ij}$ denotes the BC similarity between some site $i$ and a reference site $j$, within the context of a study $s$. In addition to the regular covariates $\mathbf{x}_i$ for the non-reference site, we let $\mathbf{z}_{ij}$ denote the set of delta measures calculated between the two sites: the difference in the population and road density, the spatial distance, and the environmental distance. If we let $\boldsymbol{\beta}^\Delta$ and $\boldsymbol{\gamma}_s^\Delta$ denote the parameter vectors associated with these difference terms, we can write the beta diversity model as
+\vspace{0.25\baselineskip}
+\begin{equation*}
+    g(\mu_{ij}) = \mathbf{x}_i^\top \boldsymbol{\beta} + \mathbf{z}_{ij}^\top \boldsymbol{\beta}^\Delta + \mathbf{x}_i^\top \boldsymbol{\gamma}_s + \mathbf{z}_{ij}^\top \boldsymbol{\gamma}_s^\Delta + \gamma_{sb(s)}.
+\end{equation*}
+
+Due to the number of covariates (\autoref{tab:variables}) relative to the amount of sites in the smaller studies (\autoref{fig:sites_per_study}), and that all land-use types and intensities are not present in each study, there were some convergence issues when fitting the random study slopes. To ensure that this did not affect the overall results presented, we refitted the alpha and beta diversity models with a threshold of minimum 25 sites per study. This resulted in somewhat lower accuracies for both models: alpha diversity, training: 0.76, standard CV: 0.14, cross-study validation: 0.09; beta diversity, training: 0.81, standard CV: 0.19, cross-study validation: 0.15. While some convergence issues remained, due to uneven representation of land-use classes, it implies that the overall results are robust.
+
+\vspace{\baselineskip}
