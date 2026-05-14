@@ -5,6 +5,7 @@ experiments/UPPMAX_COMMANDS.md
 experiments/BASH_COMMANDS.md
 experiments/submit_job.sh
 experiments/__pycache__/
+article/
 
 __pycache__/
 *.pyc
@@ -18,3 +19,4 @@ __pycache__/
 .pytest_cache/
 conda-lock.yml
 .pre-commit-config.yaml
+AGENTS.md
