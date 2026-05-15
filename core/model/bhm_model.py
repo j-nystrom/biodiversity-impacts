@@ -78,6 +78,25 @@ class BayesianHierarchicalModel:
         if rolled_up_mapping:
             self.rolled_up_mapping: dict[str, Any] = rolled_up_mapping
 
+    def get_training_components(self) -> dict[str, bool]:
+        """Return training component switches with legacy defaults."""
+        components = self.model_settings.get("training_components", {})
+        study_effects = self.model_settings.get("study_effects", {})
+        return {
+            "ecological": components.get("ecological", True),
+            "study_intercept": components.get("study_intercept", True),
+            "study_slopes": components.get(
+                "study_slopes", bool(study_effects.get("slope_terms", []))
+            ),
+            "block_intercept": components.get("block_intercept", True),
+        }
+
+    def get_study_slope_terms(self) -> list[str]:
+        """Return active study slope terms for the training model."""
+        if not self.get_training_components()["study_slopes"]:
+            return []
+        return list(self.model_settings.get("study_effects", {}).get("slope_terms", []))
+
     def prepare_data(
         self, df_train: pl.DataFrame, df_test: pl.DataFrame
     ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -304,6 +323,17 @@ class BayesianHierarchicalModel:
         # Create design matrix
         x_vars = self.categorical_vars + self.continuous_vars + self.interaction_terms
         x_obs = df.select(x_vars).to_numpy()
+        study_slope_terms = self.get_study_slope_terms()
+        missing_slope_terms = [term for term in study_slope_terms if term not in x_vars]
+        if missing_slope_terms:
+            raise ValueError(
+                f"Study slope terms are not model covariates: {missing_slope_terms}"
+            )
+        x_study_slope_obs = (
+            df.select(study_slope_terms).to_numpy()
+            if study_slope_terms
+            else np.zeros((df.height, 0), dtype=float)
+        )
 
         # Add site indices for reference
         site_idx = np.array(
@@ -324,6 +354,7 @@ class BayesianHierarchicalModel:
         coords["study_names"] = study_names
         coords["block_names"] = block_names
         coords["x_vars"] = x_vars
+        coords["study_slope_vars"] = study_slope_terms
 
         # Specify coordinates for calibration terms
         coords["x_cal_vars"] = ["y_hat_sqrt", "y_hat", "y_hat_squared"]
@@ -332,6 +363,7 @@ class BayesianHierarchicalModel:
             "coords": coords,
             "y_obs": y_obs,
             "x_obs": x_obs,
+            "x_study_slope_obs": x_study_slope_obs,
             "site_idx": site_idx,
             "study_idx": study_idx,
             "block_idx": block_idx,
@@ -472,9 +504,12 @@ class BayesianHierarchicalModel:
                         random_seed=self.sampling_seed + 1,
                     )
         else:
-            # Use existing approach
+            self.pred_model = self.model.build_prediction_model(
+                model_data=prediction_data,
+                mode=mode,
+            )
             if mode == "train":
-                with self.model_instance:
+                with self.pred_model:
                     updated_trace = pm.sample_posterior_predictive(
                         self.trace,
                         var_names=["y_like", "y_cond", "y_intercept"],
@@ -484,9 +519,6 @@ class BayesianHierarchicalModel:
                         random_seed=self.sampling_seed + 1,
                     )
             elif mode == "test":
-                self.pred_model = self.model.build_prediction_model(
-                    model_data=prediction_data,
-                )
                 with self.pred_model:
                     updated_trace = pm.sample_posterior_predictive(
                         self.trace,

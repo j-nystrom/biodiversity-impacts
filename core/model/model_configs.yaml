@@ -86,6 +86,37 @@ run_settings:
       level_2: [Realm]  # e.g. [Custom_taxonomic_group]
       level_3: []
 
+    training_components:
+      ecological: True
+      study_intercept: True
+      study_slopes: False
+      block_intercept: True
+
+    prediction_components:
+      ecological: True
+      study_intercept: False
+      study_slopes: False
+      block_intercept: False
+
+    study_effects:
+      slope_terms:
+        - Primary vegetation_Light use
+        - Primary vegetation_Intense use
+        - Secondary vegetation_Minimal use
+        - Secondary vegetation_Light use
+        - Secondary vegetation_Intense use
+        - Cropland_Minimal use
+        - Cropland_Light use
+        - Cropland_Intense use
+        - Pasture_Minimal use
+        - Pasture_Light use
+        - Pasture_Intense use
+        - Urban_All uses
+        - Pop_density_1km_log
+        - Pop_density_50km_log
+        - Road_density_1km_log
+        - Road_density_50km_log
+
     likelihood: beta  # [gaussian, beta]
     priors:
       group_size_shrinkage: True  # Apply shrinkage to group-level effects based on size
@@ -99,6 +130,7 @@ run_settings:
         group_prior_sd_beta_level_2: 0.05
         group_prior_sd_beta_level_3: 0.05
         random_intercept_sd: 0.10
+        random_slope_sd: 0.05
         sigma_y_sd: 0.20
 
       beta:
@@ -110,6 +142,7 @@ run_settings:
         group_prior_sd_beta_level_2: 0.10
         group_prior_sd_beta_level_3: 0.05
         random_intercept_sd: 0.10
+        random_slope_sd: 0.05
         beta_likelihood:
           alpha: 2
           beta: 12  # alpha: 12, beta: 20
