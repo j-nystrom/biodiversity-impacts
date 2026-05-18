@@ -1,23 +1,24 @@
-bhm_alpha_standard_cv:
+bhm_beta_standard_cv:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: alpha
+      diversity_type: beta
       sub_sampling:
-        fraction: 1.0
+        fraction: 0.1
       taxonomic:
         resolution: Custom
 
     run_settings:
       model_type: bayesian
-      model_variables: bayesian_alpha
+      model_variables: bayesian_beta
       bayesian:
         priors:
+          group_size_shrinkage: True
           group_size_shrinkage_scaling: sqrt
           beta:
-            alpha_hyper_mean_mu: 0.35
-            hyperprior_sd_alpha: 0.30
-            group_prior_sd_alpha: 0.20
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.25
+            group_prior_sd_alpha: 0.15
             hyperprior_sd_beta: 0.15
             group_prior_sd_beta_level_1: 0.12
             group_prior_sd_beta_level_2: 0.10
@@ -25,10 +26,10 @@ bhm_alpha_standard_cv:
             random_intercept_sd: 0.10
             beta_likelihood:
               alpha: 2
-              beta: 12
+              beta: 20
         sampler:
-          draws: 500
-          tune: 500
+          draws: 1000
+          tune: 1000
         rolled_up_predictions: True
         min_studies_per_group: 5
 

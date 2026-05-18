@@ -91,6 +91,34 @@ class BayesianHierarchicalModel:
             "block_intercept": components.get("block_intercept", True),
         }
 
+    def get_prediction_components(self) -> dict[str, bool]:
+        """Return prediction component switches with explicit zeroed defaults."""
+        components = self.model_settings.get("prediction_components", {})
+        return {
+            "ecological": components.get("ecological", True),
+            "study_intercept": components.get("study_intercept", False),
+            "study_slopes": components.get("study_slopes", False),
+            "block_intercept": components.get("block_intercept", False),
+        }
+
+    @staticmethod
+    def format_component_settings(components: dict[str, bool]) -> str:
+        """Format component switches for logging."""
+        return ", ".join(f"{name}={enabled}" for name, enabled in components.items())
+
+    def log_component_settings(self) -> None:
+        """Log which model components are used for fitting and prediction."""
+        training_components = self.get_training_components()
+        prediction_components = self.get_prediction_components()
+        self.logger.info(
+            "BHM fitting components: %s.",
+            self.format_component_settings(training_components),
+        )
+        self.logger.info(
+            "BHM prediction components: %s.",
+            self.format_component_settings(prediction_components),
+        )
+
     def get_study_slope_terms(self) -> list[str]:
         """Return active study slope terms for the training model."""
         if not self.get_training_components()["study_slopes"]:
@@ -238,6 +266,7 @@ class BayesianHierarchicalModel:
                 variable. This is the training data for the model.
         """
         # Initialize the PyMC model and return the training model object
+        self.log_component_settings()
         self.model = GeneralHierarchicalModel(
             settings=self.model_settings, epsilon=self.epsilon
         )
@@ -592,7 +621,19 @@ class BayesianHierarchicalModel:
         Returns:
             trace: The updated trace object from the model, incl. predictions.
         """
-        if hasattr(self, "rolled_up_mapping") and self.rolled_up_mapping:
+        prediction_components = self.get_prediction_components()
+        self.logger.info(
+            "BHM components used for %s predictions: %s.",
+            mode,
+            self.format_component_settings(prediction_components),
+        )
+
+        use_rolled_up_predictions = (
+            hasattr(self, "rolled_up_mapping")
+            and self.rolled_up_mapping
+            and prediction_components["ecological"]
+        )
+        if use_rolled_up_predictions:
             self.logger.info("Using rolled-up mapping for predictions")
             # Use fallback-aware prediction model in both train and test
             prediction_model = rolled_up_prediction_model(
@@ -623,6 +664,15 @@ class BayesianHierarchicalModel:
                         random_seed=self.sampling_seed + 1,
                     )
         else:
+            if (
+                hasattr(self, "rolled_up_mapping")
+                and self.rolled_up_mapping
+                and not prediction_components["ecological"]
+            ):
+                self.logger.info(
+                    "Ignoring rolled-up prediction mapping because ecological "
+                    "prediction is disabled."
+                )
             self.pred_model = self.model.build_prediction_model(
                 model_data=prediction_data,
                 mode=mode,

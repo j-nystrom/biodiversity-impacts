@@ -13,6 +13,7 @@ bhm_beta_standard_cv:
       model_variables: bayesian_beta
       bayesian:
         priors:
+          group_size_shrinkage: True
           group_size_shrinkage_scaling: log
           beta:
             alpha_hyper_mean_mu: 0.25
@@ -30,6 +31,7 @@ bhm_beta_standard_cv:
           draws: 1000
           tune: 1000
         rolled_up_predictions: True
+        min_studies_per_group: 5
 
     cv_settings:
       split_level: site

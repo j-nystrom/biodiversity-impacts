@@ -103,7 +103,11 @@ class BaseModelTask:
             self.save_predictive_distributions: bool = self.model_settings[
                 "save_predictive_distributions"
             ]
-            if self.model_settings["rolled_up_predictions"]:
+            prediction_components = self.model_settings.get("prediction_components", {})
+            self.use_rolled_up_predictions = self.model_settings[
+                "rolled_up_predictions"
+            ] and prediction_components.get("ecological", True)
+            if self.use_rolled_up_predictions:
                 self.rolled_up_mapping_path = os.path.join(
                     run_folder_path, "rolled_up_hierarchy_mapping.json"
                 )
@@ -127,7 +131,7 @@ class BaseModelTask:
             validate_input_files(file_paths=[self.hierarchy_mapping_path])
             with open(self.hierarchy_mapping_path) as f:
                 self.hierarchy_mapping = json.load(f)
-            if self.model_settings["rolled_up_predictions"]:
+            if self.use_rolled_up_predictions:
                 validate_input_files(file_paths=[self.rolled_up_mapping_path])
                 with open(self.rolled_up_mapping_path) as f:
                     self.rolled_up_mapping = json.load(f)
@@ -169,7 +173,7 @@ class BaseModelTask:
             model_init_kwargs["save_predictive_distributions"] = (
                 self.save_predictive_distributions
             )
-            if self.model_settings["rolled_up_predictions"]:
+            if self.use_rolled_up_predictions:
                 model_init_kwargs["rolled_up_mapping"] = self.rolled_up_mapping
             if self.taxonomic_resolution != "All_species":
                 model_init_kwargs["taxon_name_to_idx"] = self.taxon_name_to_idx

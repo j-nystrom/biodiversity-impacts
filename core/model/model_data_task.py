@@ -145,6 +145,10 @@ class ModelDataTask:
             self.rolled_up_predictions: bool = model_run_settings[
                 "rolled_up_predictions"
             ]
+            prediction_components = model_run_settings.get("prediction_components", {})
+            self.use_ecological_predictions: bool = prediction_components.get(
+                "ecological", True
+            )
             self.min_studies_per_group: int = model_run_settings[
                 "min_studies_per_group"
             ]
@@ -339,7 +343,7 @@ class ModelDataTask:
             # If specified, roll up small hierarchical groups to the next level
             # and save these mapping like above. These will be used to create
             # CV folds and for predictions
-            if self.rolled_up_predictions:
+            if self.rolled_up_predictions and self.use_ecological_predictions:
                 df, rolled_up_mapping, rolled_up_cols = self.apply_hierarchical_rollup(
                     df,
                     levels,
@@ -353,6 +357,11 @@ class ModelDataTask:
                     json.dump(rolled_up_mapping, f)
 
                 all_model_vars = list(set(all_model_vars + rolled_up_cols))
+            elif self.rolled_up_predictions:
+                logger.info(
+                    "Skipping hierarchical roll-up because ecological prediction "
+                    "is disabled."
+                )
 
         # For the Bayesian hierarchical model, we additionally need a fixed
         # mapping between site names and index numbers

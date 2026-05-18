@@ -38,7 +38,7 @@ data_scope:
         #- Afrotropic
 
   taxonomic:  # Taxonomic scope on which to train model
-    resolution: All_species  # Determines scope and possible granularity of filtering
+    resolution: Custom  # Determines scope and possible granularity of filtering
     # [All_species, Custom, Kingdom, Phylum, Class, Order]
     filtering_scope: Custom  # For consistent filtering when resolution is All_species
     include_all: True  # True if all species in scope, False if not
@@ -60,8 +60,8 @@ data_scope:
 run_settings:
 
   # Model type and covariates to be used
-  model_type: glmm  # [bayesian, glmm]
-  model_variables: glmm_beta  # See below for model configurations
+  model_type: bayesian  # [bayesian, glmm]
+  model_variables: bayesian_beta  # See below for model configurations
   # GLMM: glmm_alpha, glmm_beta
   # BHM: bayesian_alpha, bayesian_beta
 
@@ -88,9 +88,9 @@ run_settings:
 
     training_components:
       ecological: True
-      study_intercept: True
+      study_intercept: False
       study_slopes: False
-      block_intercept: True
+      block_intercept: False
 
     prediction_components:
       ecological: True
@@ -129,8 +129,8 @@ run_settings:
         group_prior_sd_beta_level_1: 0.10
         group_prior_sd_beta_level_2: 0.05
         group_prior_sd_beta_level_3: 0.05
-        random_intercept_sd: 0.10
-        random_slope_sd: 0.05
+        random_intercept_sd: 0.20
+        random_slope_sd: 0.10
         sigma_y_sd: 0.20
 
       beta:
@@ -141,15 +141,15 @@ run_settings:
         group_prior_sd_beta_level_1: 0.12
         group_prior_sd_beta_level_2: 0.10
         group_prior_sd_beta_level_3: 0.05
-        random_intercept_sd: 0.10
-        random_slope_sd: 0.05
+        random_intercept_sd: 0.20
+        random_slope_sd: 0.10
         beta_likelihood:
           alpha: 2
           beta: 12  # alpha: 12, beta: 20
 
     sampler:  # Refer to PyMC documentation for all settings
-      draws: 1000
-      tune: 1000
+      draws: 10
+      tune: 10
       cores: 4
       chains: 4
       target_accept: 0.95

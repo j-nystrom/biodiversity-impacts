@@ -175,7 +175,7 @@ class GeneralHierarchicalModel:
                 likelihood=self.likelihood,
                 y_cond_linear=y_cond_linear,
                 y_intercept_linear=y_intercept_linear,
-                mode="test",
+                mode=mode,
                 eps=self.eps,
                 sigma_y=sigma_y,
                 sigma_raw=sigma_raw,
