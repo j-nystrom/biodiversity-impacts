@@ -10,13 +10,13 @@ epsilon: 1e-6  # For clipping, e.g. to avoid exact 0 or 1 in beta distributed mo
 # Data type and scope --------------------------------------
 
 data_scope:
-  diversity_type: beta  # [alpha, beta]
+  diversity_type: alpha  # [alpha, beta]
   min_sites_per_study: 0  # Min number of sites per study to be included in model
   min_ref_sites_for_beta: 0  # Min nb of reference sites for beta diversity models
   exclude_outliers: True  # Use IQR / Tukey rule to exclude outliers in target
   iqr_multiplier: 1.5  # Multiplier for IQR to define outliers
   sub_sampling:
-    fraction: 0.1  # Fraction of data to include (set to 0.1 for beta diversity)
+    fraction: 1.0  # Fraction of data to include (set to 0.1 for beta diversity)
     level: sites  # [sites, studies]
     min_k_per_study: 300  # For beta: min target number of sites per study
     max_k_per_study: 3000  # For beta: max target number of sites per study
@@ -61,7 +61,7 @@ run_settings:
 
   # Model type and covariates to be used
   model_type: bayesian  # [bayesian, glmm]
-  model_variables: bayesian_beta  # See below for model configurations
+  model_variables: bayesian_alpha  # See below for model configurations
   # GLMM: glmm_alpha, glmm_beta
   # BHM: bayesian_alpha, bayesian_beta
 
@@ -86,17 +86,18 @@ run_settings:
       level_2: [Realm]  # e.g. [Custom_taxonomic_group]
       level_3: []
 
+    # Model fixed / random effects structure
     training_components:
-      ecological: True
-      study_intercept: False
-      study_slopes: False
-      block_intercept: False
+      ecological: False
+      study_intercept: True
+      study_slopes: True
+      block_intercept: True
 
     prediction_components:
-      ecological: True
-      study_intercept: False
-      study_slopes: False
-      block_intercept: False
+      ecological: False
+      study_intercept: True
+      study_slopes: True
+      block_intercept: True
 
     study_effects:
       slope_terms:
@@ -141,8 +142,8 @@ run_settings:
         group_prior_sd_beta_level_1: 0.12
         group_prior_sd_beta_level_2: 0.10
         group_prior_sd_beta_level_3: 0.05
-        random_intercept_sd: 0.20
-        random_slope_sd: 0.10
+        random_intercept_sd: 0.30
+        random_slope_sd: 0.15
         beta_likelihood:
           alpha: 2
           beta: 12  # alpha: 12, beta: 20

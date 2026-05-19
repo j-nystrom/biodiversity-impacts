@@ -91,15 +91,44 @@ class BayesianHierarchicalModel:
             "block_intercept": components.get("block_intercept", True),
         }
 
-    def get_prediction_components(self) -> dict[str, bool]:
+    def get_prediction_components(
+        self,
+        settings: dict[str, Any] | None = None,
+    ) -> dict[str, bool]:
         """Return prediction component switches with explicit zeroed defaults."""
-        components = self.model_settings.get("prediction_components", {})
+        settings = settings or self.model_settings
+        components = settings.get("prediction_components", {})
         return {
             "ecological": components.get("ecological", True),
             "study_intercept": components.get("study_intercept", False),
             "study_slopes": components.get("study_slopes", False),
             "block_intercept": components.get("block_intercept", False),
         }
+
+    @staticmethod
+    def uses_random_components(components: dict[str, bool]) -> bool:
+        """Return True if prediction components include study or block effects."""
+        return any(
+            components[component]
+            for component in ["study_intercept", "study_slopes", "block_intercept"]
+        )
+
+    @staticmethod
+    def without_random_components(components: dict[str, bool]) -> dict[str, bool]:
+        """Return prediction components with study and block effects disabled."""
+        components_no_random = dict(components)
+        for component in ["study_intercept", "study_slopes", "block_intercept"]:
+            components_no_random[component] = False
+        return components_no_random
+
+    def model_settings_with_prediction_components(
+        self,
+        prediction_components: dict[str, bool],
+    ) -> dict[str, Any]:
+        """Return model settings with a prediction-component override."""
+        settings = dict(self.model_settings)
+        settings["prediction_components"] = dict(prediction_components)
+        return settings
 
     @staticmethod
     def format_component_settings(components: dict[str, bool]) -> str:
@@ -319,7 +348,73 @@ class BayesianHierarchicalModel:
             - df_pred: Dataframe with site names, observed values, and
                 predictions.
         """
-        self.trace = self.make_predictions(prediction_data, mode=pred_mode)
+        prediction_components = self.get_prediction_components()
+
+        if pred_mode == "test":
+            prediction_components = self.without_random_components(
+                prediction_components
+            )
+            self.trace = self.make_predictions(
+                prediction_data,
+                mode=pred_mode,
+                prediction_components=prediction_components,
+            )
+            df_pred, df_pred_distr = self.create_prediction_dataframe(
+                prediction_data,
+                mode=pred_mode,
+                include_predictive_distribution=self.save_predictive_distributions,
+            )
+            if self.uses_random_components(self.get_prediction_components()):
+                df_pred = df_pred.with_columns(
+                    [
+                        pl.col("Predicted").alias("Predicted_FE"),
+                        pl.col("Reference_pred").alias("Reference_pred_FE"),
+                    ]
+                )
+            return df_pred, df_pred_distr
+
+        if pred_mode == "train" and self.uses_random_components(prediction_components):
+            fixed_components = self.without_random_components(prediction_components)
+            self.trace = self.make_predictions(
+                prediction_data,
+                mode=pred_mode,
+                prediction_components=fixed_components,
+                prediction_label="fixed-effect",
+                sample_likelihood=False,
+            )
+            df_pred_fixed, _ = self.create_prediction_dataframe(
+                prediction_data,
+                mode=pred_mode,
+                include_predictive_distribution=False,
+            )
+
+            self.trace = self.make_predictions(
+                prediction_data,
+                mode=pred_mode,
+                prediction_components=prediction_components,
+                prediction_label="fixed + random-effect",
+            )
+            df_pred, df_pred_distr = self.create_prediction_dataframe(
+                prediction_data,
+                mode=pred_mode,
+                include_predictive_distribution=self.save_predictive_distributions,
+            )
+            df_pred = df_pred.with_columns(
+                [
+                    pl.col("Predicted").alias("Predicted_RE"),
+                    df_pred_fixed.get_column("Predicted").alias("Predicted_FE"),
+                    df_pred_fixed.get_column("Reference_pred").alias(
+                        "Reference_pred_FE"
+                    ),
+                ]
+            )
+            return df_pred, df_pred_distr
+
+        self.trace = self.make_predictions(
+            prediction_data,
+            mode=pred_mode,
+            prediction_components=prediction_components,
+        )
 
         df_pred, df_pred_distr = self.create_prediction_dataframe(
             prediction_data,
@@ -606,7 +701,12 @@ class BayesianHierarchicalModel:
                 continue
 
     def make_predictions(
-        self, prediction_data: dict[str, Any], mode: str
+        self,
+        prediction_data: dict[str, Any],
+        mode: str,
+        prediction_components: dict[str, bool] | None = None,
+        prediction_label: str | None = None,
+        sample_likelihood: bool = True,
     ) -> az.InferenceData:
         """
         Sample from the posterior predictive distribution to make predictions.
@@ -621,12 +721,20 @@ class BayesianHierarchicalModel:
         Returns:
             trace: The updated trace object from the model, incl. predictions.
         """
-        prediction_components = self.get_prediction_components()
+        if prediction_components is None:
+            prediction_components = self.get_prediction_components()
+        prediction_settings = self.model_settings_with_prediction_components(
+            prediction_components
+        )
         self.logger.info(
-            "BHM components used for %s predictions: %s.",
+            "BHM components used for %s%s predictions: %s.",
             mode,
+            f" {prediction_label}" if prediction_label else "",
             self.format_component_settings(prediction_components),
         )
+        train_var_names = ["y_cond", "y_intercept"]
+        if sample_likelihood:
+            train_var_names.insert(0, "y_like")
 
         use_rolled_up_predictions = (
             hasattr(self, "rolled_up_mapping")
@@ -639,7 +747,7 @@ class BayesianHierarchicalModel:
             prediction_model = rolled_up_prediction_model(
                 model_data=prediction_data,
                 trace=self.trace,
-                settings=self.model_settings,
+                settings=prediction_settings,
                 mode=mode,
                 epsilon=self.epsilon,
             )
@@ -647,7 +755,7 @@ class BayesianHierarchicalModel:
                 with prediction_model:
                     updated_trace = pm.sample_posterior_predictive(
                         self.trace,
-                        var_names=["y_like", "y_cond", "y_intercept"],
+                        var_names=train_var_names,
                         predictions=False,
                         extend_inferencedata=True,
                         progressbar=self.progressbar,
@@ -673,7 +781,11 @@ class BayesianHierarchicalModel:
                     "Ignoring rolled-up prediction mapping because ecological "
                     "prediction is disabled."
                 )
-            self.pred_model = self.model.build_prediction_model(
+            prediction_model_builder = GeneralHierarchicalModel(
+                settings=prediction_settings,
+                epsilon=self.epsilon,
+            )
+            self.pred_model = prediction_model_builder.build_prediction_model(
                 model_data=prediction_data,
                 mode=mode,
             )
@@ -681,7 +793,7 @@ class BayesianHierarchicalModel:
                 with self.pred_model:
                     updated_trace = pm.sample_posterior_predictive(
                         self.trace,
-                        var_names=["y_like", "y_cond", "y_intercept"],
+                        var_names=train_var_names,
                         predictions=False,
                         extend_inferencedata=True,
                         progressbar=self.progressbar,
@@ -740,7 +852,10 @@ class BayesianHierarchicalModel:
 
         # Determine where to extract predictions from
         if mode == "train":
-            y_pred_samples = self.trace.posterior_predictive["y_like"]
+            if "y_like" in self.trace.posterior_predictive:
+                y_pred_samples = self.trace.posterior_predictive["y_like"]
+            else:
+                y_pred_samples = self.trace.posterior_predictive["y_cond"]
             y_cond_samples = self.trace.posterior_predictive["y_cond"]
             ref_pred_samples = self.trace.posterior_predictive["y_intercept"]
         elif mode == "test":

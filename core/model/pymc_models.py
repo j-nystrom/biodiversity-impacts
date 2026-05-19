@@ -92,6 +92,10 @@ class GeneralHierarchicalModel:
                     model["x_obs"] * beta[level_idx], axis=1
                 )
                 ecological_intercept_linear = alpha[level_idx]
+            else:
+                mu_alpha, mu_beta = self.define_population_priors(self.priors)
+                ecological_linear = mu_alpha + pt.sum(model["x_obs"] * mu_beta, axis=1)
+                ecological_intercept_linear = mu_alpha
 
             control_linear, control_intercept_linear = (
                 self.define_control_variable_priors(
@@ -160,6 +164,11 @@ class GeneralHierarchicalModel:
                     pred_model["x_obs"] * beta[level_idx], axis=1
                 )
                 y_intercept_linear = alpha[level_idx]
+            else:
+                mu_alpha = pm.Flat("mu_alpha")
+                mu_beta = pm.Flat("mu_beta", dims="x_vars")
+                y_cond_linear = mu_alpha + pt.sum(pred_model["x_obs"] * mu_beta, axis=1)
+                y_intercept_linear = mu_alpha
 
             control_linear, control_intercept_linear = (
                 self.define_prediction_control_terms(model_data)
@@ -332,18 +341,7 @@ class GeneralHierarchicalModel:
 
             return alpha, beta
 
-        # Global hyperpriors for intercept and slopes, depending on likelihood
-        if self.likelihood == "gaussian":
-            mu_alpha_mean = priors["alpha_hyper_mean"]
-        elif self.likelihood == "beta":
-            mu_alpha_mean = logit(priors["alpha_hyper_mean_mu"])
-
-        mu_alpha = pm.Normal(
-            "mu_alpha", mu=mu_alpha_mean, sigma=priors["hyperprior_sd_alpha"]
-        )
-        mu_beta = pm.Normal(
-            "mu_beta", mu=0, sigma=priors["hyperprior_sd_beta"], dims="x_vars"
-        )
+        mu_alpha, mu_beta = self.define_population_priors(priors)
 
         # Level 1 priors
         alpha, beta = _make_level(
@@ -380,6 +378,22 @@ class GeneralHierarchicalModel:
             )
 
         return alpha, beta
+
+    def define_population_priors(self, priors: dict) -> tuple[Any, Any]:
+        """Define population-level intercept and fixed-effect slope priors."""
+        if self.likelihood == "gaussian":
+            mu_alpha_mean = priors["alpha_hyper_mean"]
+        elif self.likelihood == "beta":
+            mu_alpha_mean = logit(priors["alpha_hyper_mean_mu"])
+
+        mu_alpha = pm.Normal(
+            "mu_alpha", mu=mu_alpha_mean, sigma=priors["hyperprior_sd_alpha"]
+        )
+        mu_beta = pm.Normal(
+            "mu_beta", mu=0, sigma=priors["hyperprior_sd_beta"], dims="x_vars"
+        )
+
+        return mu_alpha, mu_beta
 
     def define_control_variable_priors(
         self,
