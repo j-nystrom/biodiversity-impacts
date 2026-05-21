@@ -61,9 +61,7 @@ run_settings:
 
   # Model type and covariates to be used
   model_type: bayesian  # [bayesian, glmm]
-  model_variables: bayesian_alpha  # See below for model configurations
-  # GLMM: glmm_alpha, glmm_beta
-  # BHM: bayesian_alpha, bayesian_beta
+  model_variables: alpha_main  # See below for model configurations
 
   # Structural settings for Bayesian hierarchical models
   bayesian:
@@ -95,28 +93,12 @@ run_settings:
 
     prediction_components:
       ecological: False
-      study_intercept: True
-      study_slopes: True
-      block_intercept: True
+      study_intercept: False
+      study_slopes: False
+      block_intercept: False
 
-    study_effects:
-      slope_terms:
-        - Primary vegetation_Light use
-        - Primary vegetation_Intense use
-        - Secondary vegetation_Minimal use
-        - Secondary vegetation_Light use
-        - Secondary vegetation_Intense use
-        - Cropland_Minimal use
-        - Cropland_Light use
-        - Cropland_Intense use
-        - Pasture_Minimal use
-        - Pasture_Light use
-        - Pasture_Intense use
-        - Urban_All uses
-        - Pop_density_1km_log
-        - Pop_density_50km_log
-        - Road_density_1km_log
-        - Road_density_50km_log
+    # Use a named model_variables entry for study slopes.
+    study_effects: alpha_glmm
 
     likelihood: beta  # [gaussian, beta]
     priors:
@@ -149,8 +131,8 @@ run_settings:
           beta: 12  # alpha: 12, beta: 20
 
     sampler:  # Refer to PyMC documentation for all settings
-      draws: 10
-      tune: 10
+      draws: 500
+      tune: 500
       cores: 4
       chains: 4
       target_accept: 0.95
@@ -185,8 +167,8 @@ model_variables:
 
 # Alpha diversity --------------------------------------
 
-  # Main Bayesian model for manuscript
-  bayesian_alpha:
+  # Main alpha model for manuscript
+  alpha_main:
     response_var: Scaled_Geometric_mean_abundance
     requires_intensity_data: True
     categorical_vars:
@@ -203,10 +185,12 @@ model_variables:
       - Pasture_Intense use
       - Urban_All uses
     continuous_vars:
-      - Pop_density_1km_log
-      - Pop_density_50km_log
-      - Road_density_1km_log
-      - Road_density_50km_log
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
       - Annual_mean_temp_1km
       - Temp_seasonality_1km
       - Annual_precip_1km
@@ -217,9 +201,8 @@ model_variables:
       - Terrain_roughness_10km
     interaction_cols: []
 
-
-  # GLMM benchmark model for manuscript
-  glmm_alpha:
+  # GLMM model for extended data
+  alpha_glmm:
     response_var: Scaled_Geometric_mean_abundance
     requires_intensity_data: True
     categorical_vars:
@@ -236,10 +219,20 @@ model_variables:
       - Pasture_Intense use
       - Urban_All uses
     continuous_vars:
-      - Pop_density_1km_log
-      - Pop_density_50km_log
-      - Road_density_1km_log
-      - Road_density_50km_log
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_1km
+      - Elevation_10km
+      - Terrain_roughness_1km
+      - Terrain_roughness_10km
     interaction_cols: []
     slope_terms:  # This must be a subset of covariates above
       - Primary vegetation_Light use
@@ -254,34 +247,8 @@ model_variables:
       - Pasture_Light use
       - Pasture_Intense use
       - Urban_All uses
-      - Pop_density_1km_log
-      - Pop_density_50km_log
-      - Road_density_1km_log
-      - Road_density_50km_log
-
-# Beta diversity -------------------
-
-  bayesian_beta:
-    response_var: Bray_Curtis_score
-    requires_intensity_data: True
-    categorical_vars:
-      - Primary vegetation_Light use
-      - Primary vegetation_Intense use
-      - Secondary vegetation_Minimal use
-      - Secondary vegetation_Light use
-      - Secondary vegetation_Intense use
-      - Cropland_Minimal use
-      - Cropland_Light use
-      - Cropland_Intense use
-      - Pasture_Minimal use
-      - Pasture_Light use
-      - Pasture_Intense use
-      - Urban_All uses
-    continuous_vars:
-      - Pop_density_1km_log
-      - Pop_density_50km_log
-      - Road_density_1km_log
-      - Road_density_50km_log
+      - Pop_density_10km_log
+      - Road_density_10km_log
       - Annual_mean_temp_1km
       - Temp_seasonality_1km
       - Annual_precip_1km
@@ -290,15 +257,11 @@ model_variables:
       - Elevation_10km
       - Terrain_roughness_1km
       - Terrain_roughness_10km
-      - Pop_density_1km_log_diff  # Beta specific variables
-      - Road_density_1km_log_diff
-      - Haversine_distance_log
-      - Gower_distance_log
-    interaction_cols: []
 
 
-  # GLMM benchmark model for manuscript
-  glmm_beta:
+# Beta diversity -------------------
+
+  beta_main:
     response_var: Bray_Curtis_score
     requires_intensity_data: True
     categorical_vars:
@@ -315,14 +278,55 @@ model_variables:
       - Pasture_Intense use
       - Urban_All uses
     continuous_vars:
-      - Pop_density_1km_log
-      - Pop_density_50km_log
-      - Road_density_1km_log
-      - Road_density_50km_log
-      - Pop_density_1km_log_diff  # Beta specific variables
-      - Road_density_1km_log_diff
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_1km
+      - Elevation_10km
+      - Terrain_roughness_1km
+      - Terrain_roughness_10km
+      - Pop_density_10km_log_diff  # Beta specific variables
+      - Road_density_10km_log_diff
       - Haversine_distance_log
-      - Gower_distance_cbrt
+      - Gower_distance_log
+    interaction_cols: []
+
+
+  # GLMM model for extended data
+  beta_glmm:
+    response_var: Bray_Curtis_score
+    requires_intensity_data: True
+    categorical_vars:
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_Minimal use
+      - Secondary vegetation_Light use
+      - Secondary vegetation_Intense use
+      - Cropland_Minimal use
+      - Cropland_Light use
+      - Cropland_Intense use
+      - Pasture_Minimal use
+      - Pasture_Light use
+      - Pasture_Intense use
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
+      - Pop_density_10km_log_diff  # Beta specific variables
+      - Road_density_10km_log_diff
+      - Haversine_distance_log
+      - Gower_distance_log
     interaction_cols: []
     slope_terms: # This must be a subset of covariates above
       - Primary vegetation_Light use
@@ -337,14 +341,20 @@ model_variables:
       - Pasture_Light use
       - Pasture_Intense use
       - Urban_All uses
-      - Pop_density_1km_log
-      - Pop_density_50km_log
-      - Road_density_1km_log
-      - Road_density_50km_log
-      - Pop_density_1km_log_diff  # Beta specific variables
-      - Road_density_1km_log_diff
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_1km
+      - Elevation_10km
+      - Terrain_roughness_1km
+      - Terrain_roughness_10km
+      - Pop_density_10km_log
+      - Road_density_10km_log
+      - Pop_density_10km_log_diff  # Beta specific variables
+      - Road_density_10km_log_diff
       - Haversine_distance_log
-      - Gower_distance_cbrt
+      - Gower_distance_log
 
 
 # Data grouping variables -------------------

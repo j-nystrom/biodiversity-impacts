@@ -358,6 +358,7 @@ class BayesianHierarchicalModel:
                 prediction_data,
                 mode=pred_mode,
                 prediction_components=prediction_components,
+                sample_likelihood=self.save_predictive_distributions,
             )
             df_pred, df_pred_distr = self.create_prediction_dataframe(
                 prediction_data,
@@ -375,6 +376,8 @@ class BayesianHierarchicalModel:
 
         if pred_mode == "train" and self.uses_random_components(prediction_components):
             fixed_components = self.without_random_components(prediction_components)
+            posterior_trace = self.trace
+            self.trace = posterior_trace.copy()
             self.trace = self.make_predictions(
                 prediction_data,
                 mode=pred_mode,
@@ -388,11 +391,13 @@ class BayesianHierarchicalModel:
                 include_predictive_distribution=False,
             )
 
+            self.trace = posterior_trace.copy()
             self.trace = self.make_predictions(
                 prediction_data,
                 mode=pred_mode,
                 prediction_components=prediction_components,
                 prediction_label="fixed + random-effect",
+                sample_likelihood=self.save_predictive_distributions,
             )
             df_pred, df_pred_distr = self.create_prediction_dataframe(
                 prediction_data,
@@ -414,6 +419,7 @@ class BayesianHierarchicalModel:
             prediction_data,
             mode=pred_mode,
             prediction_components=prediction_components,
+            sample_likelihood=self.save_predictive_distributions,
         )
 
         df_pred, df_pred_distr = self.create_prediction_dataframe(
@@ -624,6 +630,366 @@ class BayesianHierarchicalModel:
 
         return output_dict
 
+    def extract_effects(
+        self,
+        re_lower_perc: float = 5,
+        re_upper_perc: float = 95,
+    ) -> dict[str, dict[str, float]]:
+        """
+        Extract fixed-effect summaries and optional study/ecological ranges.
+
+        Effects are returned on the response scale as delta(mu) from the
+        population intercept, matching the GLMM effect summary structure.
+        """
+        posterior = self.trace.posterior
+        if "mu_beta" not in posterior:
+            return {}
+
+        mu_alpha = self._stack_trace_values("mu_alpha").reshape(-1)
+        mu_beta = self._stack_trace_values("mu_beta", sample_first_dims=["x_vars"])
+        x_vars = [str(value) for value in posterior["mu_beta"].coords["x_vars"].values]
+        effect_dict = {}
+
+        for term_idx, term in enumerate(x_vars):
+            fixed_eta = mu_beta[:, term_idx]
+            fixed_response = self._response_delta(mu_alpha, fixed_eta)
+            effect_info = self._summary_dict(fixed_response)
+
+            study_range = self._study_slope_response_range(
+                term=term,
+                fixed_eta=fixed_eta,
+                mu_alpha=mu_alpha,
+                lower_perc=re_lower_perc,
+                upper_perc=re_upper_perc,
+            )
+            if study_range:
+                effect_info.update(study_range)
+
+            ecological_range = self._ecological_slope_response_range(
+                term=term,
+                mu_alpha=mu_alpha,
+                lower_perc=re_lower_perc,
+                upper_perc=re_upper_perc,
+            )
+            if ecological_range:
+                effect_info.update(ecological_range)
+
+            effect_dict[term] = effect_info
+
+        return effect_dict
+
+    def extract_parameter_summary(self) -> pl.DataFrame:
+        """Return compact posterior summaries for population and group parameters."""
+        posterior = self.trace.posterior
+        rows = []
+        mu_alpha = (
+            self._stack_trace_values("mu_alpha").reshape(-1)
+            if "mu_alpha" in posterior
+            else None
+        )
+
+        if mu_alpha is not None:
+            rows.append(
+                self._parameter_summary_row(
+                    parameter="mu_alpha",
+                    level="population",
+                    group=None,
+                    covariate=None,
+                    values=mu_alpha,
+                    response_values=self._response_value(mu_alpha),
+                )
+            )
+
+        if "mu_beta" in posterior:
+            mu_beta = self._stack_trace_values("mu_beta", sample_first_dims=["x_vars"])
+            x_vars = [
+                str(value) for value in posterior["mu_beta"].coords["x_vars"].values
+            ]
+            for term_idx, term in enumerate(x_vars):
+                rows.append(
+                    self._parameter_summary_row(
+                        parameter="mu_beta",
+                        level="population",
+                        group=None,
+                        covariate=term,
+                        values=mu_beta[:, term_idx],
+                        response_values=(
+                            self._response_delta(mu_alpha, mu_beta[:, term_idx])
+                            if mu_alpha is not None
+                            else None
+                        ),
+                    )
+                )
+
+        for level in range(1, self.model_settings["hierarchical_levels"] + 1):
+            alpha_name = f"alpha_{level}"
+            beta_name = f"beta_{level}"
+            group_names = self._level_group_names(level)
+
+            if alpha_name in posterior:
+                alpha_dims = self._parameter_dims(alpha_name)
+                if not alpha_dims:
+                    continue
+                group_dim = alpha_dims[0]
+                alpha_values = self._stack_trace_values(
+                    alpha_name,
+                    sample_first_dims=[group_dim],
+                )
+                for group_idx in range(alpha_values.shape[1]):
+                    rows.append(
+                        self._parameter_summary_row(
+                            parameter=alpha_name,
+                            level=f"level_{level}",
+                            group=group_names[group_idx],
+                            covariate=None,
+                            values=alpha_values[:, group_idx],
+                            response_values=self._response_value(
+                                alpha_values[:, group_idx]
+                            ),
+                        )
+                    )
+
+            if beta_name in posterior:
+                beta_dims = self._parameter_dims(beta_name)
+                if len(beta_dims) < 2:
+                    continue
+                group_dim, covariate_dim = beta_dims[:2]
+                beta_values = self._stack_trace_values(
+                    beta_name,
+                    sample_first_dims=[group_dim, covariate_dim],
+                )
+                x_vars = self._x_vars()
+                for group_idx in range(beta_values.shape[1]):
+                    for term_idx, term in enumerate(x_vars):
+                        rows.append(
+                            self._parameter_summary_row(
+                                parameter=beta_name,
+                                level=f"level_{level}",
+                                group=group_names[group_idx],
+                                covariate=term,
+                                values=beta_values[:, group_idx, term_idx],
+                                response_values=(
+                                    self._response_delta(
+                                        mu_alpha,
+                                        beta_values[:, group_idx, term_idx],
+                                    )
+                                    if mu_alpha is not None
+                                    else None
+                                ),
+                            )
+                        )
+
+        if not rows:
+            return pl.DataFrame()
+        return pl.DataFrame(rows)
+
+    def _stack_trace_values(
+        self,
+        variable: str,
+        sample_first_dims: list[str] | None = None,
+    ) -> np.ndarray:
+        """Stack posterior chain/draw dimensions and return sample-first values."""
+        data_array = self.trace.posterior[variable].stack(sample=("chain", "draw"))
+        if sample_first_dims:
+            data_array = data_array.transpose("sample", *sample_first_dims)
+        else:
+            data_array = data_array.transpose("sample")
+        return data_array.values
+
+    def _parameter_dims(self, variable: str) -> list[str]:
+        """Return posterior variable dimensions excluding chain and draw."""
+        return [
+            dim
+            for dim in self.trace.posterior[variable].dims
+            if dim not in {"chain", "draw"}
+        ]
+
+    def _x_vars(self) -> list[str]:
+        """Return model covariate names in posterior order."""
+        posterior = self.trace.posterior
+        if "mu_beta" in posterior and "x_vars" in posterior["mu_beta"].coords:
+            return [
+                str(value) for value in posterior["mu_beta"].coords["x_vars"].values
+            ]
+        return self.categorical_vars + self.continuous_vars + self.interaction_terms
+
+    def _level_group_names(self, level: int) -> list[str]:
+        """Return hierarchy group labels in model index order."""
+        level_key = f"level_{level}"
+        mapping = self.hierarchy_mapping.get(level_key, {})
+        if mapping:
+            return [
+                str(group)
+                for group, _ in sorted(mapping.items(), key=lambda item: item[1])
+            ]
+
+        variable = f"alpha_{level}"
+        if variable in self.trace.posterior:
+            dims = self._parameter_dims(variable)
+            if dims:
+                dim = dims[0]
+                size = self.trace.posterior[variable].sizes[dim]
+                return [str(idx) for idx in range(size)]
+        return []
+
+    def _response_delta(
+        self,
+        intercept_eta: np.ndarray,
+        delta_eta: np.ndarray,
+    ) -> np.ndarray:
+        """Transform latent-scale effect deltas to response-scale deltas."""
+        if self.model_settings["likelihood"] == "gaussian":
+            return delta_eta
+        baseline = 1 / (1 + np.exp(-intercept_eta))
+        shifted = 1 / (1 + np.exp(-(intercept_eta + delta_eta)))
+        return shifted - baseline
+
+    def _response_value(self, eta: np.ndarray) -> np.ndarray:
+        """Transform latent-scale values to the response scale."""
+        if self.model_settings["likelihood"] == "gaussian":
+            return eta
+        return 1 / (1 + np.exp(-eta))
+
+    @staticmethod
+    def _summary_dict(values: np.ndarray) -> dict[str, float]:
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            return {
+                "mean": np.nan,
+                "ci_lower_2_5": np.nan,
+                "ci_upper_97_5": np.nan,
+            }
+        return {
+            "mean": float(np.mean(finite)),
+            "ci_lower_2_5": float(np.quantile(finite, 0.025)),
+            "ci_upper_97_5": float(np.quantile(finite, 0.975)),
+        }
+
+    @staticmethod
+    def _parameter_summary_row(
+        parameter: str,
+        level: str,
+        group: str | None,
+        covariate: str | None,
+        values: np.ndarray,
+        response_values: np.ndarray | None = None,
+    ) -> dict[str, Any]:
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            mean = q2_5 = q50 = q97_5 = np.nan
+        else:
+            mean = float(np.mean(finite))
+            q2_5 = float(np.quantile(finite, 0.025))
+            q50 = float(np.quantile(finite, 0.5))
+            q97_5 = float(np.quantile(finite, 0.975))
+        if response_values is None:
+            response_mean = response_q2_5 = response_q50 = response_q97_5 = np.nan
+        else:
+            finite_response = response_values[np.isfinite(response_values)]
+            if finite_response.size == 0:
+                response_mean = response_q2_5 = response_q50 = response_q97_5 = np.nan
+            else:
+                response_mean = float(np.mean(finite_response))
+                response_q2_5 = float(np.quantile(finite_response, 0.025))
+                response_q50 = float(np.quantile(finite_response, 0.5))
+                response_q97_5 = float(np.quantile(finite_response, 0.975))
+        return {
+            "parameter": parameter,
+            "level": level,
+            "group": group,
+            "covariate": covariate,
+            "mean": mean,
+            "q2_5": q2_5,
+            "q50": q50,
+            "q97_5": q97_5,
+            "response_mean": response_mean,
+            "response_q2_5": response_q2_5,
+            "response_q50": response_q50,
+            "response_q97_5": response_q97_5,
+        }
+
+    def _study_slope_response_range(
+        self,
+        term: str,
+        fixed_eta: np.ndarray,
+        mu_alpha: np.ndarray,
+        lower_perc: float,
+        upper_perc: float,
+    ) -> dict[str, float]:
+        posterior = self.trace.posterior
+        if "delta_study_slope" not in posterior:
+            return {}
+        study_slope_terms = self.get_study_slope_terms()
+        if term not in study_slope_terms:
+            return {}
+        parameter_dims = self._parameter_dims("delta_study_slope")
+        if len(parameter_dims) < 2:
+            return {}
+        slope_dim = (
+            "study_slope_vars"
+            if "study_slope_vars" in parameter_dims
+            else parameter_dims[1]
+        )
+        study_dim = next(dim for dim in parameter_dims if dim != slope_dim)
+        term_idx = study_slope_terms.index(term)
+
+        deviations = (
+            posterior["delta_study_slope"]
+            .isel({slope_dim: term_idx})
+            .stack(sample=("chain", "draw"))
+            .transpose("sample", study_dim)
+            .values
+        )
+        response_values = self._response_delta(
+            mu_alpha[:, None], fixed_eta[:, None] + deviations
+        )
+        return {
+            "random_slope_lower": float(
+                np.nanquantile(response_values, lower_perc / 100)
+            ),
+            "random_slope_upper": float(
+                np.nanquantile(response_values, upper_perc / 100)
+            ),
+        }
+
+    def _ecological_slope_response_range(
+        self,
+        term: str,
+        mu_alpha: np.ndarray,
+        lower_perc: float,
+        upper_perc: float,
+    ) -> dict[str, float]:
+        posterior = self.trace.posterior
+        level = self.model_settings["hierarchical_levels"]
+        beta_name = f"beta_{level}"
+        if beta_name not in posterior:
+            return {}
+        parameter_dims = self._parameter_dims(beta_name)
+        if len(parameter_dims) < 2:
+            return {}
+        x_vars = self._x_vars()
+        if term not in x_vars:
+            return {}
+        group_dim, covariate_dim = parameter_dims[:2]
+        term_idx = x_vars.index(term)
+
+        beta_values = (
+            posterior[beta_name]
+            .isel({covariate_dim: term_idx})
+            .stack(sample=("chain", "draw"))
+            .transpose("sample", group_dim)
+            .values
+        )
+        response_values = self._response_delta(mu_alpha[:, None], beta_values)
+        return {
+            "ecological_slope_lower": float(
+                np.nanquantile(response_values, lower_perc / 100)
+            ),
+            "ecological_slope_upper": float(
+                np.nanquantile(response_values, upper_perc / 100)
+            ),
+        }
+
     def run_sampling(self) -> az.InferenceData:
         """
         Run sampling for the current model. The function uses the No U-turn
@@ -735,6 +1101,9 @@ class BayesianHierarchicalModel:
         train_var_names = ["y_cond", "y_intercept"]
         if sample_likelihood:
             train_var_names.insert(0, "y_like")
+        test_var_names = ["y_cond", "y_intercept"]
+        if sample_likelihood:
+            test_var_names.insert(0, "y_pred")
 
         use_rolled_up_predictions = (
             hasattr(self, "rolled_up_mapping")
@@ -765,7 +1134,7 @@ class BayesianHierarchicalModel:
                 with prediction_model:
                     updated_trace = pm.sample_posterior_predictive(
                         self.trace,
-                        var_names=["y_pred", "y_cond", "y_intercept"],
+                        var_names=test_var_names,
                         predictions=True,
                         extend_inferencedata=True,
                         progressbar=self.progressbar,
@@ -803,7 +1172,7 @@ class BayesianHierarchicalModel:
                 with self.pred_model:
                     updated_trace = pm.sample_posterior_predictive(
                         self.trace,
-                        var_names=["y_pred", "y_cond", "y_intercept"],
+                        var_names=test_var_names,
                         predictions=True,
                         extend_inferencedata=True,
                         progressbar=self.progressbar,
@@ -859,7 +1228,10 @@ class BayesianHierarchicalModel:
             y_cond_samples = self.trace.posterior_predictive["y_cond"]
             ref_pred_samples = self.trace.posterior_predictive["y_intercept"]
         elif mode == "test":
-            y_pred_samples = self.trace.predictions["y_pred"]
+            if "y_pred" in self.trace.predictions:
+                y_pred_samples = self.trace.predictions["y_pred"]
+            else:
+                y_pred_samples = self.trace.predictions["y_cond"]
             y_cond_samples = self.trace.predictions["y_cond"]
             ref_pred_samples = self.trace.predictions["y_intercept"]
 

@@ -13,7 +13,10 @@ from box import Box
 
 from core.model.bhm_model import BayesianHierarchicalModel
 from core.model.glmm_model import GeneralizedLinearMixedModel
-from core.model.model_utils import calculate_performance_metrics
+from core.model.model_utils import (
+    calculate_performance_metrics,
+    resolve_bayesian_study_effects,
+)
 from core.tests.shared.validate_shared import (
     validate_input_files,
     validate_output_files,
@@ -81,6 +84,12 @@ class BaseModelTask:
         self.model_vars: dict[str, Any] = configs.model_variables[
             configs.run_settings.model_variables
         ]
+        if self.model_type == "bayesian":
+            self.model_settings = resolve_bayesian_study_effects(
+                model_settings=self.model_settings,
+                model_vars=self.model_vars,
+                all_model_variables=configs.model_variables,
+            )
         self.continuous_vars: list[str] = self.model_vars["continuous_vars"]
 
         # Shared data paths
@@ -299,6 +308,20 @@ class ModelTrainingTask(BaseModelTask):
 
         # Bayesian model-specific outputs
         if isinstance(model, BayesianHierarchicalModel):
+            effect_summary = model.extract_effects()
+            effects_output_path = os.path.join(key_output_dir, "train_effects.json")
+            validate_output_files(
+                file_paths=[effects_output_path],
+                files=[effect_summary],
+            )
+            with open(effects_output_path, "w") as out_stream:
+                json.dump(effect_summary, out_stream, indent=2)
+
+            parameter_summary = model.extract_parameter_summary()
+            parameter_summary.write_parquet(
+                os.path.join(key_output_dir, "bhm_parameter_summary.parquet")
+            )
+
             if model.prior_predictive is not None:
                 self.save_outputs(
                     outputs=[{"prior_predictive": model.prior_predictive}],
@@ -406,7 +429,8 @@ class CrossValidationTask(BaseModelTask):
         for fold_idx, (train_path, test_path) in enumerate(
             zip(self.train_data_paths, self.test_data_paths)
         ):
-            logger.info(f"Processing fold {fold_idx + 1} out of {self.cv_folds}.")
+            fold = fold_idx + 1
+            logger.info(f"Processing fold {fold} out of {self.cv_folds}.")
             df_train = pl.read_parquet(train_path)
             df_test = pl.read_parquet(test_path)
 
@@ -420,6 +444,15 @@ class CrossValidationTask(BaseModelTask):
                 model.random_seed = fold_seed
             train_data, test_data = model.prepare_data(df_train, df_test)
             model.fit(train_data)
+
+            if isinstance(model, BayesianHierarchicalModel):
+                parameter_summary = model.extract_parameter_summary()
+                parameter_summary.write_parquet(
+                    os.path.join(
+                        key_output_dir,
+                        f"bhm_parameter_summary_fold_{fold}.parquet",
+                    )
+                )
 
             # Evaluate on train and test
             logger.info("Making predictions and evaluating model performance.")
@@ -449,8 +482,6 @@ class CrossValidationTask(BaseModelTask):
             per_fold_metrics.append(
                 {"train": pred_metrics_train, "test": pred_metrics_test}
             )
-
-            fold = fold_idx + 1  # Increment fold index for file naming
 
             # Save per-fold prediction dataframes to parquet and free memory.
             train_pred_path = os.path.join(
