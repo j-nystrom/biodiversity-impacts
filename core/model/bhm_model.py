@@ -59,6 +59,7 @@ class BayesianHierarchicalModel:
         self.logger = logger
         self.prior_predictive: az.InferenceData | None = None
         self.progressbar: bool = sys.stderr.isatty()
+        self.training_model_data: dict[str, Any] | None = None
 
         # Model covariates
         self.response_var = model_vars["response_var"]
@@ -172,12 +173,37 @@ class BayesianHierarchicalModel:
         )
         return dict(zip(counts.get_column(label_col), counts.get_column("n_studies")))
 
+    def get_fold_level_group_counts(
+        self,
+        level_key: str,
+        reference_df: pl.DataFrame,
+    ) -> pl.DataFrame:
+        """Count studies and sites per hierarchy group in the reference fold."""
+        label_col = self.hierarchy_mapping["column_names"][level_key]
+        count_cols = [label_col, "SS", "SSBS"]
+        count_exprs = [
+            pl.col("SS").n_unique().alias("n_studies"),
+            pl.col("SSBS").n_unique().alias("n_sites"),
+        ]
+        if "Primary_minimal_site" in reference_df.columns:
+            count_cols.append("Primary_minimal_site")
+            count_exprs.append(
+                pl.col("Primary_minimal_site").n_unique().alias("n_ref_sites")
+            )
+
+        return (
+            reference_df.select(count_cols)
+            .unique()
+            .group_by(label_col)
+            .agg(count_exprs)
+        )
+
     def apply_fold_rollup(
         self,
         df: pl.DataFrame,
         reference_df: pl.DataFrame,
     ) -> pl.DataFrame:
-        """Assign prediction roll-up levels using reference-data study counts."""
+        """Assign prediction roll-up levels using reference-fold group counts."""
         if not (hasattr(self, "rolled_up_mapping") and self.rolled_up_mapping):
             return df
 
@@ -196,6 +222,8 @@ class BayesianHierarchicalModel:
             )
 
         min_studies = int(self.model_settings["min_studies_per_group"])
+        min_sites = int(self.model_settings.get("min_sites_per_group", 0))
+        min_ref_sites = int(self.model_settings.get("min_ref_sites_per_group", 0))
         df = df.drop(
             [
                 col
@@ -215,16 +243,15 @@ class BayesianHierarchicalModel:
 
         for level in reversed(levels):
             label_col = self.hierarchy_mapping["column_names"][level]
-            counts = (
-                reference_df.select([label_col, "SS"])
-                .unique()
-                .group_by(label_col)
-                .agg(pl.col("SS").n_unique().alias("n_studies"))
-            )
+            counts = self.get_fold_level_group_counts(level, reference_df)
             df = df.join(counts, on=label_col, how="left")
             mask = pl.col("Final_hierarchical_group").is_null() & (
                 pl.col("n_studies") >= min_studies
             )
+            if min_sites > 0 and "n_sites" in counts.columns:
+                mask = mask & (pl.col("n_sites") >= min_sites)
+            if min_ref_sites > 0 and "n_ref_sites" in counts.columns:
+                mask = mask & (pl.col("n_ref_sites") >= min_ref_sites)
             df = df.with_columns(
                 [
                     pl.when(mask)
@@ -236,7 +263,13 @@ class BayesianHierarchicalModel:
                     .otherwise(pl.col("Final_hierarchical_level"))
                     .alias("Final_hierarchical_level"),
                 ]
-            ).drop("n_studies")
+            ).drop(
+                [
+                    col
+                    for col in ["n_studies", "n_sites", "n_ref_sites"]
+                    if col in df.columns
+                ]
+            )
 
         deepest_level = levels[-1]
         return df.with_columns(
@@ -295,6 +328,7 @@ class BayesianHierarchicalModel:
                 variable. This is the training data for the model.
         """
         # Initialize the PyMC model and return the training model object
+        self.training_model_data = train_data
         self.log_component_settings()
         self.model = GeneralHierarchicalModel(
             settings=self.model_settings, epsilon=self.epsilon
@@ -304,18 +338,28 @@ class BayesianHierarchicalModel:
         if self.model_settings["prior_predictive_checks"]:
             # Do prior predictive sampling before running the model
             self.logger.info("Running prior predictive sampling.")
+            prior_plot_pairs = [
+                tuple(pair)
+                for pair in self.model_settings["prior_predictive_plot_pairs"]
+            ]
+            prior_var_names = sorted(
+                {
+                    variable
+                    for category, variable in prior_plot_pairs
+                    if category in {"prior", "prior_predictive"}
+                    and variable in self.model_instance.named_vars
+                }
+            )
             self.prior_predictive = pm.sample_prior_predictive(
                 draws=1000,
                 model=self.model_instance,
-                progressbar=self.progressbar,
+                var_names=prior_var_names,
                 random_seed=self.sampling_seed,
             )
             plot_prior_distribution(
                 self.prior_predictive,
-                category_variable_pairs=[
-                    tuple(pair)
-                    for pair in self.model_settings["prior_predictive_plot_pairs"]
-                ],
+                category_variable_pairs=prior_plot_pairs,
+                likelihood=self.model_settings["likelihood"],
             )
             user_input = input("Continue sampling process? (y/n): ")
             if user_input.lower() == "n":
@@ -915,7 +959,7 @@ class BayesianHierarchicalModel:
         mu_alpha: np.ndarray,
         lower_perc: float,
         upper_perc: float,
-    ) -> dict[str, float]:
+    ) -> dict[str, Any]:
         posterior = self.trace.posterior
         if "delta_study_slope" not in posterior:
             return {}
@@ -943,6 +987,25 @@ class BayesianHierarchicalModel:
         response_values = self._response_delta(
             mu_alpha[:, None], fixed_eta[:, None] + deviations
         )
+        study_names = [
+            str(value)
+            for value in posterior["delta_study_slope"].coords[study_dim].values
+        ]
+        study_effect_values = {
+            study_names[idx]: float(value)
+            for idx, value in enumerate(np.nanmean(response_values, axis=0))
+        }
+        active_studies = self._active_study_names_for_slope_term(term, study_names)
+        if active_studies:
+            active_indices = [
+                idx for idx, study in enumerate(study_names) if study in active_studies
+            ]
+            study_effect_values = {
+                study: value
+                for study, value in study_effect_values.items()
+                if study in active_studies
+            }
+            response_values = response_values[:, active_indices]
         return {
             "random_slope_lower": float(
                 np.nanquantile(response_values, lower_perc / 100)
@@ -950,7 +1013,37 @@ class BayesianHierarchicalModel:
             "random_slope_upper": float(
                 np.nanquantile(response_values, upper_perc / 100)
             ),
+            "study_effect_values": study_effect_values,
         }
+
+    def _active_study_names_for_slope_term(
+        self,
+        term: str,
+        study_names: list[str],
+    ) -> set[str]:
+        """
+        Return studies where a study-slope term is present in the training data.
+
+        Study random slopes are sampled for every study-term combination. For
+        terms absent from a study, the posterior remains close to the common
+        prior and should not contribute to displayed study heterogeneity.
+        """
+        if self.training_model_data is None:
+            return set()
+        model_data = self.training_model_data
+        slope_terms = list(model_data["coords"].get("study_slope_vars", []))
+        if term not in slope_terms:
+            return set()
+
+        term_idx = slope_terms.index(term)
+        x_term = model_data["x_study_slope_obs"][:, term_idx]
+        study_idx = model_data["study_idx"]
+        active = set()
+        for idx, study in enumerate(study_names):
+            values = x_term[study_idx == idx]
+            if np.any(np.isfinite(values) & (np.abs(values) > 1e-12)):
+                active.add(study)
+        return active
 
     def _ecological_slope_response_range(
         self,
@@ -958,7 +1051,7 @@ class BayesianHierarchicalModel:
         mu_alpha: np.ndarray,
         lower_perc: float,
         upper_perc: float,
-    ) -> dict[str, float]:
+    ) -> dict[str, Any]:
         posterior = self.trace.posterior
         level = self.model_settings["hierarchical_levels"]
         beta_name = f"beta_{level}"
@@ -981,6 +1074,13 @@ class BayesianHierarchicalModel:
             .values
         )
         response_values = self._response_delta(mu_alpha[:, None], beta_values)
+        group_names = [
+            str(value) for value in posterior[beta_name].coords[group_dim].values
+        ]
+        ecological_effect_values = {
+            group_names[idx]: float(value)
+            for idx, value in enumerate(np.nanmean(response_values, axis=0))
+        }
         return {
             "ecological_slope_lower": float(
                 np.nanquantile(response_values, lower_perc / 100)
@@ -988,6 +1088,7 @@ class BayesianHierarchicalModel:
             "ecological_slope_upper": float(
                 np.nanquantile(response_values, upper_perc / 100)
             ),
+            "ecological_effect_values": ecological_effect_values,
         }
 
     def run_sampling(self) -> az.InferenceData:
@@ -1213,6 +1314,8 @@ class BayesianHierarchicalModel:
         y_obs = prediction_data["y_obs"]
 
         # Get taxon information if applicable
+        include_taxon = False
+        taxon_names = None
         if hasattr(self, "taxon_name_to_idx") and self.taxon_name_to_idx:
             include_taxon = True
             taxon_idx = prediction_data["taxon_idx"]
@@ -1240,17 +1343,17 @@ class BayesianHierarchicalModel:
         y_cond = y_cond_samples.mean(dim=("chain", "draw")).values
         reference_pred = ref_pred_samples.mean(dim=("chain", "draw")).values
 
-        # Create summary dataframe, now including Reference_pred
-        df_pred = pl.DataFrame(
-            {
-                "SSBS": site_names,
-                "Custom_taxonomic_group": taxon_names if include_taxon else None,
-                "Observed": y_obs,
-                "Predicted": y_cond,
-                "y_pred": y_pred,
-                "Reference_pred": reference_pred,
-            }
-        )
+        # Create summary dataframe, adding taxon labels only for taxonomic runs.
+        prediction_rows = {
+            "SSBS": site_names,
+            "Observed": y_obs,
+            "Predicted": y_cond,
+            "y_pred": y_pred,
+            "Reference_pred": reference_pred,
+        }
+        if include_taxon:
+            prediction_rows["Custom_taxonomic_group"] = taxon_names
+        df_pred = pl.DataFrame(prediction_rows)
 
         if include_predictive_distribution:
             # Flatten the full predictive distribution into a long-form dataframe

@@ -1,0 +1,255 @@
+biome_taxa_beta_training_ecol:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 1
+        varying_slope_level: 1
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2: []
+          level_3: []
+        study_effects: beta_glmm
+        training_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+biome_taxa_beta_standard_cv_ecol:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 1
+        varying_slope_level: 1
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2: []
+          level_3: []
+        study_effects: beta_glmm
+        training_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+    cv_settings:
+      split_level: site
+      stratification_cols:
+      - Biome
+      - Realm
+      - Custom_taxonomic_group
+biome_taxa_beta_cross_study_ecol:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 1
+        varying_slope_level: 1
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2: []
+          level_3: []
+        study_effects: beta_glmm
+        training_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+    cv_settings:
+      split_level: study
+      stratification_cols:
+      - Biome
+      - Realm
+      - Custom_taxonomic_group
+biome_taxa_beta_training_incl_re:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 1
+        varying_slope_level: 1
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2: []
+          level_3: []
+        study_effects: beta_glmm
+        training_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+        prediction_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.25
+            group_prior_sd_alpha: 0.15
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
+biome_taxa_beta_standard_cv_incl_re:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 1
+        varying_slope_level: 1
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2: []
+          level_3: []
+        study_effects: beta_glmm
+        training_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.25
+            group_prior_sd_alpha: 0.15
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
+    cv_settings:
+      split_level: site
+      stratification_cols:
+      - Biome
+      - Realm
+      - Custom_taxonomic_group
+biome_taxa_beta_cross_study_incl_re:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 1
+        varying_slope_level: 1
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2: []
+          level_3: []
+        study_effects: beta_glmm
+        training_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.25
+            group_prior_sd_alpha: 0.15
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
+    cv_settings:
+      split_level: study
+      stratification_cols:
+      - Biome
+      - Realm
+      - Custom_taxonomic_group

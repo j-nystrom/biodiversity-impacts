@@ -154,6 +154,8 @@ class BaseModelTask:
                 validate_input_files(file_paths=[self.taxon_mapping_path])
                 with open(self.taxon_mapping_path) as f:
                     self.taxon_name_to_idx = json.load(f)
+            else:
+                self.taxon_name_to_idx = {}
 
     def initialize_model(
         self,
@@ -184,8 +186,7 @@ class BaseModelTask:
             )
             if self.use_rolled_up_predictions:
                 model_init_kwargs["rolled_up_mapping"] = self.rolled_up_mapping
-            if self.taxonomic_resolution != "All_species":
-                model_init_kwargs["taxon_name_to_idx"] = self.taxon_name_to_idx
+            model_init_kwargs["taxon_name_to_idx"] = self.taxon_name_to_idx
 
         if self.model_type == "glmm":
             model_init_kwargs["run_folder_path"] = self.run_folder_path
@@ -453,6 +454,31 @@ class CrossValidationTask(BaseModelTask):
                         f"bhm_parameter_summary_fold_{fold}.parquet",
                     )
                 )
+
+            if isinstance(model, GeneralizedLinearMixedModel):
+                effect_summary = model.extract_effects()
+                effects_output_path = os.path.join(
+                    key_output_dir,
+                    f"train_effects_fold_{fold}.json",
+                )
+                validate_output_files(
+                    file_paths=[effects_output_path],
+                    files=[effect_summary],
+                )
+                with open(effects_output_path, "w") as out_stream:
+                    json.dump(effect_summary, out_stream, indent=2)
+                if model.family == "beta":
+                    beta_phi = {"phi": model.extract_beta_phi()}
+                    phi_output_path = os.path.join(
+                        key_output_dir,
+                        f"train_phi_fold_{fold}.json",
+                    )
+                    validate_output_files(
+                        file_paths=[phi_output_path],
+                        files=[beta_phi],
+                    )
+                    with open(phi_output_path, "w") as out_stream:
+                        json.dump(beta_phi, out_stream, indent=2)
 
             # Evaluate on train and test
             logger.info("Making predictions and evaluating model performance.")

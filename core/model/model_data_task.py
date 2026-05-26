@@ -152,6 +152,12 @@ class ModelDataTask:
             self.min_studies_per_group: int = model_run_settings[
                 "min_studies_per_group"
             ]
+            self.min_sites_per_group: int = model_run_settings.get(
+                "min_sites_per_group", 0
+            )
+            self.min_ref_sites_per_group: int = model_run_settings.get(
+                "min_ref_sites_per_group", 0
+            )
             self.hierarchy: dict[str, list[str]] = model_run_settings["hierarchy"]
 
         # If running cross-validation
@@ -309,6 +315,8 @@ class ModelDataTask:
             + self.continuous_vars
             + interaction_terms
         )
+        if self.diversity_type == "beta":
+            all_model_vars.append("Primary_minimal_site")
 
         # Save interaction terms to a JSON file, since they are created on the fly
         interaction_terms_path = os.path.join(
@@ -1058,11 +1066,30 @@ class ModelDataTask:
             unique_values = df.get_column(col_name).unique().to_list()
             mapping[level] = {value: idx for idx, value in enumerate(unique_values)}
 
-            # Count number of studies per group, for use in priors and roll up
+            # Count studies for prior scaling and group size metrics for roll-up.
+            count_exprs = [
+                pl.col("SS").n_unique().alias("n_studies"),
+                pl.col("SSBS").n_unique().alias("n_sites"),
+            ]
+            if "Primary_minimal_site" in df.columns:
+                count_exprs.append(
+                    pl.col("Primary_minimal_site").n_unique().alias("n_ref_sites")
+                )
             group_study_counts = (
-                df.select([pl.col(col_name), pl.col("SS")])
+                df.select(
+                    [
+                        col_name,
+                        "SS",
+                        "SSBS",
+                        *(
+                            ["Primary_minimal_site"]
+                            if "Primary_minimal_site" in df.columns
+                            else []
+                        ),
+                    ]
+                )
                 .group_by(col_name)
-                .agg(pl.col("SS").n_unique().alias("n_studies"))
+                .agg(count_exprs)
             )
             study_counts[level] = group_study_counts
             mapping[f"{level}_n_studies"] = dict(
@@ -1106,9 +1133,9 @@ class ModelDataTask:
         """
         Roll small hierarchy groups up to broader levels for prediction.
 
-        Groups are assigned from the most specific level upwards based on
-        `min_studies_per_group`, with a final population-level fallback for any
-        still-unassigned rows.
+        Groups are assigned from the most specific level upwards when they have
+        enough studies, focal sites, and, for beta diversity, reference sites.
+        Any still-unassigned rows fall back to the population-level parameters.
         """
         if self.rolled_up_predictions and self.min_studies_per_group < 2:
             raise ValueError(
@@ -1120,6 +1147,8 @@ class ModelDataTask:
         nb_initial_groups = df.get_column(label_cols[levels[-1]]).unique().len()
         logger.info(f"Initial number of groups: {nb_initial_groups}.")
         min_studies = self.min_studies_per_group
+        min_sites = self.min_sites_per_group
+        min_ref_sites = self.min_ref_sites_per_group
 
         # Step 1: Initialize Final group and level
         df = df.with_columns(
@@ -1135,10 +1164,14 @@ class ModelDataTask:
             group_study_counts = study_counts[level]
             df = df.join(group_study_counts, on=label_name, how="left")
 
-            # Assign group if unassigned and above threshold
+            # Assign group if unassigned and above all available thresholds.
             mask = pl.col("Final_hierarchical_group").is_null() & (
                 pl.col("n_studies") >= min_studies
             )
+            if min_sites > 0 and "n_sites" in group_study_counts.columns:
+                mask = mask & (pl.col("n_sites") >= min_sites)
+            if min_ref_sites > 0 and "n_ref_sites" in group_study_counts.columns:
+                mask = mask & (pl.col("n_ref_sites") >= min_ref_sites)
             df = df.with_columns(
                 [
                     pl.when(mask)
@@ -1150,35 +1183,61 @@ class ModelDataTask:
                     .otherwise(pl.col("Final_hierarchical_level"))
                     .alias("Final_hierarchical_level"),
                 ]
-            ).drop("n_studies")
+            ).drop(
+                [
+                    col
+                    for col in ["n_studies", "n_sites", "n_ref_sites"]
+                    if col in df.columns
+                ]
+            )
 
         # Step 3: Fallback to population-level
+        count_exprs = [
+            pl.col("SS").n_unique().alias("actual_study_count"),
+            pl.col("SSBS").n_unique().alias("actual_site_count"),
+        ]
+        if "Primary_minimal_site" in df.columns:
+            count_exprs.append(
+                pl.col("Primary_minimal_site").n_unique().alias("actual_ref_site_count")
+            )
+        count_cols = ["Final_hierarchical_group", "SS", "SSBS"]
+        if "Primary_minimal_site" in df.columns:
+            count_cols.append("Primary_minimal_site")
         group_study_counts = (
-            df.select(["Final_hierarchical_group", "SS"])
+            df.select(count_cols)
             .unique()
             .group_by("Final_hierarchical_group")
-            .agg(pl.count("SS").alias("actual_study_count"))
+            .agg(count_exprs)
         )
         logger.info("Applying population-level fallback for groups below threshold.")
         df = df.join(group_study_counts, on="Final_hierarchical_group", how="left")
+        too_small = pl.col("actual_study_count") < min_studies
+        if min_sites > 0 and "actual_site_count" in df.columns:
+            too_small = too_small | (pl.col("actual_site_count") < min_sites)
+        if min_ref_sites > 0 and "actual_ref_site_count" in df.columns:
+            too_small = too_small | (pl.col("actual_ref_site_count") < min_ref_sites)
         df = df.with_columns(
             [
-                pl.when(
-                    pl.col("Final_hierarchical_group").is_null()
-                    | (pl.col("actual_study_count") < min_studies)
-                )
+                pl.when(pl.col("Final_hierarchical_group").is_null() | too_small)
                 .then(pl.lit("Population"))
                 .otherwise(pl.col("Final_hierarchical_group"))
                 .alias("Final_hierarchical_group"),
-                pl.when(
-                    pl.col("Final_hierarchical_level").is_null()
-                    | (pl.col("actual_study_count") < min_studies)
-                )
+                pl.when(pl.col("Final_hierarchical_level").is_null() | too_small)
                 .then(pl.lit("Population"))
                 .otherwise(pl.col("Final_hierarchical_level"))
                 .alias("Final_hierarchical_level"),
             ]
-        ).drop("actual_study_count")
+        ).drop(
+            [
+                col
+                for col in [
+                    "actual_study_count",
+                    "actual_site_count",
+                    "actual_ref_site_count",
+                ]
+                if col in df.columns
+            ]
+        )
         post_counts = (
             df.select(["Final_hierarchical_group", "SS"])
             .unique()

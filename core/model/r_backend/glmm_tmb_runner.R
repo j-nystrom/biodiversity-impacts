@@ -344,8 +344,12 @@ if (mode == "extract-effects") {
 
     if (!is.null(re_study) && term %in% colnames(re_study)) {
       deviations <- re_study[[term]]
+      names(deviations) <- rownames(re_study)
       deviations <- deviations[!is.na(deviations)]
       if (length(deviations) > 1) {
+        study_values <- to_response_delta(est + deviations)
+        study_values <- as.list(as.numeric(study_values))
+        names(study_values) <- names(deviations)
         lower_eta <- est + as.numeric(
           quantile(deviations, probs = re_lower / 100)
         )
@@ -358,6 +362,7 @@ if (mode == "extract-effects") {
         ))
         info$random_slope_lower <- as.numeric(rs_resp[1])
         info$random_slope_upper <- as.numeric(rs_resp[2])
+        info$study_effect_values <- study_values
       }
     }
 

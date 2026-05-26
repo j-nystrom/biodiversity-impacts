@@ -201,7 +201,8 @@ class GeneralHierarchicalModel:
             dims=("idx", "study_slope_vars"),
         )
         pm.Data("site_idx", model_data["site_idx"], dims="idx")
-        pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
+        if "taxon_idx" in model_data:
+            pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
         if self.likelihood == "beta":
             y_obs = np.clip(model_data["y_obs"], self.eps, 1 - self.eps)
         else:
@@ -248,6 +249,7 @@ class GeneralHierarchicalModel:
         priors_config = self.settings["priors"]
         use_group_size_shrinkage = bool(priors_config["group_size_shrinkage"])
         shrinkage_scaling = priors_config["group_size_shrinkage_scaling"]
+        shrinkage_max_scale = priors_config.get("group_size_shrinkage_max_scale")
 
         def _group_prior_sd_beta(level: str) -> float:
             level_key = f"group_prior_sd_beta_level_{level}"
@@ -291,6 +293,8 @@ class GeneralHierarchicalModel:
                 else:  # "log"
                     raw_scale = np.log(n_studies_values) - 1.0
                 scale = np.maximum(raw_scale, self.eps)
+                if shrinkage_max_scale is not None:
+                    scale = np.minimum(scale, float(shrinkage_max_scale))
 
                 sigma_alpha = pm.Deterministic(
                     f"sigma_alpha_{level}",
@@ -655,6 +659,9 @@ def validate_model_settings(settings: dict[str, Any]) -> None:
     shrinkage_scaling = priors_cfg["group_size_shrinkage_scaling"]
     if shrinkage_scaling not in {"sqrt", "log"}:
         raise ValueError("priors.group_size_shrinkage_scaling must be 'sqrt' or 'log'.")
+    shrinkage_max_scale = priors_cfg.get("group_size_shrinkage_max_scale")
+    if shrinkage_max_scale is not None and shrinkage_max_scale <= 0:
+        raise ValueError("priors.group_size_shrinkage_max_scale must be > 0.")
 
     training_components = settings.get("training_components", {})
     prediction_components = settings.get("prediction_components", {})
@@ -752,7 +759,8 @@ def rolled_up_prediction_model(
             dims=("idx", "study_slope_vars"),
         )
         pm.Data("site_idx", model_data["site_idx"], dims="idx")
-        pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
+        if "taxon_idx" in model_data:
+            pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
         if likelihood == "beta":
             y_obs = np.clip(model_data["y_obs"], eps, 1 - eps)
         else:

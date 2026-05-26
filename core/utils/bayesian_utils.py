@@ -60,9 +60,75 @@ def plot_prior_and_posterior_distributions(
     plt.show()
 
 
+def _response_value(values: xr.DataArray, likelihood: str) -> xr.DataArray:
+    """Convert latent intercepts to the response scale."""
+    if likelihood == "gaussian":
+        return values
+    return 1 / (1 + np.exp(-values))
+
+
+def _response_delta(
+    intercept: xr.DataArray,
+    slope: xr.DataArray,
+    likelihood: str,
+) -> xr.DataArray:
+    """Convert latent slopes to response-scale changes from an intercept."""
+    if likelihood == "gaussian":
+        return slope
+
+    intercept_values = intercept.values
+    slope_values = slope.values
+    while intercept_values.ndim < slope_values.ndim:
+        intercept_values = np.expand_dims(intercept_values, axis=-1)
+
+    transformed = expit(intercept_values + slope_values) - expit(intercept_values)
+    return xr.DataArray(
+        transformed,
+        dims=slope.dims,
+        coords=slope.coords,
+    )
+
+
+def _matching_intercept(variable: str) -> str:
+    """Return the intercept variable that defines a slope's response scale."""
+    if variable == "mu_beta":
+        return "mu_alpha"
+    if variable.startswith("beta_"):
+        return variable.replace("beta_", "alpha_", 1)
+    return ""
+
+
+def _prior_data_for_plot(
+    data: xr.Dataset,
+    variable: str,
+    likelihood: str,
+) -> xr.DataArray | None:
+    """Return one prior-check variable on the data scale, if available."""
+    if variable not in data:
+        return None
+
+    # Intercepts represent expected response values at zero covariates.
+    if variable == "mu_alpha" or variable.startswith("alpha_"):
+        return _response_value(data[variable], likelihood)
+
+    # Slopes are easier to read as response-scale effects from the matching
+    # population or group intercept.
+    intercept = _matching_intercept(variable)
+    if intercept:
+        if intercept not in data:
+            return None
+        return _response_delta(data[intercept], data[variable], likelihood)
+
+    # Predictive and observed response variables are already on the data scale.
+    return data[variable]
+
+
 def plot_prior_distribution(
-    prior_samples: az.InferenceData, category_variable_pairs: list[tuple[str, str]]
+    prior_samples: az.InferenceData,
+    category_variable_pairs: list[tuple[str, str]],
+    likelihood: str,
 ) -> None:
+    """Plot requested prior predictive check variables on the data scale."""
 
     for category, variable in category_variable_pairs:
         if category == "prior":
@@ -72,15 +138,19 @@ def plot_prior_distribution(
         else:
             data = prior_samples.observed_data
 
+        plot_data = _prior_data_for_plot(data, variable, likelihood)
+        if plot_data is None:
+            continue
+
         az.plot_dist(
-            data[variable],
+            plot_data,
             figsize=(6, 3),
             kind="hist",
             color="C1",
             hist_kwargs=dict(alpha=0.6, bins=50),
         )
 
-        plt.title(f"{category}: {variable}", fontsize=12)
+        plt.title(f"{category}: {variable} (data scale)", fontsize=12)
 
         plt.tick_params(axis="x", labelsize=10)
         plt.tick_params(axis="y", labelsize=10)

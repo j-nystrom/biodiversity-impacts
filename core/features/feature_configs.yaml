@@ -202,12 +202,24 @@ diversity_metrics:
 
   beta:
     environmental_dist_vars:  # Used to calculate the environmental distance
-    # NOTE: Potentially just use all the environmental variables
-      - Max_temp_warmest_month_1km
-      - Min_temp_coldest_month_1km
-      - Precip_wettest_month_1km
-      - Precip_driest_month_1km
-      - Elevation_1km
+      alpha_equivalents:
+        - Annual_mean_temp_1km
+        - Temp_seasonality_1km
+        - Annual_precip_1km
+        - Precip_seasonality_1km
+        - Elevation_1km
+        - Terrain_roughness_1km
+      all:
+        - Annual_mean_temp_1km
+        - Temp_seasonality_1km
+        - Annual_precip_1km
+        - Precip_seasonality_1km
+        - Max_temp_warmest_month_1km
+        - Min_temp_coldest_month_1km
+        - Precip_wettest_month_1km
+        - Precip_driest_month_1km
+        - Elevation_1km
+        - Terrain_roughness_1km
 
     output_data_paths:  # NOTE: Logic for the "Custom" version is specified in the task
       # NOTE: Temporarily commented out to avoid unnecessary processing

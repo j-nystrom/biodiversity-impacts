@@ -67,8 +67,12 @@ run_settings:
   bayesian:
     prior_predictive_checks: False  # True if prior predictive checks should be run
     prior_predictive_plot_pairs:
+      - [prior, mu_alpha]
+      - [prior, mu_beta]
       - [prior, alpha_1]
       - [prior, beta_1]
+      - [prior, alpha_2]
+      - [prior, beta_2]
       - [prior_predictive, y_like]
       - [observed_data, y_like]
     sampling_statistics: False  # Calculate ESS and R-hat statistics
@@ -76,9 +80,11 @@ run_settings:
     save_predictive_distributions: False  # Save full predictive distributions (very large)
 
     hierarchical_levels: 2 # Number of hierarchical levels: [1, 2, 3]
-    varying_slope_level: 2  # Most granular level at which varying slopes are fitted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  hich varying slopes are estimated
+    varying_slope_level: 2  # Most granular level at which varying slopes are fitted
     rolled_up_predictions: True  # Predictions use higher level params for small groups
-    min_studies_per_group: 5  # Threshold for rolling up small groups to the next level
+    min_studies_per_group: 5  # Min studies needed to predict at a hierarchy group
+    min_sites_per_group: 100  # Min unique focal sites needed for hierarchy group
+    min_ref_sites_per_group: 5  # Min unique beta reference sites, if available
     hierarchy:  # Columns that define hierarchy; levels below the number above ignored
       level_1: [Biome, Custom_taxonomic_group]  # e.g. [Biome, Realm]
       level_2: [Realm]  # e.g. [Custom_taxonomic_group]
@@ -86,13 +92,13 @@ run_settings:
 
     # Model fixed / random effects structure
     training_components:
-      ecological: False
-      study_intercept: True
-      study_slopes: True
-      block_intercept: True
+      ecological: True
+      study_intercept: False
+      study_slopes: False
+      block_intercept: False
 
     prediction_components:
-      ecological: False
+      ecological: True
       study_intercept: False
       study_slopes: False
       block_intercept: False
@@ -103,7 +109,8 @@ run_settings:
     likelihood: beta  # [gaussian, beta]
     priors:
       group_size_shrinkage: True  # Apply shrinkage to group-level effects based on size
-      group_size_shrinkage_scaling: sqrt  # [sqrt, log]
+      group_size_shrinkage_scaling: log  # [sqrt, log]
+      group_size_shrinkage_max_scale: 1.0  # Cap prior scaling for all CV modes
       gaussian:
         alpha_hyper_mean: 0.5
         hyperprior_sd_alpha: 0.15
@@ -117,22 +124,22 @@ run_settings:
         sigma_y_sd: 0.20
 
       beta:
-        alpha_hyper_mean_mu: 0.35  # alpha: 0.35, beta: 0.25
-        hyperprior_sd_alpha: 0.30  # alpha: 0.30, beta: 0.25
-        group_prior_sd_alpha: 0.20  # alpha: 0.20, beta: 0.15
+        alpha_hyper_mean_mu: 0.35  # Beta response mean on data scale
+        hyperprior_sd_alpha: 0.30
+        group_prior_sd_alpha: 0.20
         hyperprior_sd_beta: 0.15
         group_prior_sd_beta_level_1: 0.12
         group_prior_sd_beta_level_2: 0.10
         group_prior_sd_beta_level_3: 0.05
-        random_intercept_sd: 0.30
-        random_slope_sd: 0.15
+        random_intercept_sd: 0.1
+        random_slope_sd: 0.05
         beta_likelihood:
           alpha: 2
-          beta: 12  # alpha: 12, beta: 20
+          beta: 12
 
     sampler:  # Refer to PyMC documentation for all settings
-      draws: 500
-      tune: 500
+      draws: 1000
+      tune: 1000
       cores: 4
       chains: 4
       target_accept: 0.95
@@ -157,7 +164,7 @@ run_settings:
 cv_settings:
   k: 5  # Number of folds
   split_level: study  # [site, study]
-  stratification_cols: [Biome]  # Variables to stratify on
+  stratification_cols: [Biome, Realm]  # Variables to stratify on
   # Biome, Custom_taxonomic_group, Realm
 
 
@@ -196,9 +203,9 @@ model_variables:
       - Annual_precip_1km
       - Precip_seasonality_1km
       - Elevation_1km
-      - Elevation_10km
+      #- Elevation_10km
       - Terrain_roughness_1km
-      - Terrain_roughness_10km
+      #- Terrain_roughness_10km
     interaction_cols: []
 
   # GLMM model for extended data
@@ -230,9 +237,9 @@ model_variables:
       - Annual_precip_1km
       - Precip_seasonality_1km
       - Elevation_1km
-      - Elevation_10km
+      #- Elevation_10km
       - Terrain_roughness_1km
-      - Terrain_roughness_10km
+      #- Terrain_roughness_10km
     interaction_cols: []
     slope_terms:  # This must be a subset of covariates above
       - Primary vegetation_Light use
@@ -254,9 +261,9 @@ model_variables:
       - Annual_precip_1km
       - Precip_seasonality_1km
       - Elevation_1km
-      - Elevation_10km
+      #- Elevation_10km
       - Terrain_roughness_1km
-      - Terrain_roughness_10km
+      #- Terrain_roughness_10km
 
 
 # Beta diversity -------------------
@@ -284,18 +291,18 @@ model_variables:
       - Road_density_10km_log
       #- Road_density_1km_log
       #- Road_density_50km_log
-      - Annual_mean_temp_1km
-      - Temp_seasonality_1km
-      - Annual_precip_1km
-      - Precip_seasonality_1km
-      - Elevation_1km
-      - Elevation_10km
-      - Terrain_roughness_1km
-      - Terrain_roughness_10km
+      #- Annual_mean_temp_1km
+      #- Temp_seasonality_1km
+      #- Annual_precip_1km
+      #- Precip_seasonality_1km
+      #- Elevation_1km
+      #- Elevation_10km
+      #- Terrain_roughness_1km
+      #- Terrain_roughness_10km
       - Pop_density_10km_log_diff  # Beta specific variables
       - Road_density_10km_log_diff
-      - Haversine_distance_log
-      - Gower_distance_log
+      #- Haversine_distance_log
+      - Gower_distance_all_feat_log
     interaction_cols: []
 
 
@@ -323,10 +330,18 @@ model_variables:
       - Road_density_10km_log
       #- Road_density_1km_log
       #- Road_density_50km_log
+      #- Annual_mean_temp_1km
+      #- Temp_seasonality_1km
+      #- Annual_precip_1km
+      #- Precip_seasonality_1km
+      #- Elevation_1km
+      #- Elevation_10km
+      #- Terrain_roughness_1km
+      #- Terrain_roughness_10km
       - Pop_density_10km_log_diff  # Beta specific variables
       - Road_density_10km_log_diff
-      - Haversine_distance_log
-      - Gower_distance_log
+      #- Haversine_distance_log
+      - Gower_distance_all_feat_log
     interaction_cols: []
     slope_terms: # This must be a subset of covariates above
       - Primary vegetation_Light use
@@ -341,20 +356,20 @@ model_variables:
       - Pasture_Light use
       - Pasture_Intense use
       - Urban_All uses
-      - Annual_mean_temp_1km
-      - Temp_seasonality_1km
-      - Annual_precip_1km
-      - Precip_seasonality_1km
-      - Elevation_1km
-      - Elevation_10km
-      - Terrain_roughness_1km
-      - Terrain_roughness_10km
+      #- Annual_mean_temp_1km
+      #- Temp_seasonality_1km
+      #- Annual_precip_1km
+      #- Precip_seasonality_1km
+      #- Elevation_1km
+      #- Elevation_10km
+      #- Terrain_roughness_1km
+      #- Terrain_roughness_10km
       - Pop_density_10km_log
       - Road_density_10km_log
       - Pop_density_10km_log_diff  # Beta specific variables
       - Road_density_10km_log_diff
-      - Haversine_distance_log
-      - Gower_distance_log
+      #- Haversine_distance_log
+      - Gower_distance_all_feat_log
 
 
 # Data grouping variables -------------------

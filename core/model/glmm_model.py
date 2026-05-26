@@ -62,6 +62,9 @@ class GeneralizedLinearMixedModel:
         self.fixed_effects = (
             self.categorical_vars + self.continuous_vars + self.interaction_terms
         )
+        self.effect_name_map = {
+            cast(str, self._replace_spaces(name)): name for name in self.fixed_effects
+        }
 
         # Random effects settings
         self.random_effects_type = self.model_settings["random_effects_type"]
@@ -168,7 +171,14 @@ class GeneralizedLinearMixedModel:
         with open(effects_output_path) as f:
             effects = json.load(f)
         os.remove(effects_output_path)
-        return effects
+        mapped_effects = {}
+        for term, values in effects.items():
+            mapped_term = self.effect_name_map.get(
+                term,
+                self.effect_name_map.get(term[:-1], term),
+            )
+            mapped_effects[mapped_term] = values
+        return mapped_effects
 
     def extract_beta_phi(self) -> float:
         """

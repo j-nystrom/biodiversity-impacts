@@ -6,32 +6,39 @@ sbm_beta_training_main:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: Custom
-
+        resolution: All_species
+        filtering_scope: Custom
     run_settings:
       model_type: bayesian
       model_variables: beta_main
       bayesian:
-        rolled_up_predictions: False
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        rolled_up_predictions: false
         study_effects: beta_glmm
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.5
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.5
             beta_likelihood:
               beta: 20
         training_components:
-          ecological: False
-          study_intercept: True
-          study_slopes: True
-          block_intercept: True
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
         prediction_components:
-          ecological: False
-          study_intercept: True
-          study_slopes: True
-          block_intercept: True
-
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
 sbm_beta_standard_cv_main:
   dag: crossval
   overrides:
@@ -40,35 +47,41 @@ sbm_beta_standard_cv_main:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: Custom
-
+        resolution: All_species
+        filtering_scope: Custom
     run_settings:
       model_type: bayesian
       model_variables: beta_main
       bayesian:
-        rolled_up_predictions: False
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        rolled_up_predictions: false
         study_effects: beta_glmm
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.5
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.5
             beta_likelihood:
               beta: 20
         training_components:
-          ecological: False
-          study_intercept: True
-          study_slopes: True
-          block_intercept: True
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
         prediction_components:
-          ecological: False
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
-
+          ecological: false
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
     cv_settings:
       split_level: site
-
 sbm_beta_cross_study_main:
   dag: crossval
   overrides:
@@ -77,31 +90,38 @@ sbm_beta_cross_study_main:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: Custom
-
+        resolution: All_species
+        filtering_scope: Custom
     run_settings:
       model_type: bayesian
       model_variables: beta_main
       bayesian:
-        rolled_up_predictions: False
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        rolled_up_predictions: false
         study_effects: beta_glmm
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.5
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.5
             beta_likelihood:
               beta: 20
         training_components:
-          ecological: False
-          study_intercept: True
-          study_slopes: True
-          block_intercept: True
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
         prediction_components:
-          ecological: False
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
-
+          ecological: false
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
     cv_settings:
       split_level: study

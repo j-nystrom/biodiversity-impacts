@@ -7,18 +7,20 @@ brtm_beta_training_main:
         fraction: 0.15
       taxonomic:
         resolution: Custom
-
     run_settings:
       model_type: bayesian
       model_variables: beta_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
-        rolled_up_predictions: True
+        rolled_up_predictions: true
         min_studies_per_group: 5
         hierarchy:
-          level_1: [Biome, Custom_taxonomic_group]
-          level_2: [Realm]
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2:
+          - Realm
           level_3: []
         priors:
           beta:
@@ -28,16 +30,15 @@ brtm_beta_training_main:
             beta_likelihood:
               beta: 20
         training_components:
-          ecological: True
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
         prediction_components:
-          ecological: True
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
-
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
 brtm_beta_standard_cv_main:
   dag: crossval
   overrides:
@@ -47,18 +48,20 @@ brtm_beta_standard_cv_main:
         fraction: 0.15
       taxonomic:
         resolution: Custom
-
     run_settings:
       model_type: bayesian
       model_variables: beta_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
-        rolled_up_predictions: True
+        rolled_up_predictions: true
         min_studies_per_group: 5
         hierarchy:
-          level_1: [Biome, Custom_taxonomic_group]
-          level_2: [Realm]
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2:
+          - Realm
           level_3: []
         priors:
           beta:
@@ -68,19 +71,21 @@ brtm_beta_standard_cv_main:
             beta_likelihood:
               beta: 20
         training_components:
-          ecological: True
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
         prediction_components:
-          ecological: True
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
-
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
     cv_settings:
       split_level: site
-
+      stratification_cols:
+      - Biome
+      - Realm
+      - Custom_taxonomic_group
 brtm_beta_cross_study_main:
   dag: crossval
   overrides:
@@ -90,18 +95,20 @@ brtm_beta_cross_study_main:
         fraction: 0.15
       taxonomic:
         resolution: Custom
-
     run_settings:
       model_type: bayesian
       model_variables: beta_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
-        rolled_up_predictions: True
+        rolled_up_predictions: true
         min_studies_per_group: 5
         hierarchy:
-          level_1: [Biome, Custom_taxonomic_group]
-          level_2: [Realm]
+          level_1:
+          - Biome
+          - Custom_taxonomic_group
+          level_2:
+          - Realm
           level_3: []
         priors:
           beta:
@@ -111,15 +118,18 @@ brtm_beta_cross_study_main:
             beta_likelihood:
               beta: 20
         training_components:
-          ecological: True
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
         prediction_components:
-          ecological: True
-          study_intercept: False
-          study_slopes: False
-          block_intercept: False
-
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
     cv_settings:
       split_level: study
+      stratification_cols:
+      - Biome
+      - Realm
+      - Custom_taxonomic_group

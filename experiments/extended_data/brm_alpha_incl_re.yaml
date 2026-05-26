@@ -1,4 +1,4 @@
-sbm_alpha_training_main:
+brm_alpha_training_incl_re:
   dag: training
   overrides:
     data_scope:
@@ -12,31 +12,32 @@ sbm_alpha_training_main:
       model_type: bayesian
       model_variables: alpha_main
       bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
         hierarchy:
           level_1:
           - Biome
           level_2:
           - Realm
           level_3: []
-        rolled_up_predictions: false
         study_effects: alpha_glmm
         training_components:
-          ecological: false
+          ecological: true
           study_intercept: true
           study_slopes: true
           block_intercept: true
         prediction_components:
-          ecological: false
+          ecological: true
           study_intercept: true
           study_slopes: true
           block_intercept: true
         priors:
           beta:
-            hyperprior_sd_alpha: 0.75
-            hyperprior_sd_beta: 0.5
-            random_intercept_sd: 0.75
-            random_slope_sd: 0.5
-sbm_alpha_standard_cv_main:
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+brm_alpha_standard_cv_incl_re:
   dag: crossval
   overrides:
     data_scope:
@@ -50,33 +51,34 @@ sbm_alpha_standard_cv_main:
       model_type: bayesian
       model_variables: alpha_main
       bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
         hierarchy:
           level_1:
           - Biome
           level_2:
           - Realm
           level_3: []
-        rolled_up_predictions: false
         study_effects: alpha_glmm
         training_components:
-          ecological: false
+          ecological: true
           study_intercept: true
           study_slopes: true
           block_intercept: true
         prediction_components:
-          ecological: false
+          ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
         priors:
           beta:
-            hyperprior_sd_alpha: 0.75
-            hyperprior_sd_beta: 0.5
-            random_intercept_sd: 0.75
-            random_slope_sd: 0.5
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
     cv_settings:
       split_level: site
-sbm_alpha_cross_study_main:
+brm_alpha_cross_study_incl_re:
   dag: crossval
   overrides:
     data_scope:
@@ -90,29 +92,30 @@ sbm_alpha_cross_study_main:
       model_type: bayesian
       model_variables: alpha_main
       bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
         hierarchy:
           level_1:
           - Biome
           level_2:
           - Realm
           level_3: []
-        rolled_up_predictions: false
         study_effects: alpha_glmm
         training_components:
-          ecological: false
+          ecological: true
           study_intercept: true
           study_slopes: true
           block_intercept: true
         prediction_components:
-          ecological: false
+          ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
         priors:
           beta:
-            hyperprior_sd_alpha: 0.75
-            hyperprior_sd_beta: 0.5
-            random_intercept_sd: 0.75
-            random_slope_sd: 0.5
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
     cv_settings:
       split_level: study

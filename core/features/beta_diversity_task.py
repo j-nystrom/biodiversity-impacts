@@ -75,7 +75,7 @@ class BetaDiversityTask:
         self.secondary_veg_col_order = (
             configs.feature_generation.secondary_veg_col_order
         )
-        self.environmental_dist_vars: list[str] = (
+        self.environmental_dist_vars: dict[str, list[str]] = (
             configs.diversity_metrics.beta.environmental_dist_vars
         )
 
@@ -621,17 +621,17 @@ class BetaDiversityTask:
                 site pair needed for the calculation.
 
         Returns:
-            - Updated DataFrame with Gower distance added, including
-                transformations.
+            - Updated DataFrame with Gower distances added for each configured
+                environmental covariate set, including transformations.
         """
         logger.info("Calculating environmental distances.")
 
-        def _gower_distance(row: dict) -> float:
+        def _gower_distance(row: dict, variables: list[str]) -> float:
             # Construct 2-row array for Gower: [references site, other site]
             data = np.array(
                 [
-                    [row[f"{var}_reference"] for var in self.environmental_dist_vars],
-                    [row[var] for var in self.environmental_dist_vars],
+                    [row[f"{var}_reference"] for var in variables],
+                    [row[var] for var in variables],
                 ],
                 dtype=float,
             )
@@ -639,31 +639,34 @@ class BetaDiversityTask:
             dist = gower.gower_matrix(data)[0, 1]
             return dist
 
-        # Build struct of all required columns (reference + non-reference)
-        env_columns = [pl.col(var) for var in self.environmental_dist_vars]
-        ref_columns = [
-            pl.col(f"{var}_reference") for var in self.environmental_dist_vars
-        ]
-        all_env_cols = env_columns + ref_columns
+        suffix_map = {"alpha_equivalents": "alpha_feat", "all": "all_feat"}
+        for feature_set, variables in self.environmental_dist_vars.items():
+            suffix = suffix_map[feature_set]
+            gower_col = f"Gower_distance_{suffix}"
 
-        # Apply the Gower function row-wise
-        df_comp_similarity = df_comp_similarity.with_columns(
-            pl.struct(all_env_cols)
-            .map_elements(_gower_distance, return_dtype=pl.Float64)
-            .alias("Gower_distance")
-        )
+            # Build struct of required columns for this covariate set.
+            env_columns = [pl.col(var) for var in variables]
+            ref_columns = [pl.col(f"{var}_reference") for var in variables]
+            all_env_cols = env_columns + ref_columns
 
-        # Do log, sqrt and cube root transformations to align with other features
-        # from the GenerateFeaturesTask. Cbrt is used in De Palma et al (2021)
-        df_comp_similarity = df_comp_similarity.with_columns(
-            ((pl.col("Gower_distance") + 1).log()).alias("Gower_distance_log")
-        )
-        df_comp_similarity = df_comp_similarity.with_columns(
-            ((pl.col("Gower_distance") + 1).sqrt()).alias("Gower_distance_sqrt")
-        )
-        df_comp_similarity = df_comp_similarity.with_columns(
-            (pl.col("Gower_distance").pow(1 / 3)).alias("Gower_distance_cbrt")
-        )
+            # Apply Gower row-wise for the current feature set.
+            df_comp_similarity = df_comp_similarity.with_columns(
+                pl.struct(all_env_cols)
+                .map_elements(
+                    lambda row, vars=variables: _gower_distance(row, vars),
+                    return_dtype=pl.Float64,
+                )
+                .alias(gower_col)
+            )
+
+            # Add the same transformations used for other continuous features.
+            df_comp_similarity = df_comp_similarity.with_columns(
+                [
+                    ((pl.col(gower_col) + 1).log()).alias(f"{gower_col}_log"),
+                    ((pl.col(gower_col) + 1).sqrt()).alias(f"{gower_col}_sqrt"),
+                    (pl.col(gower_col).pow(1 / 3)).alias(f"{gower_col}_cbrt"),
+                ]
+            )
 
         logger.info("Finished calculating environmental distances.")
 
