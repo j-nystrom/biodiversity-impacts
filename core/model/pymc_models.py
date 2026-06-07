@@ -141,9 +141,12 @@ class GeneralHierarchicalModel:
         """
         with pm.Model(coords=model_data["coords"]) as pred_model:
             # Set up data nodes and hierarchical indexing
-            self.add_data_nodes(model_data, self.settings)
-
             prediction_components = self._prediction_components()
+            self.add_data_nodes(
+                model_data,
+                self.settings,
+                use_ecological=prediction_components["ecological"],
+            )
             y_template = pt.as_tensor_variable(model_data["y_obs"])
             y_cond_linear = pt.zeros_like(y_template)
             y_intercept_linear = pt.zeros_like(y_template)
@@ -192,7 +195,12 @@ class GeneralHierarchicalModel:
 
             return pred_model
 
-    def add_data_nodes(self, model_data: dict, settings: dict[str, Any]) -> None:
+    def add_data_nodes(
+        self,
+        model_data: dict,
+        settings: dict[str, Any],
+        use_ecological: bool | None = None,
+    ) -> None:
         """Add input data nodes to the PyMC model."""
         pm.Data("x_obs", model_data["x_obs"], dims=("idx", "x_vars"))
         pm.Data(
@@ -215,6 +223,11 @@ class GeneralHierarchicalModel:
         pm.Data(
             "block_to_study_idx", model_data["block_to_study_idx"], dims="block_names"
         )
+
+        if use_ecological is None:
+            use_ecological = self._training_components()["ecological"]
+        if not use_ecological:
+            return
 
         # Process each hierarchical level and add relevant indices and mappings
         hierarchical_levels = settings["hierarchical_levels"]

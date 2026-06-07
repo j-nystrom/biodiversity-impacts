@@ -58,6 +58,7 @@ class BayesianHierarchicalModel:
         self.model_vars = model_vars
         self.logger = logger
         self.prior_predictive: az.InferenceData | None = None
+        self.prior_parameter_summary: pl.DataFrame | None = None
         self.progressbar: bool = sys.stderr.isatty()
         self.training_model_data: dict[str, Any] | None = None
 
@@ -334,6 +335,7 @@ class BayesianHierarchicalModel:
             settings=self.model_settings, epsilon=self.epsilon
         )
         self.model_instance = self.model.build_training_model(model_data=train_data)
+        self.prior_parameter_summary = self.sample_prior_parameter_summary()
 
         if self.model_settings["prior_predictive_checks"]:
             # Do prior predictive sampling before running the model
@@ -678,7 +680,7 @@ class BayesianHierarchicalModel:
         self,
         re_lower_perc: float = 5,
         re_upper_perc: float = 95,
-    ) -> dict[str, dict[str, float]]:
+    ) -> dict[str, dict[str, Any]]:
         """
         Extract fixed-effect summaries and optional study/ecological ranges.
 
@@ -723,19 +725,77 @@ class BayesianHierarchicalModel:
         return effect_dict
 
     def extract_parameter_summary(self) -> pl.DataFrame:
-        """Return compact posterior summaries for population and group parameters."""
-        posterior = self.trace.posterior
+        """
+        Return posterior summaries for population, ecological, and random terms.
+
+        Latent-scale summaries are stored in `mean`/`q*` columns. Response-scale
+        summaries are stored in `response_*` columns. Slope response effects are
+        evaluated relative to the matching intercept: population slopes use
+        `mu_alpha`, ecological group slopes use that group's `alpha_k`, and
+        study slopes use the study-level intercept when available.
+        """
+        return self._parameter_summary_from_dataset(self.trace.posterior)
+
+    def sample_prior_parameter_summary(self, draws: int = 1000) -> pl.DataFrame:
+        """
+        Sample model parameter priors and return compact summaries.
+
+        The returned table uses the same schema as `extract_parameter_summary`,
+        but rows summarize prior draws instead of posterior draws. Only
+        parameter variables are sampled; prior predictive observations and the
+        full prior trace are not retained.
+        """
+        prior_var_names = self._prior_parameter_var_names()
+        if not prior_var_names:
+            return pl.DataFrame()
+
+        self.logger.info("Sampling parameter priors for compact summaries.")
+        prior = pm.sample_prior_predictive(
+            draws=draws,
+            model=self.model_instance,
+            var_names=prior_var_names,
+            random_seed=self.sampling_seed,
+        )
+        if not hasattr(prior, "prior"):
+            return pl.DataFrame()
+
+        return self._parameter_summary_from_dataset(prior.prior)
+
+    def _prior_parameter_var_names(self) -> list[str]:
+        """Return prior variables needed for the parameter-summary table."""
+        candidate_names = [
+            "mu_alpha",
+            "mu_beta",
+            "gamma_study",
+            "gamma_block",
+            "delta_study_slope",
+        ]
+        for level in range(1, self.model_settings["hierarchical_levels"] + 1):
+            candidate_names.extend([f"alpha_{level}", f"beta_{level}"])
+
+        return [
+            variable
+            for variable in candidate_names
+            if variable in self.model_instance.named_vars
+        ]
+
+    def _parameter_summary_from_dataset(self, posterior: Any) -> pl.DataFrame:
+        """Return parameter summaries from a posterior-like xarray dataset."""
         rows = []
         mu_alpha = (
-            self._stack_trace_values("mu_alpha").reshape(-1)
+            self._stack_trace_values("mu_alpha", posterior=posterior).reshape(-1)
             if "mu_alpha" in posterior
             else None
         )
+        mu_beta = None
+        x_vars = []
 
         if mu_alpha is not None:
             rows.append(
                 self._parameter_summary_row(
                     parameter="mu_alpha",
+                    component="population",
+                    effect="intercept",
                     level="population",
                     group=None,
                     covariate=None,
@@ -745,7 +805,11 @@ class BayesianHierarchicalModel:
             )
 
         if "mu_beta" in posterior:
-            mu_beta = self._stack_trace_values("mu_beta", sample_first_dims=["x_vars"])
+            mu_beta = self._stack_trace_values(
+                "mu_beta",
+                sample_first_dims=["x_vars"],
+                posterior=posterior,
+            )
             x_vars = [
                 str(value) for value in posterior["mu_beta"].coords["x_vars"].values
             ]
@@ -753,6 +817,8 @@ class BayesianHierarchicalModel:
                 rows.append(
                     self._parameter_summary_row(
                         parameter="mu_beta",
+                        component="population",
+                        effect="slope",
                         level="population",
                         group=None,
                         covariate=term,
@@ -768,21 +834,25 @@ class BayesianHierarchicalModel:
         for level in range(1, self.model_settings["hierarchical_levels"] + 1):
             alpha_name = f"alpha_{level}"
             beta_name = f"beta_{level}"
-            group_names = self._level_group_names(level)
+            group_names = self._level_group_names(level, posterior=posterior)
+            alpha_values = None
 
             if alpha_name in posterior:
-                alpha_dims = self._parameter_dims(alpha_name)
+                alpha_dims = self._parameter_dims(alpha_name, posterior=posterior)
                 if not alpha_dims:
                     continue
                 group_dim = alpha_dims[0]
                 alpha_values = self._stack_trace_values(
                     alpha_name,
                     sample_first_dims=[group_dim],
+                    posterior=posterior,
                 )
                 for group_idx in range(alpha_values.shape[1]):
                     rows.append(
                         self._parameter_summary_row(
                             parameter=alpha_name,
+                            component="ecological",
+                            effect="intercept",
                             level=f"level_{level}",
                             group=group_names[group_idx],
                             covariate=None,
@@ -794,70 +864,222 @@ class BayesianHierarchicalModel:
                     )
 
             if beta_name in posterior:
-                beta_dims = self._parameter_dims(beta_name)
+                beta_dims = self._parameter_dims(beta_name, posterior=posterior)
                 if len(beta_dims) < 2:
                     continue
                 group_dim, covariate_dim = beta_dims[:2]
                 beta_values = self._stack_trace_values(
                     beta_name,
                     sample_first_dims=[group_dim, covariate_dim],
+                    posterior=posterior,
                 )
-                x_vars = self._x_vars()
+                x_vars = self._x_vars(posterior=posterior)
                 for group_idx in range(beta_values.shape[1]):
                     for term_idx, term in enumerate(x_vars):
+                        intercept_values = (
+                            alpha_values[:, group_idx]
+                            if alpha_values is not None
+                            else mu_alpha
+                        )
                         rows.append(
                             self._parameter_summary_row(
                                 parameter=beta_name,
+                                component="ecological",
+                                effect="slope",
                                 level=f"level_{level}",
                                 group=group_names[group_idx],
                                 covariate=term,
                                 values=beta_values[:, group_idx, term_idx],
                                 response_values=(
                                     self._response_delta(
-                                        mu_alpha,
+                                        intercept_values,
                                         beta_values[:, group_idx, term_idx],
                                     )
-                                    if mu_alpha is not None
+                                    if intercept_values is not None
                                     else None
                                 ),
                             )
                         )
 
+        rows.extend(
+            self._random_parameter_summary_rows(
+                mu_alpha,
+                mu_beta,
+                x_vars,
+                posterior=posterior,
+            )
+        )
+
         if not rows:
             return pl.DataFrame()
         return pl.DataFrame(rows)
+
+    def _random_parameter_summary_rows(
+        self,
+        mu_alpha: np.ndarray | None,
+        mu_beta: np.ndarray | None,
+        x_vars: list[str],
+        posterior: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return total study/block intercept and study-slope summaries."""
+        if posterior is None:
+            posterior = self.trace.posterior
+        rows = []
+        study_alpha = None
+
+        if mu_alpha is not None and "gamma_study" in posterior:
+            study_dim = self._parameter_dims("gamma_study", posterior=posterior)[0]
+            gamma_study = self._stack_trace_values(
+                "gamma_study",
+                sample_first_dims=[study_dim],
+                posterior=posterior,
+            )
+            study_names = [
+                str(value)
+                for value in posterior["gamma_study"].coords[study_dim].values
+            ]
+            study_alpha = mu_alpha[:, None] + gamma_study
+            for study_idx, study in enumerate(study_names):
+                rows.append(
+                    self._parameter_summary_row(
+                        parameter="alpha_study",
+                        component="random",
+                        effect="intercept",
+                        level="study",
+                        group=study,
+                        covariate=None,
+                        values=study_alpha[:, study_idx],
+                        response_values=self._response_value(study_alpha[:, study_idx]),
+                    )
+                )
+
+        if mu_alpha is not None and "gamma_block" in posterior:
+            block_dim = self._parameter_dims("gamma_block", posterior=posterior)[0]
+            gamma_block = self._stack_trace_values(
+                "gamma_block",
+                sample_first_dims=[block_dim],
+                posterior=posterior,
+            )
+            block_names = [
+                str(value)
+                for value in posterior["gamma_block"].coords[block_dim].values
+            ]
+            block_alpha = mu_alpha[:, None] + gamma_block
+            for block_idx, block in enumerate(block_names):
+                rows.append(
+                    self._parameter_summary_row(
+                        parameter="alpha_block",
+                        component="random",
+                        effect="intercept",
+                        level="block",
+                        group=block,
+                        covariate=None,
+                        values=block_alpha[:, block_idx],
+                        response_values=self._response_value(block_alpha[:, block_idx]),
+                    )
+                )
+
+        if mu_beta is None or "delta_study_slope" not in posterior:
+            return rows
+
+        parameter_dims = self._parameter_dims(
+            "delta_study_slope",
+            posterior=posterior,
+        )
+        if len(parameter_dims) < 2:
+            return rows
+        slope_dim = (
+            "study_slope_vars"
+            if "study_slope_vars" in parameter_dims
+            else parameter_dims[1]
+        )
+        study_dim = next(dim for dim in parameter_dims if dim != slope_dim)
+        study_slope_terms = [
+            str(value)
+            for value in posterior["delta_study_slope"].coords[slope_dim].values
+        ]
+        delta_study_slope = (
+            posterior["delta_study_slope"]
+            .stack(sample=("chain", "draw"))
+            .transpose("sample", study_dim, slope_dim)
+            .values
+        )
+        study_names = [
+            str(value)
+            for value in posterior["delta_study_slope"].coords[study_dim].values
+        ]
+
+        for slope_idx, term in enumerate(study_slope_terms):
+            if term not in x_vars:
+                continue
+            fixed_idx = x_vars.index(term)
+            for study_idx, study in enumerate(study_names):
+                study_beta = (
+                    mu_beta[:, fixed_idx] + delta_study_slope[:, study_idx, slope_idx]
+                )
+                intercept_values = (
+                    study_alpha[:, study_idx] if study_alpha is not None else mu_alpha
+                )
+                rows.append(
+                    self._parameter_summary_row(
+                        parameter="beta_study",
+                        component="random",
+                        effect="slope",
+                        level="study",
+                        group=study,
+                        covariate=term,
+                        values=study_beta,
+                        response_values=(
+                            self._response_delta(intercept_values, study_beta)
+                            if intercept_values is not None
+                            else None
+                        ),
+                    )
+                )
+
+        return rows
 
     def _stack_trace_values(
         self,
         variable: str,
         sample_first_dims: list[str] | None = None,
+        posterior: Any | None = None,
     ) -> np.ndarray:
         """Stack posterior chain/draw dimensions and return sample-first values."""
-        data_array = self.trace.posterior[variable].stack(sample=("chain", "draw"))
+        if posterior is None:
+            posterior = self.trace.posterior
+        data_array = posterior[variable].stack(sample=("chain", "draw"))
         if sample_first_dims:
             data_array = data_array.transpose("sample", *sample_first_dims)
         else:
             data_array = data_array.transpose("sample")
         return data_array.values
 
-    def _parameter_dims(self, variable: str) -> list[str]:
+    def _parameter_dims(
+        self,
+        variable: str,
+        posterior: Any | None = None,
+    ) -> list[str]:
         """Return posterior variable dimensions excluding chain and draw."""
-        return [
-            dim
-            for dim in self.trace.posterior[variable].dims
-            if dim not in {"chain", "draw"}
-        ]
+        if posterior is None:
+            posterior = self.trace.posterior
+        return [dim for dim in posterior[variable].dims if dim not in {"chain", "draw"}]
 
-    def _x_vars(self) -> list[str]:
+    def _x_vars(self, posterior: Any | None = None) -> list[str]:
         """Return model covariate names in posterior order."""
-        posterior = self.trace.posterior
+        if posterior is None:
+            posterior = self.trace.posterior
         if "mu_beta" in posterior and "x_vars" in posterior["mu_beta"].coords:
             return [
                 str(value) for value in posterior["mu_beta"].coords["x_vars"].values
             ]
         return self.categorical_vars + self.continuous_vars + self.interaction_terms
 
-    def _level_group_names(self, level: int) -> list[str]:
+    def _level_group_names(
+        self,
+        level: int,
+        posterior: Any | None = None,
+    ) -> list[str]:
         """Return hierarchy group labels in model index order."""
         level_key = f"level_{level}"
         mapping = self.hierarchy_mapping.get(level_key, {})
@@ -868,11 +1090,13 @@ class BayesianHierarchicalModel:
             ]
 
         variable = f"alpha_{level}"
-        if variable in self.trace.posterior:
-            dims = self._parameter_dims(variable)
+        if posterior is None:
+            posterior = self.trace.posterior
+        if variable in posterior:
+            dims = self._parameter_dims(variable, posterior=posterior)
             if dims:
                 dim = dims[0]
-                size = self.trace.posterior[variable].sizes[dim]
+                size = posterior[variable].sizes[dim]
                 return [str(idx) for idx in range(size)]
         return []
 
@@ -912,6 +1136,8 @@ class BayesianHierarchicalModel:
     @staticmethod
     def _parameter_summary_row(
         parameter: str,
+        component: str,
+        effect: str,
         level: str,
         group: str | None,
         covariate: str | None,
@@ -939,6 +1165,8 @@ class BayesianHierarchicalModel:
                 response_q97_5 = float(np.quantile(finite_response, 0.975))
         return {
             "parameter": parameter,
+            "component": component,
+            "effect": effect,
             "level": level,
             "group": group,
             "covariate": covariate,
@@ -963,9 +1191,6 @@ class BayesianHierarchicalModel:
         posterior = self.trace.posterior
         if "delta_study_slope" not in posterior:
             return {}
-        study_slope_terms = self.get_study_slope_terms()
-        if term not in study_slope_terms:
-            return {}
         parameter_dims = self._parameter_dims("delta_study_slope")
         if len(parameter_dims) < 2:
             return {}
@@ -975,6 +1200,12 @@ class BayesianHierarchicalModel:
             else parameter_dims[1]
         )
         study_dim = next(dim for dim in parameter_dims if dim != slope_dim)
+        study_slope_terms = [
+            str(value)
+            for value in posterior["delta_study_slope"].coords[slope_dim].values
+        ]
+        if term not in study_slope_terms:
+            return {}
         term_idx = study_slope_terms.index(term)
 
         deviations = (
@@ -984,35 +1215,46 @@ class BayesianHierarchicalModel:
             .transpose("sample", study_dim)
             .values
         )
+        intercept_values = mu_alpha[:, None]
+        if "gamma_study" in posterior:
+            gamma_study = (
+                posterior["gamma_study"]
+                .stack(sample=("chain", "draw"))
+                .transpose("sample", study_dim)
+                .values
+            )
+            intercept_values = mu_alpha[:, None] + gamma_study
         response_values = self._response_delta(
-            mu_alpha[:, None], fixed_eta[:, None] + deviations
+            intercept_values, fixed_eta[:, None] + deviations
         )
         study_names = [
             str(value)
             for value in posterior["delta_study_slope"].coords[study_dim].values
         ]
+        study_means = np.nanmean(response_values, axis=0)
         study_effect_values = {
-            study_names[idx]: float(value)
-            for idx, value in enumerate(np.nanmean(response_values, axis=0))
+            study_names[idx]: float(value) for idx, value in enumerate(study_means)
         }
         active_studies = self._active_study_names_for_slope_term(term, study_names)
         if active_studies:
             active_indices = [
                 idx for idx, study in enumerate(study_names) if study in active_studies
             ]
-            study_effect_values = {
-                study: value
-                for study, value in study_effect_values.items()
-                if study in active_studies
-            }
+            study_names = [study_names[idx] for idx in active_indices]
             response_values = response_values[:, active_indices]
+            study_means = np.nanmean(response_values, axis=0)
+            study_effect_values = {
+                study_names[idx]: float(value) for idx, value in enumerate(study_means)
+            }
+
+        random_slope_lower = float(np.nanquantile(study_means, lower_perc / 100))
+        random_slope_upper = float(np.nanquantile(study_means, upper_perc / 100))
+        random_slope_mean = float(np.nanmean(study_means))
+
         return {
-            "random_slope_lower": float(
-                np.nanquantile(response_values, lower_perc / 100)
-            ),
-            "random_slope_upper": float(
-                np.nanquantile(response_values, upper_perc / 100)
-            ),
+            "random_slope_lower": random_slope_lower,
+            "random_slope_upper": random_slope_upper,
+            "random_slope_mean": random_slope_mean,
             "study_effect_values": study_effect_values,
         }
 
@@ -1065,6 +1307,17 @@ class BayesianHierarchicalModel:
             return {}
         group_dim, covariate_dim = parameter_dims[:2]
         term_idx = x_vars.index(term)
+        alpha_name = f"alpha_{level}"
+        if alpha_name in posterior:
+            alpha_group_dim = self._parameter_dims(alpha_name)[0]
+            alpha_values = (
+                posterior[alpha_name]
+                .stack(sample=("chain", "draw"))
+                .transpose("sample", alpha_group_dim)
+                .values
+            )
+        else:
+            alpha_values = mu_alpha[:, None]
 
         beta_values = (
             posterior[beta_name]
@@ -1073,21 +1326,28 @@ class BayesianHierarchicalModel:
             .transpose("sample", group_dim)
             .values
         )
-        response_values = self._response_delta(mu_alpha[:, None], beta_values)
-        group_names = [
-            str(value) for value in posterior[beta_name].coords[group_dim].values
-        ]
+        response_values = self._response_delta(alpha_values, beta_values)
+        group_names = self._level_group_names(level)
+        if len(group_names) != beta_values.shape[1]:
+            group_names = [
+                str(value) for value in posterior[beta_name].coords[group_dim].values
+            ]
+        ecological_means = np.nanmean(response_values, axis=0)
         ecological_effect_values = {
-            group_names[idx]: float(value)
-            for idx, value in enumerate(np.nanmean(response_values, axis=0))
+            group_names[idx]: float(value) for idx, value in enumerate(ecological_means)
         }
+        ecological_slope_lower = float(
+            np.nanquantile(ecological_means, lower_perc / 100)
+        )
+        ecological_slope_upper = float(
+            np.nanquantile(ecological_means, upper_perc / 100)
+        )
+        ecological_slope_mean = float(np.nanmean(ecological_means))
+
         return {
-            "ecological_slope_lower": float(
-                np.nanquantile(response_values, lower_perc / 100)
-            ),
-            "ecological_slope_upper": float(
-                np.nanquantile(response_values, upper_perc / 100)
-            ),
+            "ecological_slope_lower": ecological_slope_lower,
+            "ecological_slope_upper": ecological_slope_upper,
+            "ecological_slope_mean": ecological_slope_mean,
             "ecological_effect_values": ecological_effect_values,
         }
 

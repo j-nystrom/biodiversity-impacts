@@ -102,5 +102,9 @@ brm_alpha_cross_study_main:
           study_intercept: false
           study_slopes: false
           block_intercept: false
+        priors:
+          beta:
+            beta_likelihood:
+              beta: 15
     cv_settings:
       split_level: study

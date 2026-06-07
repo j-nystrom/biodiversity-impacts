@@ -320,8 +320,23 @@ class ModelTrainingTask(BaseModelTask):
 
             parameter_summary = model.extract_parameter_summary()
             parameter_summary.write_parquet(
+                os.path.join(key_output_dir, "parameter_summary.parquet")
+            )
+            parameter_summary.write_parquet(
                 os.path.join(key_output_dir, "bhm_parameter_summary.parquet")
             )
+
+            prior_parameter_summary = model.prior_parameter_summary
+            if (
+                prior_parameter_summary is not None
+                and not prior_parameter_summary.is_empty()
+            ):
+                prior_parameter_summary.write_parquet(
+                    os.path.join(key_output_dir, "prior_parameter_summary.parquet")
+                )
+                prior_parameter_summary.write_parquet(
+                    os.path.join(key_output_dir, "bhm_prior_parameter_summary.parquet")
+                )
 
             if model.prior_predictive is not None:
                 self.save_outputs(
@@ -360,6 +375,10 @@ class ModelTrainingTask(BaseModelTask):
             )
             with open(effects_output_path, "w") as out_stream:
                 json.dump(effect_summary, out_stream, indent=2)
+            parameter_summary = model.extract_parameter_summary()
+            parameter_summary.write_parquet(
+                os.path.join(key_output_dir, "parameter_summary.parquet")
+            )
             if model.family == "beta":
                 beta_phi = {"phi": model.extract_beta_phi()}
                 phi_output_path = os.path.join(key_output_dir, "train_phi.json")
@@ -451,9 +470,32 @@ class CrossValidationTask(BaseModelTask):
                 parameter_summary.write_parquet(
                     os.path.join(
                         key_output_dir,
+                        f"parameter_summary_fold_{fold}.parquet",
+                    )
+                )
+                parameter_summary.write_parquet(
+                    os.path.join(
+                        key_output_dir,
                         f"bhm_parameter_summary_fold_{fold}.parquet",
                     )
                 )
+                prior_parameter_summary = model.prior_parameter_summary
+                if (
+                    prior_parameter_summary is not None
+                    and not prior_parameter_summary.is_empty()
+                ):
+                    prior_parameter_summary.write_parquet(
+                        os.path.join(
+                            key_output_dir,
+                            f"prior_parameter_summary_fold_{fold}.parquet",
+                        )
+                    )
+                    prior_parameter_summary.write_parquet(
+                        os.path.join(
+                            key_output_dir,
+                            f"bhm_prior_parameter_summary_fold_{fold}.parquet",
+                        )
+                    )
 
             if isinstance(model, GeneralizedLinearMixedModel):
                 effect_summary = model.extract_effects()
@@ -467,6 +509,13 @@ class CrossValidationTask(BaseModelTask):
                 )
                 with open(effects_output_path, "w") as out_stream:
                     json.dump(effect_summary, out_stream, indent=2)
+                parameter_summary = model.extract_parameter_summary()
+                parameter_summary.write_parquet(
+                    os.path.join(
+                        key_output_dir,
+                        f"parameter_summary_fold_{fold}.parquet",
+                    )
+                )
                 if model.family == "beta":
                     beta_phi = {"phi": model.extract_beta_phi()}
                     phi_output_path = os.path.join(

@@ -25,8 +25,6 @@ brm_beta_training_main:
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             beta_likelihood:
               beta: 20
         training_components:
@@ -66,8 +64,6 @@ brm_beta_standard_cv_main:
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             beta_likelihood:
               beta: 20
         training_components:
@@ -109,10 +105,8 @@ brm_beta_cross_study_main:
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             beta_likelihood:
-              beta: 20
+              beta: 25
         training_components:
           ecological: true
           study_intercept: false

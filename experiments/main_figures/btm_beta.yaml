@@ -1,4 +1,4 @@
-brtm_beta_training_main:
+btm_beta_training_main:
   dag: training
   overrides:
     data_scope:
@@ -18,15 +18,12 @@ brtm_beta_training_main:
         hierarchy:
           level_1:
           - Biome
-          - Custom_taxonomic_group
           level_2:
-          - Realm
+          - Custom_taxonomic_group
           level_3: []
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             beta_likelihood:
               beta: 20
         training_components:
@@ -39,7 +36,7 @@ brtm_beta_training_main:
           study_intercept: false
           study_slopes: false
           block_intercept: false
-brtm_beta_standard_cv_main:
+btm_beta_standard_cv_main:
   dag: crossval
   overrides:
     data_scope:
@@ -59,15 +56,12 @@ brtm_beta_standard_cv_main:
         hierarchy:
           level_1:
           - Biome
-          - Custom_taxonomic_group
           level_2:
-          - Realm
+          - Custom_taxonomic_group
           level_3: []
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             beta_likelihood:
               beta: 20
         training_components:
@@ -82,11 +76,7 @@ brtm_beta_standard_cv_main:
           block_intercept: false
     cv_settings:
       split_level: site
-      stratification_cols:
-      - Biome
-      - Realm
-      - Custom_taxonomic_group
-brtm_beta_cross_study_main:
+btm_beta_cross_study_main:
   dag: crossval
   overrides:
     data_scope:
@@ -106,17 +96,14 @@ brtm_beta_cross_study_main:
         hierarchy:
           level_1:
           - Biome
-          - Custom_taxonomic_group
           level_2:
-          - Realm
+          - Custom_taxonomic_group
           level_3: []
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             beta_likelihood:
-              beta: 20
+              beta: 25
         training_components:
           ecological: true
           study_intercept: false
@@ -129,7 +116,3 @@ brtm_beta_cross_study_main:
           block_intercept: false
     cv_settings:
       split_level: study
-      stratification_cols:
-      - Biome
-      - Realm
-      - Custom_taxonomic_group

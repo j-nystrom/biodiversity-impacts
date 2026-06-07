@@ -202,6 +202,41 @@ class GeneralizedLinearMixedModel:
         os.remove(phi_output_path)
         return float(out["phi"])
 
+    def extract_parameter_summary(self) -> pl.DataFrame:
+        """
+        Extract GLMM parameter summaries with the same schema as BHM outputs.
+
+        Fixed effects include approximate Wald intervals. Random-effect rows are
+        conditional estimates from the fitted GLMM object, so their quantile
+        columns equal the conditional estimate rather than posterior intervals.
+        """
+        if not self.model_rds_path:
+            raise ValueError("Model has not been fit; no RDS path is available.")
+
+        summary_output_path = self._create_temp_path(suffix=".json")
+        self._run_rscript(
+            [
+                "--mode=extract-parameter-summary",
+                f"--model-path={self.model_rds_path}",
+                f"--parameter-summary-output-path={summary_output_path}",
+                f"--link={self.link}",
+            ]
+        )
+        with open(summary_output_path) as in_stream:
+            rows = json.load(in_stream)
+        os.remove(summary_output_path)
+
+        for row in rows:
+            covariate = row.get("covariate")
+            if covariate is None:
+                continue
+            row["covariate"] = self.effect_name_map.get(
+                covariate,
+                self.effect_name_map.get(covariate[:-1], covariate),
+            )
+
+        return pl.DataFrame(rows)
+
     def predict(self, prediction_data: pl.DataFrame, pred_mode: str) -> pl.DataFrame:
         """
         Generate predictions using the fitted R model.

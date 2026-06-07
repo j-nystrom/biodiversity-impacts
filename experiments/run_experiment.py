@@ -1,19 +1,3 @@
-import argparse
-import logging
-import os
-import subprocess
-import sys
-from copy import deepcopy
-from pathlib import Path
-
-import yaml
-
-repo_root = Path(__file__).resolve().parents[1]
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
-from core.utils.general_utils import create_run_folder_path  # noqa: E402
-
 """
 Run model experiments defined in a single YAML file.
 
@@ -40,6 +24,22 @@ Usage examples:
   python experiments/run_experiment.py --experiments-file experiments/bhm_test.yaml \
     --parallel 2
 """
+
+import argparse
+import logging
+import os
+import subprocess
+import sys
+from copy import deepcopy
+from pathlib import Path
+
+import yaml
+
+repo_root = Path(__file__).resolve().parents[1]
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+from core.utils.general_utils import create_run_folder_path  # noqa: E402
 
 
 def deep_update(base: dict, override: dict) -> dict:
@@ -120,8 +120,16 @@ def _run_experiment(
     env["MODEL_CONFIG_PATH"] = str(config_path)
     env["RUN_FOLDER_PATH"] = str(run_folder)
 
+    # The child DAG runs from core/dags, so it needs the repo root on PYTHONPATH
+    # to resolve imports such as `core.model...`.
+    pythonpath = env.get("PYTHONPATH")
+    if pythonpath:
+        env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{pythonpath}"
+    else:
+        env["PYTHONPATH"] = str(repo_root)
+
     log_path = run_folder / "experiment.log"
-    cmd = ["python", str(work_dir / "dags.py"), dag]
+    cmd = [sys.executable, str(work_dir / "dags.py"), dag]
 
     logger.info(
         "Starting experiment '%s' (dag=%s). Run folder: %s.",

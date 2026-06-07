@@ -1,15 +1,15 @@
-brtm_beta_training_incl_re:
+btm_alpha_training_incl_re:
   dag: training
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: Custom
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: alpha_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -18,42 +18,51 @@ brtm_beta_training_incl_re:
         hierarchy:
           level_1:
           - Biome
-          - Custom_taxonomic_group
           level_2:
-          - Realm
+          - Custom_taxonomic_group
           level_3: []
-        study_effects: beta_glmm
+        study_effects:
+          slope_terms:
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
+          - Pop_density_10km_log
+          - Road_density_10km_log
         training_components:
           ecological: true
           study_intercept: true
           study_slopes: true
-          block_intercept: true
+          block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: true
           study_slopes: true
-          block_intercept: true
+          block_intercept: false
         priors:
           beta:
-            alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
-            beta_likelihood:
-              beta: 20
-brtm_beta_standard_cv_incl_re:
+btm_alpha_standard_cv_incl_re:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: Custom
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: alpha_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -62,16 +71,30 @@ brtm_beta_standard_cv_incl_re:
         hierarchy:
           level_1:
           - Biome
-          - Custom_taxonomic_group
           level_2:
-          - Realm
+          - Custom_taxonomic_group
           level_3: []
-        study_effects: beta_glmm
+        study_effects:
+          slope_terms:
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
+          - Pop_density_10km_log
+          - Road_density_10km_log
         training_components:
           ecological: true
           study_intercept: true
           study_slopes: true
-          block_intercept: true
+          block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
@@ -79,31 +102,25 @@ brtm_beta_standard_cv_incl_re:
           block_intercept: false
         priors:
           beta:
-            alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
-            beta_likelihood:
-              beta: 20
     cv_settings:
       split_level: site
       stratification_cols:
       - Biome
-      - Realm
       - Custom_taxonomic_group
-brtm_beta_cross_study_incl_re:
+btm_alpha_cross_study_incl_re:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: Custom
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: alpha_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -112,16 +129,30 @@ brtm_beta_cross_study_incl_re:
         hierarchy:
           level_1:
           - Biome
-          - Custom_taxonomic_group
           level_2:
-          - Realm
+          - Custom_taxonomic_group
           level_3: []
-        study_effects: beta_glmm
+        study_effects:
+          slope_terms:
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
+          - Pop_density_10km_log
+          - Road_density_10km_log
         training_components:
           ecological: true
           study_intercept: true
           study_slopes: true
-          block_intercept: true
+          block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
@@ -129,16 +160,12 @@ brtm_beta_cross_study_incl_re:
           block_intercept: false
         priors:
           beta:
-            alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 0.25
-            group_prior_sd_alpha: 0.15
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
             beta_likelihood:
-              beta: 20
+              beta: 15
     cv_settings:
       split_level: study
       stratification_cols:
       - Biome
-      - Realm
       - Custom_taxonomic_group

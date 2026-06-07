@@ -79,16 +79,16 @@ run_settings:
     save_models_and_traces: False  # Save PyMC model objects and traces to disk (can be large)
     save_predictive_distributions: False  # Save full predictive distributions (very large)
 
-    hierarchical_levels: 2 # Number of hierarchical levels: [1, 2, 3]
-    varying_slope_level: 2  # Most granular level at which varying slopes are fitted
+    hierarchical_levels: 3 # Number of hierarchical levels: [1, 2, 3]
+    varying_slope_level: 3  # Most granular level at which varying slopes are fitted
     rolled_up_predictions: True  # Predictions use higher level params for small groups
     min_studies_per_group: 5  # Min studies needed to predict at a hierarchy group
     min_sites_per_group: 100  # Min unique focal sites needed for hierarchy group
     min_ref_sites_per_group: 5  # Min unique beta reference sites, if available
     hierarchy:  # Columns that define hierarchy; levels below the number above ignored
-      level_1: [Biome, Custom_taxonomic_group]  # e.g. [Biome, Realm]
+      level_1: [Biome]  # e.g. [Biome, Realm]
       level_2: [Realm]  # e.g. [Custom_taxonomic_group]
-      level_3: []
+      level_3: [Custom_taxonomic_group]
 
     # Model fixed / random effects structure
     training_components:
@@ -124,18 +124,18 @@ run_settings:
         sigma_y_sd: 0.20
 
       beta:
-        alpha_hyper_mean_mu: 0.35  # Beta response mean on data scale
-        hyperprior_sd_alpha: 0.30
-        group_prior_sd_alpha: 0.20
-        hyperprior_sd_beta: 0.15
-        group_prior_sd_beta_level_1: 0.12
-        group_prior_sd_beta_level_2: 0.10
-        group_prior_sd_beta_level_3: 0.05
-        random_intercept_sd: 0.1
-        random_slope_sd: 0.05
+        alpha_hyper_mean_mu: 0.35  # Response mean on data scale; beta-diversity experiments override to 0.25
+        hyperprior_sd_alpha: 0.25  # Population intercept prior SD on latent scale
+        group_prior_sd_alpha: 0.15  # Ecological group intercept prior SD on latent scale
+        hyperprior_sd_beta: 0.12  # Population slope prior SD on latent scale
+        group_prior_sd_beta_level_1: 0.10  # Level-1 ecological slope prior SD
+        group_prior_sd_beta_level_2: 0.07  # Level-2 ecological slope prior SD
+        group_prior_sd_beta_level_3: 0.05  # Level-3 ecological slope prior SD
+        random_intercept_sd: 0.1  # Study/block random intercept prior SD
+        random_slope_sd: 0.05  # Study random slope prior SD
         beta_likelihood:
           alpha: 2
-          beta: 12
+          beta: 12  # Alpha training/standard CV; experiments override other cases
 
     sampler:  # Refer to PyMC documentation for all settings
       draws: 1000
@@ -164,7 +164,7 @@ run_settings:
 cv_settings:
   k: 5  # Number of folds
   split_level: study  # [site, study]
-  stratification_cols: [Biome, Realm]  # Variables to stratify on
+  stratification_cols: [Biome]  # Variables to stratify on
   # Biome, Custom_taxonomic_group, Realm
 
 
@@ -190,6 +190,36 @@ model_variables:
       - Pasture_Minimal use
       - Pasture_Light use
       - Pasture_Intense use
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_1km
+      #- Elevation_10km
+      - Terrain_roughness_1km
+      #- Terrain_roughness_10km
+    interaction_cols: []
+
+  # Alternative alpha model using predominant land-use classes. Primary
+  # vegetation minimal use remains the intercept, so light and intense primary
+  # vegetation are still explicit covariates.
+  alpha_main_predominant_lu:
+    response_var: Scaled_Geometric_mean_abundance
+    requires_intensity_data: True
+    categorical_vars:
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_All uses
+      - Cropland_All uses
+      - Pasture_All uses
       - Urban_All uses
     continuous_vars:
       - Pop_density_10km_log
@@ -265,6 +295,52 @@ model_variables:
       - Terrain_roughness_1km
       #- Terrain_roughness_10km
 
+  # Alternative alpha GLMM with predominant land use instead of full intensity
+  # splits, except for primary vegetation light/intense effects.
+  alpha_glmm_predominant_lu:
+    response_var: Scaled_Geometric_mean_abundance
+    requires_intensity_data: True
+    categorical_vars:
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_All uses
+      - Cropland_All uses
+      - Pasture_All uses
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_1km
+      #- Elevation_10km
+      - Terrain_roughness_1km
+      #- Terrain_roughness_10km
+    interaction_cols: []
+    slope_terms:  # This must be a subset of covariates above
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_All uses
+      - Cropland_All uses
+      - Pasture_All uses
+      - Urban_All uses
+      - Pop_density_10km_log
+      - Road_density_10km_log
+      - Annual_mean_temp_1km
+      - Temp_seasonality_1km
+      - Annual_precip_1km
+      - Precip_seasonality_1km
+      - Elevation_1km
+      #- Elevation_10km
+      - Terrain_roughness_1km
+      #- Terrain_roughness_10km
+
 
 # Beta diversity -------------------
 
@@ -283,6 +359,39 @@ model_variables:
       - Pasture_Minimal use
       - Pasture_Light use
       - Pasture_Intense use
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
+      #- Annual_mean_temp_1km
+      #- Temp_seasonality_1km
+      #- Annual_precip_1km
+      #- Precip_seasonality_1km
+      #- Elevation_1km
+      #- Elevation_10km
+      #- Terrain_roughness_1km
+      #- Terrain_roughness_10km
+      - Pop_density_10km_log_diff  # Beta specific variables
+      - Road_density_10km_log_diff
+      #- Haversine_distance_log
+      - Gower_distance_all_feat_log
+    interaction_cols: []
+
+  # Alternative beta model using predominant land-use classes. Primary
+  # vegetation minimal use remains the reference state.
+  beta_main_predominant_lu:
+    response_var: Bray_Curtis_score
+    requires_intensity_data: True
+    categorical_vars:
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_All uses
+      - Cropland_All uses
+      - Pasture_All uses
       - Urban_All uses
     continuous_vars:
       - Pop_density_10km_log
@@ -355,6 +464,60 @@ model_variables:
       - Pasture_Minimal use
       - Pasture_Light use
       - Pasture_Intense use
+      - Urban_All uses
+      #- Annual_mean_temp_1km
+      #- Temp_seasonality_1km
+      #- Annual_precip_1km
+      #- Precip_seasonality_1km
+      #- Elevation_1km
+      #- Elevation_10km
+      #- Terrain_roughness_1km
+      #- Terrain_roughness_10km
+      - Pop_density_10km_log
+      - Road_density_10km_log
+      - Pop_density_10km_log_diff  # Beta specific variables
+      - Road_density_10km_log_diff
+      #- Haversine_distance_log
+      - Gower_distance_all_feat_log
+
+  # Alternative beta GLMM with predominant land use instead of full intensity
+  # splits, except for primary vegetation light/intense effects.
+  beta_glmm_predominant_lu:
+    response_var: Bray_Curtis_score
+    requires_intensity_data: True
+    categorical_vars:
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_All uses
+      - Cropland_All uses
+      - Pasture_All uses
+      - Urban_All uses
+    continuous_vars:
+      - Pop_density_10km_log
+      #- Pop_density_1km_log
+      #- Pop_density_50km_log
+      - Road_density_10km_log
+      #- Road_density_1km_log
+      #- Road_density_50km_log
+      #- Annual_mean_temp_1km
+      #- Temp_seasonality_1km
+      #- Annual_precip_1km
+      #- Precip_seasonality_1km
+      #- Elevation_1km
+      #- Elevation_10km
+      #- Terrain_roughness_1km
+      #- Terrain_roughness_10km
+      - Pop_density_10km_log_diff  # Beta specific variables
+      - Road_density_10km_log_diff
+      #- Haversine_distance_log
+      - Gower_distance_all_feat_log
+    interaction_cols: []
+    slope_terms: # This must be a subset of covariates above
+      - Primary vegetation_Light use
+      - Primary vegetation_Intense use
+      - Secondary vegetation_All uses
+      - Cropland_All uses
+      - Pasture_All uses
       - Urban_All uses
       #- Annual_mean_temp_1km
       #- Temp_seasonality_1km

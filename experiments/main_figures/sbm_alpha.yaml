@@ -32,10 +32,10 @@ sbm_alpha_training_main:
           block_intercept: true
         priors:
           beta:
-            hyperprior_sd_alpha: 0.75
-            hyperprior_sd_beta: 0.5
-            random_intercept_sd: 0.75
-            random_slope_sd: 0.5
+            hyperprior_sd_alpha: 1.0
+            hyperprior_sd_beta: 1.0
+            random_intercept_sd: 1.0
+            random_slope_sd: 1.0
 sbm_alpha_standard_cv_main:
   dag: crossval
   overrides:
@@ -70,10 +70,10 @@ sbm_alpha_standard_cv_main:
           block_intercept: false
         priors:
           beta:
-            hyperprior_sd_alpha: 0.75
-            hyperprior_sd_beta: 0.5
-            random_intercept_sd: 0.75
-            random_slope_sd: 0.5
+            hyperprior_sd_alpha: 1.0
+            hyperprior_sd_beta: 1.0
+            random_intercept_sd: 1.0
+            random_slope_sd: 1.0
     cv_settings:
       split_level: site
 sbm_alpha_cross_study_main:
@@ -110,9 +110,11 @@ sbm_alpha_cross_study_main:
           block_intercept: false
         priors:
           beta:
-            hyperprior_sd_alpha: 0.75
-            hyperprior_sd_beta: 0.5
-            random_intercept_sd: 0.75
-            random_slope_sd: 0.5
+            hyperprior_sd_alpha: 1.0
+            hyperprior_sd_beta: 1.0
+            random_intercept_sd: 1.0
+            random_slope_sd: 1.0
+            beta_likelihood:
+              beta: 15
     cv_settings:
       split_level: study

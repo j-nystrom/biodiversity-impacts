@@ -1,26 +1,12 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import polars as pl
-import pandas as pd
-import geopandas as gpd
-from scipy.stats import pearsonr
-from scipy.special import logit
-import gower
-from matplotlib.ticker import FormatStrFormatter
-from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
-from matplotlib.colors import TwoSlopeNorm, Normalize, LinearSegmentedColormap
-from pathlib import Path
-import jupyter_black
-import textwrap
-import warnings
-import statsmodels.api as sm
-import tempfile
-import subprocess
 import json
+from pathlib import Path
 
-jupyter_black.load()
+import matplotlib.pyplot as plt
+import numpy as np
+import polars as pl
+import seaborn as sns
+from matplotlib.lines import Line2D
+from scipy.stats import spearmanr
 
 # Set global Seaborn theme
 sns.set_theme(
@@ -41,789 +27,831 @@ sns.set_theme(
 )
 
 color_scheme = {  # https://matplotlib.org/stable/gallery/color/named_colors.html
-    "calibration": "teal",
-    "fixed_eff": "lightsteelblue",
+    "fixed_eff": "cadetblue",
     "random_eff": "peachpuff",
-    "training": "darkgray",
+    "training": "gray",
     "standard_cv": "darkseagreen",
-    "cross_study_cv": "mediumseagreen",
-    "train_line": "royalblue",
-    "test_line": "orange",
-    "group_scatter": "darkolivegreen",
+    "cross_study_cv": "steelblue",
+    "sbm": "cadetblue",
+    "brm": "darksalmon",
+    "btm": "palevioletred",
+    "train_test_line": "black",
+    "zero_line": "black",
+    "value_text": "black",
+    "metric_separator": "0.72",
+    "panel_separator": "0.45",
+    "legend_edge": "none",
+    "map_edge": "white",
+    "map_missing": "0.88",
+    "globe_outline": "0.35",
 }
 
-summary_colors = {
-    "Training": color_scheme["training"],
-    "Standard CV": color_scheme["standard_cv"],
-    "Cross-study CV": color_scheme["cross_study_cv"],
+# Run-folder mode names are part of the experiment folder naming convention.
+evaluation_run_modes = {
+    "Training": "training",
+    "Standard CV": "standard_cv",
+    "Cross-study CV": "cross_study",
+}
+evaluation_mode_order = list(evaluation_run_modes.keys())
+cv_evaluation_mode_order = [
+    mode for mode in evaluation_mode_order if mode != "Training"
+]
+evaluation_mode_color_keys = {
+    "Training": "training",
+    "Standard CV": "standard_cv",
+    "Cross-study CV": "cross_study_cv",
 }
 
-# ALPHA diversity: Base model runs
+model_order = ["SBM", "BRM", "BTM"]
+performance_metric_order = ["Spearman", "R2", "MAE"]
+effect_order: list[str] = []
+effect_x_limits = (0.0, 1.0)
 
-lmm_alpha_folders = {
-    "Training": "lmm_alpha_train",
-    "Standard CV": "lmm_alpha_standard_cv",
-    "Cross-study CV": "lmm_alpha_cross_study",
-}
 
-bhm_alpha_folders = {
-    "Training": "bhm_alpha_train_sqrt",
-    "Standard CV": "bhm_alpha_standard_cv_sqrt",
-    "Cross-study CV": "bhm_alpha_cross_study_sqrt",
-}
+def find_project_root(start: Path = Path.cwd()) -> Path:
+    """
+    Return the nearest parent directory that contains a .git folder. The
+    notebook uses this to build stable relative paths no matter where the
+    kernel was started from.
+    """
+    for path in [start, *start.parents]:
+        if (path / "core").exists() and (path / "notebooks").exists():
+            return path
+    raise FileNotFoundError("Could not find repository root from notebook path.")
 
-# BETA diversity: Base model runs
 
-lmm_beta_folders = {
-    "Training": "lmm_beta_train",
-    "Standard CV": "lmm_beta_standard_cv",
-    "Cross-study CV": "lmm_beta_cross_study",
-}
-
-bhm_beta_folders = {
-    "Training": "bhm_beta_train_log",
-    "Standard CV": "bhm_beta_standard_cv_log",
-    "Cross-study CV": "bhm_beta_cross_study_log",
-}
-
-# Base paths and file endings
-base_path = "../../data/saved_runs"
+# Locate the repository root once so all run-folder paths are stable.
+project_root = find_project_root()
+base_path = project_root.parent / "data" / "runs_revision"
 key_output_path = "key_output"
 site_info_filename = "site_info.parquet"
-bhm_added_output_path = "additional_output"
+brm_added_output_path = "additional_output"
 
-def load_prediction_dataframes(mode_folders: dict[str, str], base_path: str=base_path) -> dict[str, pl.DataFrame]:
+effect_range_interval = "p5_95"  # "iqr" or "p5_95"
+effect_size_scale = "response"  # "latent" or "response"
+effect_intervals = {"iqr": (0.25, 0.75), "p5_95": (0.05, 0.95)}
+
+beta_training_folders: dict[str, str] = {}
+
+
+def infer_run_folders(
+    model_key: str, experiment_suffix: str = "main", run_root: Path | str | None = None
+) -> dict[str, str]:
     """
-    Load prediction dataframes from run folders. Given {mode: run_folder},
-    return {mode: df_predictions}.
+    Infer the three evaluation-mode run folders for one experiment family.
 
-    Training runs read key_output/train_predictions.parquet.
-    Cross-validation runs read key_output/test_predictions_fold_*.parquet and
-    concatenate the test folds (with fold and mode labels).
+    Run directories are assumed to follow the experiment-name convention
+    `run_folder_<date>_<time>_<model_key>_<mode>_<experiment_suffix>`,
+    where the timestamp is the only part that changes between launches. The
+    returned dictionary uses the notebook display labels expected by the
+    loading and plotting code: Training, Standard CV, and Cross-study CV.
+    """
+    run_root = Path(base_path if run_root is None else run_root)
+    experiment_folders = {
+        folder.name.split("_", 4)[4]: folder.name
+        for folder in run_root.glob("run_folder_*")
+    }
+    experiment_names = {
+        label: experiment_folders[f"{model_key}_{mode}_{experiment_suffix}"]
+        for label, mode in evaluation_run_modes.items()
+    }
+    return experiment_names
+
+
+def load_prediction_dataframes(
+    model_folders: dict[str, str], base_path: Path | str = base_path
+) -> dict[str, pl.DataFrame]:
+    """
+    Load prediction tables for one model across manuscript evaluation modes.
+
+    Input is a mapping from display mode to run folder. Training mode returns
+    the full training predictions. Cross-validation modes concatenate the
+    held-out test predictions across folds and add fold/mode labels. Each
+    output row is one prediction for one observation, or one taxon-site
+    prediction for taxonomic models.
     """
     out = {}
-    for mode, run_folder in mode_folders.items():
+    for mode, run_folder in model_folders.items():
         run_path = Path(base_path) / run_folder
-        key_output_dir = run_path / 'key_output'
-        if 'training' in mode.lower():
-            df = pl.read_parquet(run_path / 'key_output' / 'train_predictions.parquet')
-            df = df.with_columns(pl.lit('Training').alias('mode'))
+        key_output_dir = run_path / "key_output"
+        if "training" in mode.lower():
+            df = pl.read_parquet(key_output_dir / "train_predictions.parquet")
+            df = df.with_columns(pl.lit("Training").alias("mode"))
         else:
-            test_files = sorted(key_output_dir.glob('test_predictions_fold_*.parquet'), key=lambda p: int(p.stem.split('_')[-1]))
+            test_files = sorted(
+                key_output_dir.glob("test_predictions_fold_*.parquet"),
+                key=lambda p: int(p.stem.split("_")[-1]),
+            )
             dfs = []
             for i, test_path in enumerate(test_files, start=1):
                 df_fold = pl.read_parquet(test_path)
-                df_fold = df_fold.with_columns([pl.lit(i).alias('fold'), pl.lit('test').alias('mode')])
+                df_fold = df_fold.with_columns(
+                    [pl.lit(i).alias("fold"), pl.lit("test").alias("mode")]
+                )
                 dfs.append(df_fold)
-            df = pl.concat(dfs, how='vertical', rechunk=True)
+            df = pl.concat(dfs, how="vertical", rechunk=True)
         out[mode] = df
     return out
 
-def _infer_model_family(model_name: str) -> str:
-    """Infer model family label (lmm/bhm) from model name."""
-    return 'lmm' if 'lmm' in model_name.lower() else 'bhm'
 
-def _pick_pred_col(mode: str, model_family: str) -> str:
-    """Choose which prediction column name to use, since these are different
-    between the two model types."""
-    model_family = model_family.lower()
-    if model_family == 'bhm':
-        name = 'Predicted'
-    elif 'training' in mode.lower():
-        name = 'Predicted_RE'
-    else:
-        name = 'Predicted_FE'
-    return name
-
-def build_model_performance_summary(dfs: dict[str, dict[str, pl.DataFrame]], true_col: str='Observed') -> pl.DataFrame:
+def _pick_pred_col(df: pl.DataFrame, mode: str) -> str:
     """
-    Build a performance summary table for a set of predictive models. For
-    training, only the mean Pearson correlation is computed, while for test
-    modes, fold-wise correlations, including min / max, are also calculated.
+    Return the prediction column used by the current output table. Depending on
+    the model and evaluation mode, predictions may be in a generic "Predicted"
+    column or split into "Predicted_RE" and "Predicted_FE", for predictions with
+    random effects and fixed effects only, respectively.
+    """
+    if "Predicted" in df.columns:
+        return "Predicted"
+    if mode == "Training":
+        return "Predicted_RE"
+    return "Predicted_FE"
+
+
+def _compute_performance_metrics(
+    df: pl.DataFrame, true_col: str, pred_col: str
+) -> dict[str, float]:
+    """
+    Compute the three manuscript performance metrics for one evaluated slice.
+
+    Rows are the datapoints being evaluated: observations for base predictions,
+    site-pair deltas for Fig 2c-d, or group/fold subsets when called from
+    Fig 5/Fig 5 driver. Spearman measures rank correlation. MAE is the mean absolute
+    prediction error on the evaluated rows. R2 is 1 - SSE/SST for the same rows.
+    """
+    y_true = df.get_column(true_col).to_numpy()
+    y_pred = df.get_column(pred_col).to_numpy()
+    residual_sse = np.sum((y_true - y_pred) ** 2)
+    residual_sst = np.sum((y_true - np.mean(y_true)) ** 2)
+    r2 = float(1 - residual_sse / residual_sst)
+    mae = float(np.mean(np.abs(y_true - y_pred)))
+    spearman = float(spearmanr(y_true, y_pred).statistic)
+    metric_values = {"Spearman": spearman, "MAE": mae, "R2": r2}
+    return metric_values
+
+
+def build_model_performance_summary(
+    dfs: dict[str, dict[str, pl.DataFrame]], true_col: str = "Observed"
+) -> pl.DataFrame:
+    """
+    Build the tidy performance table used by Fig 2 bar plots.
+
+    For each model and evaluation mode, the function returns one all-observation
+    summary row per metric. For CV modes it also returns one row per fold; Fig 2
+    aggregates those fold rows to one median bar per model, CV mode, and metric.
+    `Metric` stores the display name directly: Spearman, MAE, or R2.
     """
     rows = []
     for model_name, modes in dfs.items():
-        model_family = _infer_model_family(model_name)
         for mode_name, df in modes.items():
-            pred_col = _pick_pred_col(mode_name, model_family)
-            mean_r = float(df.select(pl.corr(true_col, pred_col)).item())
-            row = {'Model': model_name, 'Eval type': mode_name, 'Mean': mean_r, 'Min': float('nan'), 'Max': float('nan')}
-            if 'training' not in mode_name.lower() and 'fold' in df.columns:
-                per_fold_r = df.group_by('fold').agg(pl.corr(true_col, pred_col).alias('r')).sort('fold')
-                for fold_val, r_val in zip(per_fold_r['fold'].to_list(), per_fold_r['r'].to_list()):
-                    row[f'r_fold_{fold_val}'] = float(r_val)
-                stats = per_fold_r.select(pl.col('r').min().alias('min'), pl.col('r').max().alias('max')).row(0)
-                row['Min'], row['Max'] = map(float, stats)
-            rows.append(row)
-    return pl.DataFrame(rows)
+            pred_col = _pick_pred_col(df, mode_name)
+            metrics = _compute_performance_metrics(
+                df=df, true_col=true_col, pred_col=pred_col
+            )
+            for metric_name, value in metrics.items():
+                rows.append(
+                    {
+                        "Model": model_name,
+                        "Eval type": mode_name,
+                        "Metric": metric_name,
+                        "Summary type": "All observations",
+                        "Fold": None,
+                        "Value": value,
+                        "N": df.height,
+                    }
+                )
+            if "training" not in mode_name.lower() and "fold" in df.columns:
+                for fold_value, df_fold in df.partition_by(
+                    "fold", as_dict=True
+                ).items():
+                    fold_id = (
+                        fold_value[0] if isinstance(fold_value, tuple) else fold_value
+                    )
+                    fold_metrics = _compute_performance_metrics(
+                        df=df_fold, true_col=true_col, pred_col=pred_col
+                    )
+                    for metric_name, value in fold_metrics.items():
+                        rows.append(
+                            {
+                                "Model": model_name,
+                                "Eval type": mode_name,
+                                "Metric": metric_name,
+                                "Summary type": "Fold",
+                                "Fold": int(fold_id),
+                                "Value": value,
+                                "N": df_fold.height,
+                            }
+                        )
+    df_out = pl.DataFrame(rows)
+    return df_out
 
-def model_comparison_barplot(summary_df: pl.DataFrame, figsize: tuple[int, int]=(6, 4), mode_color_scheme: dict[str, str] | None=None, show_bar_values: bool=True, show_axes_labels_values: bool=True, show_legend: bool=True, bar_number_size: int=11, axes_label_size: int=11, axes_number_size: int=11) -> plt.Figure:
-    """Plot grouped model performance bars across evaluation modes."""
-    df = summary_df.to_pandas()
-    model_order = df['Model'].unique().tolist()
-    mode_order = ['Training', 'Standard CV', 'Cross-study CV']
-    df_plot = df.copy()
-    df_plot['Model'] = pd.Categorical(df_plot['Model'], categories=model_order)
-    df_plot['Eval type'] = pd.Categorical(df_plot['Eval type'], categories=mode_order)
-    fig, ax = plt.subplots(figsize=figsize)
-    sns.barplot(data=df_plot, x='Model', y='Mean', hue='Eval type', order=model_order, hue_order=mode_order, palette=mode_color_scheme, errorbar=None, ax=ax, dodge=True, legend=show_legend)
-    for bar in ax.patches:
-        bar.set_linewidth(0.8)
-        bar.set_edgecolor('white')
-    if show_bar_values:
-        offset_mean = 0.06
-        offset_range = 0.015
-        for mode, container in zip(mode_order, ax.containers):
-            mode_rows = df_plot[df_plot['Eval type'] == mode]
-            for model, bar in zip(model_order, container.patches):
-                row = mode_rows[mode_rows['Model'] == model]
-                if row.empty:
-                    continue
-                mean_val = float(row['Mean'].iloc[0])
-                min_val = float(row['Min'].iloc[0])
-                max_val = float(row['Max'].iloc[0])
-                x = bar.get_x() + bar.get_width() / 2
-                if np.isfinite(min_val) and np.isfinite(max_val):
-                    ax.text(x, mean_val + offset_range, f'({min_val:.2f}–{max_val:.2f})', ha='center', va='bottom', fontsize=bar_number_size)
-                ax.text(x, mean_val + offset_mean, f'{mean_val:.2f}', ha='center', va='bottom', fontsize=bar_number_size, fontweight='bold')
-    ax.set_yticks([0, 1])
-    if show_axes_labels_values:
-        ax.set_xlabel('')
-        ax.set_ylabel("Pearson's r", fontsize=axes_label_size)
-        ax.set_yticklabels(['0', '1'], fontsize=axes_number_size)
-        ax.tick_params(axis='x', labelsize=axes_label_size)
-    else:
-        ax.set_xlabel('')
-        ax.set_ylabel('')
-        ax.set_xticks([])
-        ax.set_yticklabels([])
-        ax.tick_params(axis='both', which='both', labelbottom=False, labelleft=False, length=4)
-    if show_legend:
-        ax.legend(loc='upper left', bbox_to_anchor=(0.8, 1), frameon=False, fontsize=axes_label_size, title='')
-    fig.tight_layout()
-    return fig
 
-def read_site_info_parquet(run_folder: str, base_path: str=base_path, site_info_filename: str=site_info_filename) -> pl.DataFrame:
+def read_site_info_parquet(
+    run_folder: str,
+    base_path: Path | str = base_path,
+    site_info_filename: str = site_info_filename,
+) -> pl.DataFrame:
     """
-    Helper function for loading the site_info.parquet file for a given run
-    folder. Used in several functions in this notebook.
+    Load the site metadata table for a run folder.
+
+    The metadata are used to add land-use, study, biome, realm, and taxonomic
+    group labels to prediction outputs before derived summaries are calculated.
     """
     site_info_file = Path(base_path) / run_folder / site_info_filename
     df_site_info = pl.read_parquet(site_info_file)
     return df_site_info
 
-def estimate_delta_predictions(state_pred_dfs: dict[str, dict[str, pl.DataFrame]], run_folders: dict[str, dict[str, str]], grouping_level: str='SSB', reference_comparison_only: bool=False) -> dict[str, dict[str, pl.DataFrame]]:
-    """
-    Compute delta predictions (site_2 - site_1) within a grouping level (SS or
-    SSB), for each (model, mode).
 
-    If `Custom_taxonomic_group` exists, deltas are computed within matching
-    taxonomic groups. Otherwise, site-level comparisons are used.
+def effect_interval(values: list[float], interval: str) -> tuple[float, float]:
     """
-    out = {}
-    for model, modes in state_pred_dfs.items():
-        model_family = _infer_model_family(model)
-        out[model] = {}
-        for mode, df_pred in modes.items():
-            pred_col = _pick_pred_col(mode, model_family)
-            has_taxa = 'Custom_taxonomic_group' in df_pred.columns
-            df_site_info = read_site_info_parquet(run_folders[model][mode])
-            df_site_lookup = df_site_info.unique(subset=['SSBS'], keep='first')
-            df_merged = df_pred.join(df_site_lookup.select(['SSBS', 'SSB', 'Predominant_land_use', 'Use_intensity']), on='SSBS', how='left')
-            rows = []
-            for df_group in df_merged.partition_by(grouping_level, as_dict=False):
-                site_frames = {}
-                site_taxa_frames = {}
-                site_is_baseline = {}
-                for df_site in df_group.partition_by('SSBS', as_dict=False):
-                    site_id = df_site['SSBS'][0]
-                    site_frames[site_id] = df_site
-                    site_is_baseline[site_id] = bool(((df_site['Predominant_land_use'] == 'Primary vegetation') & (df_site['Use_intensity'] == 'Minimal use')).any())
-                    if has_taxa:
-                        site_taxa_frames[site_id] = {tax: sub_df for tax, sub_df in df_site.partition_by('Custom_taxonomic_group', as_dict=True).items()}
-                site_ids = list(site_frames.keys())
-                if len(site_ids) < 2:
-                    continue
-                seen_pairs = set()
-                for i in range(len(site_ids)):
-                    for j in range(i + 1, len(site_ids)):
-                        s1 = site_ids[i]
-                        s2 = site_ids[j]
-                        pair_key = tuple(sorted((s1, s2)))
-                        if pair_key in seen_pairs:
-                            continue
-                        seen_pairs.add(pair_key)
-                        if reference_comparison_only:
-                            if not (site_is_baseline[s1] and (not site_is_baseline[s2])):
-                                continue
-                        df_s1 = site_frames[s1]
-                        df_s2 = site_frames[s2]
-                        if has_taxa:
-                            taxa1 = site_taxa_frames[s1]
-                            taxa2 = site_taxa_frames[s2]
-                            common_taxa = taxa1.keys() & taxa2.keys()
-                            if not common_taxa:
-                                continue
-                            for taxon in common_taxa:
-                                df1 = taxa1[taxon]
-                                df2 = taxa2[taxon]
-                                if df1.height != 1 or df2.height != 1:
-                                    warnings.warn(f'Unexpected multiple rows for taxon-level comparison ({s1}, {s2}, taxon={taxon}); skipping.')
-                                    continue
-                                delta_obs = df2['Observed'][0] - df1['Observed'][0]
-                                delta_pred = df2[pred_col][0] - df1[pred_col][0]
-                                rows.append({'site_1': s1, 'site_2': s2, 'Custom_taxonomic_group': taxon, 'Observed': delta_obs, pred_col: delta_pred, 'residual': delta_pred - delta_obs, 'mode': df1['mode'][0], 'lu_1': df1['Predominant_land_use'][0], 'ui_1': df1['Use_intensity'][0], 'lu_2': df2['Predominant_land_use'][0], 'ui_2': df2['Use_intensity'][0]})
-                        else:
-                            if df_s1.height != 1 or df_s2.height != 1:
-                                warnings.warn(f'Unexpected multiple rows for site-level comparison ({s1}, {s2}); skipping.')
-                                continue
-                            delta_obs = df_s2['Observed'][0] - df_s1['Observed'][0]
-                            delta_pred = df_s2[pred_col][0] - df_s1[pred_col][0]
-                            rows.append({'site_1': s1, 'site_2': s2, 'Observed': delta_obs, pred_col: delta_pred, 'residual': delta_pred - delta_obs, 'mode': df_s1['mode'][0], 'lu_1': df_s1['Predominant_land_use'][0], 'ui_1': df_s1['Use_intensity'][0], 'lu_2': df_s2['Predominant_land_use'][0], 'ui_2': df_s2['Use_intensity'][0]})
-            out[model][mode] = pl.DataFrame(rows)
-    return out
+    Return the selected interval for posterior-mean effect values.
 
-def basic_scatter_plot(df: pl.DataFrame, x_col: str, y_col: str, figsize: tuple[int, int], show_axes_labels_values: bool=True, show_metrics: bool=True, show_best_fit_line: bool=True, show_diagonal_ref_line: bool=True, show_zero_ref_line: bool=False, color: str='steelblue', alpha: float=0.4, point_size: int=5, sample_frac: float=1.0, poly_degree: int=3, x_label: str='Observed values', y_label: str='Model predictions', xlim: tuple[float, float] | None=None, ylim: tuple[float, float] | None=None, axes_label_size: int=11, axes_number_size: int=11) -> plt.Figure:
+    Fig 3 uses either the interquartile range or the 5th-95th percentile
+    range. Each input value is one study-level slope for the SBM or one
+    final ecological-group slope for the BRM/BTM.
     """
-    Create a simple scatterplot comparing two arrays of variables, with
-    optional sampling, polynomial best-fit line, and performance metrics.
-    """
-    x_array = df.get_column(x_col).to_numpy()
-    y_array = df.get_column(y_col).to_numpy()
-    mask = np.isfinite(x_array) & np.isfinite(y_array)
-    x_valid = x_array[mask]
-    y_valid = y_array[mask]
-    pearson_r, _ = pearsonr(x_valid, y_valid)
-    mae = float(np.mean(np.abs(x_valid - y_valid)))
-    if sample_frac is not None and 0 < sample_frac < 1.0:
-        n = len(x_valid)
-        k = max(1, int(n * sample_frac))
-        rng = np.random.default_rng(seed=42)
-        idx = rng.choice(n, size=k, replace=False)
-        x_plot = x_valid[idx]
-        y_plot = y_valid[idx]
-    else:
-        x_plot, y_plot = (x_valid, y_valid)
-    fig, ax = plt.subplots(figsize=figsize)
-    sns.scatterplot(x=x_plot, y=y_plot, color=color, alpha=alpha, s=point_size, ax=ax)
-    if xlim is not None:
-        ax.set_xlim(*xlim)
-    if ylim is not None:
-        ax.set_ylim(*ylim)
-    if show_diagonal_ref_line:
-        ax.plot([0, 1], [0, 1], linestyle='--', transform=ax.transAxes, color='black', linewidth=1.2, zorder=5)
-    if show_zero_ref_line:
-        ax.axhline(y=0, linestyle=':', color='black', linewidth=1.2, zorder=4)
-    if show_best_fit_line and len(x_plot) >= poly_degree + 1:
-        coefs = np.polyfit(x_plot, y_plot, deg=poly_degree)
-        x_vals = np.linspace(*sorted(ax.get_xlim()), 200)
-        y_vals = np.polyval(coefs, x_vals)
-        ax.plot(x_vals, y_vals, linestyle='-', color='firebrick', linewidth=2, zorder=6)
-    if show_metrics:
-        ax.text(0.03, 0.97, f'r = {pearson_r:.2f}\nMAE = {mae:.2f}', transform=ax.transAxes, ha='left', va='top', fontsize=axes_label_size)
-    if show_axes_labels_values:
-        ax.set_xlabel(x_label, fontsize=axes_label_size)
-        ax.set_ylabel(y_label, fontsize=axes_label_size)
-        ax.tick_params(axis='both', labelsize=axes_number_size)
-    else:
-        ax.set_xlabel('')
-        ax.set_ylabel('')
-        ax.tick_params(axis='both', which='both', labelbottom=False, labelleft=False)
-    fig.tight_layout()
-    return fig
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    q_low, q_high = effect_intervals[interval]
+    low = float(np.quantile(arr, q_low))
+    high = float(np.quantile(arr, q_high))
+    return (low, high)
 
-def load_glmm_phi(run_folder: str, base_path: str=base_path, filename: str='train_phi.json') -> float:
-    """Load saved glmmTMB beta precision (phi) from key output."""
-    phi_path = Path(base_path) / run_folder / 'key_output' / filename
-    with open(phi_path) as f:
-        out = json.load(f)
-    return float(out['phi'])
 
-def calculate_r2_var_explained(df: pl.DataFrame, distribution: str='gaussian', phi: float | None=None, eps: float=1e-06) -> tuple[float, float]:
+def is_binary_land_use_term(df: pl.DataFrame, term: str) -> bool:
     """
-    Compute marginal/conditional R2 for Gaussian and Beta mixed models.
-    Uses latent-scale decomposition for Beta.
-    """
-    y = df.get_column('Observed').to_numpy()
-    y_fe = df.get_column('Predicted_FE').to_numpy()
-    y_re = df.get_column('Predicted_RE').to_numpy()
-    if distribution == 'gaussian':
-        var_fe = np.var(y_fe, ddof=1)
-        var_re = np.var(y_re - y_fe, ddof=1)
-        var_residual = np.var(y - y_re, ddof=1)
-    elif distribution == 'beta':
-        mu_fe = np.clip(y_fe, eps, 1 - eps)
-        mu_re = np.clip(y_re, eps, 1 - eps)
-        eta_fe = logit(mu_fe)
-        eta_re = logit(mu_re)
-        var_fe = np.var(eta_fe, ddof=1)
-        var_re = np.var(eta_re - eta_fe, ddof=1)
-        var_residual = np.mean(1.0 / ((1.0 + phi) * mu_re * (1.0 - mu_re)))
-    denominator = var_fe + var_re + var_residual
-    var_expl_fe = var_fe / denominator
-    var_expl_re = (var_fe + var_re) / denominator
-    return (var_expl_fe, var_expl_re)
+    Return True when a term is a binary indicator in the training dataframe.
 
-def compute_r2_by_run(run_folders: dict[str, str], distribution: str='beta', base_path: str=base_path, key_output_dirname: str=key_output_path, predictions_filename: str='train_predictions.parquet') -> dict[str, tuple[float, float]]:
-    """Compute variance-explained metrics for each training run folder."""
-    results = {}
-    base = Path(base_path)
-    for run_name, folder in run_folders.items():
-        df = pl.read_parquet(base / folder / key_output_dirname / predictions_filename)
-        phi = load_glmm_phi(folder, base_path=base_path) if distribution == 'beta' else None
-        results[run_name] = calculate_r2_var_explained(df, distribution=distribution, phi=phi)
-    return results
+    Fig 3 active-support filtering is only applied to categorical land-use
+    indicators. Continuous covariates are left unfiltered because every study or
+    ecological group has a value by construction.
+    """
+    if term not in df.columns:
+        return False
 
-def r2_stacked_barplot(r2_dictionary: dict[str, tuple[float, float]], figsize: tuple[int, int]=(6, 4), show_axes_labels: bool=True, show_bar_values: bool=True, show_legend: bool=True, colors: tuple[str, str]=('steelblue', 'yellowgreen'), alpha: float=0.8, bar_number_size: int=11, axes_label_size: int=11, axes_number_size: int=11, wrap_labels_at: int | None=12) -> plt.Figure:
-    """
-    Plot marginal and conditional R² as stacked bars. Marginal R² is the
-    fixed-effects portion; the additional bar height shows variance explained
-    by random effects.
-    """
-    models = list(r2_dictionary.keys())
-    marginal_r2 = [r2_dictionary[m][0] for m in models]
-    conditional_r2 = [r2_dictionary[m][1] for m in models]
-    random_effect_r2 = [c - m for m, c in zip(marginal_r2, conditional_r2)]
-    x = np.arange(len(models))
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.bar(x, height=marginal_r2, width=0.5, label='Marginal R²', color=colors[0], alpha=alpha)
-    ax.bar(x, height=random_effect_r2, width=0.5, bottom=marginal_r2, label='Additional R² from random effects', color=colors[1], alpha=alpha)
-    if show_bar_values:
-        for i in range(len(models)):
-            ax.text(x[i], marginal_r2[i] / 2, f'{marginal_r2[i]:.2f}', ha='center', va='center', fontsize=bar_number_size)
-            ax.text(x[i], marginal_r2[i] + random_effect_r2[i] / 2, f'{random_effect_r2[i]:.2f}', ha='center', va='center', fontsize=bar_number_size)
-            ax.text(x[i], conditional_r2[i] + 0.015, f'{conditional_r2[i]:.2f}', ha='center', va='bottom', fontsize=bar_number_size)
-    if wrap_labels_at is not None:
-        xticklabels = [textwrap.fill(label, width=wrap_labels_at, break_long_words=False) for label in models]
-    else:
-        xticklabels = models
-    ax.set_yticks([0, 1])
-    if show_axes_labels:
-        ax.set_xticks(x)
-        ax.set_xticklabels(xticklabels, fontsize=axes_label_size)
-        ax.tick_params(axis='x', length=0)
-        ax.set_ylim(0, 1.0)
-        ax.set_yticklabels(['0', '1'], fontsize=axes_number_size)
-        ax.tick_params(axis='y', length=5)
-        ax.set_ylabel('Var. explained (R²)', fontsize=axes_label_size)
-        ax.yaxis.set_label_coords(-0.07, 0.5)
-    else:
-        ax.set_xlabel('')
-        ax.set_ylabel('')
-        ax.set_xticks([])
-        ax.tick_params(axis='both', which='both', labelbottom=False, labelleft=False)
-    if show_legend:
-        handles, labels = ax.get_legend_handles_labels()
-        cond_patch = Patch(facecolor='white', edgecolor='grey', label='= Conditional R² (total)', linewidth=1)
-        handles.append(cond_patch)
-        labels.append('= Conditional R² (total)')
-        ax.legend(handles=handles, labels=labels, fontsize=axes_label_size, edgecolor='none', loc='upper left', bbox_to_anchor=(0, 1), frameon=False)
-    fig.tight_layout()
-    return fig
+    values = df.select(pl.col(term).drop_nulls().unique()).get_column(term).to_list()
+    if not values:
+        return False
 
-def extract_glmm_effects(model_path: str, re_lower_perc: float=5, re_upper_perc: float=95) -> dict[str, dict[str, float]]:
-    """
-    Load a glmmTMB model (.rds) and extract fixed effects plus optional
-    study-level random slope variation summaries.
+    return set(values).issubset({0, 1, 0.0, 1.0})
 
-    Effects are returned on the response scale as delta(mu) from baseline.
-    """
-    model_path = str(model_path)
-    r_code = '\n      args <- commandArgs(trailingOnly = TRUE)\n      model_path <- args[[1]]\n      out_path <- args[[2]]\n      re_lower <- as.numeric(args[[3]])\n      re_upper <- as.numeric(args[[4]])\n\n      suppressPackageStartupMessages({\n        library(glmmTMB)\n        library(jsonlite)\n      })\n\n      model <- readRDS(model_path)\n      coef_tab <- summary(model)$coefficients$cond\n      fixef_cond <- fixef(model)$cond\n\n      intercept <- if ("(Intercept)" %in% names(fixef_cond)) {\n        as.numeric(fixef_cond[["(Intercept)"]])\n      } else {\n        0\n      }\n\n      linkinv_func <- model$family$linkinv\n      if (!is.function(linkinv_func)) {\n        # Fallback for beta/logit models\n        linkinv_func <- make.link("logit")$linkinv\n      }\n\n      to_response_delta <- function(delta_eta) {\n        as.numeric(linkinv_func(intercept + delta_eta) - linkinv_func(intercept))\n      }\n\n      # Try model-based CIs first; fall back to Wald CIs.\n      ci_mat <- tryCatch(\n        suppressMessages(confint(model, parm = "beta_", level = 0.95)),\n        error = function(e) NULL\n      )\n\n      get_ci <- function(term) {\n        est <- as.numeric(coef_tab[term, "Estimate"])\n        se <- as.numeric(coef_tab[term, "Std. Error"])\n        ci_low <- est - 1.96 * se\n        ci_up <- est + 1.96 * se\n\n        if (!is.null(ci_mat)) {\n          rn <- rownames(ci_mat)\n          idx <- which(rn %in% c(paste0("cond.", term), term))\n          if (length(idx) > 0) {\n            ci_low <- as.numeric(ci_mat[idx[1], 1])\n            ci_up <- as.numeric(ci_mat[idx[1], 2])\n          }\n        }\n        c(ci_low, ci_up)\n      }\n\n      effect_dict <- list()\n\n      re_cond <- tryCatch(ranef(model)$cond, error = function(e) NULL)\n      re_study <- NULL\n      if (!is.null(re_cond) && "SS" %in% names(re_cond)) {\n        re_study <- as.data.frame(re_cond$SS)\n      }\n\n      for (term in names(fixef_cond)) {\n        if (term == "(Intercept)") next\n\n        est_eta <- as.numeric(fixef_cond[[term]])\n        ci_eta <- get_ci(term)\n\n        ci_resp <- sort(c(\n          to_response_delta(ci_eta[1]),\n          to_response_delta(ci_eta[2])\n        ))\n\n        info <- list(\n          mean = to_response_delta(est_eta),\n          ci_lower_2_5 = as.numeric(ci_resp[1]),\n          ci_upper_97_5 = as.numeric(ci_resp[2])\n        )\n\n        if (!is.null(re_study) && term %in% colnames(re_study)) {\n          deviations <- re_study[[term]]\n          deviations <- deviations[!is.na(deviations)]\n          if (length(deviations) > 1) {\n            lower_eta <- est_eta + as.numeric(quantile(deviations, probs = re_lower / 100))\n            upper_eta <- est_eta + as.numeric(quantile(deviations, probs = re_upper / 100))\n            rs_resp <- sort(c(\n              to_response_delta(lower_eta),\n              to_response_delta(upper_eta)\n            ))\n            info$random_slope_lower <- as.numeric(rs_resp[1])\n            info$random_slope_upper <- as.numeric(rs_resp[2])\n          }\n        }\n\n        effect_dict[[term]] <- info\n      }\n\n      write_json(effect_dict, out_path, auto_unbox = TRUE)\n      '
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir = Path(tmp_dir)
-        r_script_path = tmp_dir / 'extract_glmmtmb_effects.R'
-        out_json_path = tmp_dir / 'effects.json'
-        r_script_path.write_text(r_code)
-        subprocess.run(['Rscript', str(r_script_path), model_path, str(out_json_path), str(re_lower_perc), str(re_upper_perc)], check=True)
-        effect_dict = json.loads(out_json_path.read_text())
-    return effect_dict
 
-def load_glmm_effects(run_folder: str, base_path: str=base_path, filename: str='train_effects.json', reextract_from_model: bool=False, re_lower_perc: float=5, re_upper_perc: float=95) -> dict[str, dict[str, float]]:
-    """Load GLMM effect summaries saved during training."""
-    run_dir = Path(base_path) / run_folder
-    if reextract_from_model:
-        model_path = run_dir / 'glmm_model.rds'
-        return extract_glmm_effects(str(model_path), re_lower_perc=re_lower_perc, re_upper_perc=re_upper_perc)
-    effects_path = run_dir / 'key_output' / filename
-    with open(effects_path) as f:
-        return json.load(f)
+def active_study_names_for_term(train_df: pl.DataFrame, term: str) -> set[str] | None:
+    """
+    Return studies with observations for a binary land-use term.
 
-def lmm_effects_forest_plot(effect_dict: dict[str, dict[str, float]], re_percentiles: tuple[float, float]=(5, 95), figsize: tuple[int, int]=(6, 4), show_mean_values: bool=True, show_axes_labels_values: bool=True, show_legend: bool=True, colors: tuple[str, str]=('steelblue', 'yellowgreen'), alpha: float=0.8, mean_label_size: int=11, axes_label_size: int=11, axes_number_size: int=11, ci_method: str='Wald') -> plt.Figure:
+    A study contributes to Fig 3 SBM study heterogeneity for a land-use category
+    only if at least one training row has that category indicator set to one.
+    `None` means the term is not a binary land-use indicator and should not be
+    filtered.
     """
-    Forest plot of LMM fixed effects with 95% CI, optionally showing random
-    slope percentile ranges if available.
-    """
-    param_names = list(effect_dict.keys())
-    y_pos = np.arange(len(param_names))
-    means = [effect_dict[p]['mean'] for p in param_names]
-    ci_lows = [effect_dict[p]['ci_lower_2_5'] for p in param_names]
-    ci_highs = [effect_dict[p]['ci_upper_97_5'] for p in param_names]
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.axvline(0, color='black', linestyle='--', linewidth=1.0)
-    for i, p in enumerate(param_names):
-        eff = effect_dict[p]
-        if 'random_slope_lower' in eff and 'random_slope_upper' in eff:
-            ax.hlines(y=y_pos[i], xmin=eff['random_slope_lower'], xmax=eff['random_slope_upper'], color=colors[1], linewidth=3, alpha=alpha, label=f'Study slope range ({re_percentiles[0]}/{re_percentiles[1]})' if i == 0 else '')
-    ax.hlines(y=y_pos, xmin=ci_lows, xmax=ci_highs, color=colors[0], linewidth=5, alpha=alpha, label=f'95% CI ({ci_method})')
-    ax.plot(means, y_pos, 'o', markersize=8, color=colors[0], alpha=alpha, label='Fixed effect mean')
-    if show_mean_values:
-        for i, (m, lo, hi) in enumerate(zip(means, ci_lows, ci_highs)):
-            star = '*' if lo > 0 or hi < 0 else ''
-            ax.text(m, y_pos[i] - 0.1, f'{m:.2f}{star}', ha='center', va='bottom', fontsize=mean_label_size)
-    ax.invert_yaxis()
-    ax.set_yticks(y_pos)
-    if show_axes_labels_values:
-        ax.set_yticklabels(param_names, fontsize=axes_label_size)
-        ax.tick_params(axis='x', labelsize=axes_number_size)
-    else:
-        ax.set_yticklabels([])
-        ax.set_xticklabels([])
-        ax.set_xlabel('')
-        ax.set_ylabel('')
-    if show_legend:
-        handles, labels = ax.get_legend_handles_labels()
-        seen = set()
-        unique = []
-        for h, l in zip(handles, labels):
-            if l not in seen and l != '':
-                unique.append((h, l))
-                seen.add(l)
-        if unique:
-            ax.legend([h for h, _ in unique], [l for _, l in unique], fontsize=axes_number_size, loc='upper left', bbox_to_anchor=(1.02, 1), frameon=False)
-    fig.tight_layout()
-    return fig
+    if not is_binary_land_use_term(train_df, term):
+        return None
 
-def load_all_test_fold_dfs(run_folder: str, n_folds: int=5) -> pl.DataFrame:
-    """Load all test dataframes, in order to get covariate information."""
-    dfs = []
-    for i in range(1, n_folds + 1):
-        file_path = Path(base_path) / run_folder / f'test_fold_{i}.parquet'
-        df = pl.read_parquet(file_path)
-        dfs.append(df)
-    return pl.concat(dfs, how='vertical')
+    active = train_df.filter(pl.col(term) == 1).get_column("SS").unique().to_list()
+    return {str(study) for study in active}
 
-def gower_knn_distances(query_x: np.ndarray, reference_x: np.ndarray, k: int=5, max_reference_points: int | None=None, seed: int=42, same_array: bool=False, selection: str='nearest', metric: str='median') -> np.ndarray:
-    """
-    Compute per-row Gower distance summaries to either:
-    - k nearest reference points, or
-    - k random reference points.
-    """
-    rng = np.random.default_rng(seed=seed)
-    if max_reference_points is not None and len(reference_x) > max_reference_points:
-        subset_idx = rng.choice(len(reference_x), size=max_reference_points, replace=False)
-        ref = reference_x[subset_idx]
-    else:
-        ref = reference_x
-    dist_matrix = gower.gower_matrix(query_x, ref)
-    is_square = dist_matrix.shape[0] == dist_matrix.shape[1]
-    if same_array and is_square:
-        np.fill_diagonal(dist_matrix, np.nan if selection == 'random' else np.inf)
-    n_ref = dist_matrix.shape[1]
-    k_eff = min(k, n_ref - 1 if same_array and is_square else n_ref)
-    if selection == 'nearest':
-        selected = np.sort(dist_matrix, axis=1)[:, :k_eff]
-    elif selection == 'random':
-        idx = rng.choice(n_ref, size=k_eff, replace=False)
-        selected = dist_matrix[:, idx]
-    if metric == 'median':
-        aggregate = np.nanmedian(selected, axis=1)
-    elif metric == 'mean':
-        aggregate = np.nanmean(selected, axis=1)
-    return aggregate
 
-def compute_covariate_gower_per_group(df: pl.DataFrame, group_col: str, covariate_cols: list[str], k_neighbors: int=10, selection: str='random', metric: str='median') -> pl.DataFrame:
-    """Compute Gower homogeneity metrics (mean/median/std) for each group,
-    based on the specified covariate columns.
+def filter_ecological_rows_to_active_term(
+    df_term: pl.DataFrame,
+    train_df: pl.DataFrame,
+    term: str,
+) -> pl.DataFrame:
     """
-    groups = df[group_col].unique().to_list()
-    records = []
-    for g in groups:
-        df_group = df.filter(pl.col(group_col) == g)
-        x_group = df_group.select(covariate_cols).to_numpy()
-        knn_vals = gower_knn_distances(query_x=x_group, reference_x=x_group, k=k_neighbors, same_array=True, max_reference_points=None, selection=selection, metric=metric)
-        records.append({group_col: g, 'gower_mean': float(np.mean(knn_vals)), 'gower_median': float(np.median(knn_vals)), 'gower_std': float(np.std(knn_vals))})
-    return pl.DataFrame(records)
+    Keep ecological parameter rows whose final prediction group contains a term.
 
-def compute_outlier_proportions_per_group(df_joined: pl.DataFrame, group_col: str, true_col: str) -> pl.DataFrame:
-    """Compute proportion of outliers per group using IQR method."""
-    df_iqr = df_joined.group_by(group_col).agg([pl.col(true_col).quantile(0.25).alias('q1'), pl.col(true_col).quantile(0.75).alias('q3')])
-    df_iqr = df_iqr.with_columns((pl.col('q3') - pl.col('q1')).alias('iqr'))
-    df_iqr = df_iqr.with_columns([(pl.col('q1') - pl.col('iqr')).alias('lower_1_threshold'), (pl.col('q3') + pl.col('iqr')).alias('upper_1_threshold'), (pl.col('q1') - 1.5 * pl.col('iqr')).alias('lower_1_5_threshold'), (pl.col('q3') + 1.5 * pl.col('iqr')).alias('upper_1_5_threshold')])
-    df_with_thresholds = df_joined.join(df_iqr, on=group_col, how='left')
-    df_with_flags = df_with_thresholds.with_columns([((pl.col(true_col) < pl.col('lower_1_5_threshold')) | (pl.col(true_col) > pl.col('upper_1_5_threshold'))).alias('is_outlier_1_5'), ((pl.col(true_col) < pl.col('lower_1_threshold')) | (pl.col(true_col) > pl.col('upper_1_threshold'))).alias('is_outlier_1')])
-    df_outliers = df_with_flags.group_by(group_col).agg([pl.col('is_outlier_1_5').mean().alias('prop_outliers_1_5'), pl.col('is_outlier_1_5').sum().alias('n_outliers_1_5'), pl.col('is_outlier_1').mean().alias('prop_outliers_1'), pl.col('is_outlier_1').sum().alias('n_outliers_1')])
-    return df_outliers
+    BRM/BTM ecological ranges are intended to describe the group-level effects
+    actually informed by a land-use category. For land-use indicators, this
+    drops final rolled-up groups with no training observations in that category.
+    Continuous terms are returned unchanged.
+    """
+    if not is_binary_land_use_term(train_df, term):
+        return df_term
 
-def create_hierarchical_groups_in_predicts_data(df_predicts: pl.DataFrame) -> pl.DataFrame:
-    """
-    Add species group to the original PREDICTS data and combine this with
-    biomes, to recreate the groupings used in the model. This is required for
-    the next step.
-    """
-    df_predicts = df_predicts.with_columns([pl.when(pl.col('Phylum') == 'Arthropoda').then(pl.when(pl.col('Class') == 'Insecta').then(pl.lit('Insecta')).otherwise(pl.lit('Other Arthropoda'))).when(pl.col('Phylum') == 'Chordata').then(pl.when(pl.col('Class').is_in(['Aves', 'Mammalia'])).then(pl.col('Class')).when(pl.col('Class').is_in(['Amphibia', 'Reptilia'])).then(pl.lit('Amphibia_Reptilia')).otherwise(pl.lit('Other Chordata'))).when(pl.col('Phylum') == 'Tracheophyta').then(pl.lit('Tracheophyta')).when(pl.col('Kingdom') == 'Fungi').then(pl.lit('Fungi')).otherwise(pl.lit('Other ') + pl.col('Kingdom')).alias('Species group')])
-    return df_predicts
+    active_rows = train_df.filter(pl.col(term) == 1)
+    if active_rows.is_empty():
+        return df_term.head(0)
 
-def compute_n_taxa_per_group(df_joined: pl.DataFrame, group_col: str) -> pl.DataFrame:
-    """Compute number of unique taxa per group at the specified taxonomic rank."""
-    df_predicts = pl.read_parquet('../../data/PREDICTS/merged_data.parquet')
-    df_predicts = create_hierarchical_groups_in_predicts_data(df_predicts)
-    df_predicts = df_predicts.join(df_joined.select(['SSBS', group_col]), on='SSBS', how='left')
-    df_taxon_counts = df_predicts.group_by(group_col).agg([pl.col('Order').n_unique().alias('n_orders'), pl.col('Family').n_unique().alias('n_families'), pl.col('Genus').n_unique().alias('n_genera'), pl.col('Species').n_unique().alias('n_species')])
-    return df_taxon_counts
+    active_pairs = active_rows.select(
+        [
+            pl.col("Final_hierarchical_level").alias("level"),
+            pl.col("Final_hierarchical_group").alias("group"),
+        ]
+    ).unique()
 
-def compute_deepdive_summary_per_group(df_pred: pl.DataFrame, df_covars: pl.DataFrame, run_folder: str, group_col: str, pred_col: str, covariate_cols: list[str], true_col: str='Observed', k_neighbors: int=10, gower_selection: str='nearest', gower_metric: str='median') -> pl.DataFrame:
-    """
-    Join predictions with site info (on SSBS), then per stratum compute various
-    metrics for analysis.
-    """
-    df_site_info = read_site_info_parquet(run_folder)
-    df_joined = df_pred.join(df_site_info, on='SSBS', how='left')
-    if group_col == 'Final_hierarchical_group':
-        df_joined = df_joined.filter(pl.col('Final_hierarchical_level') != 'Population')
-    df_stats = df_joined.group_by(group_col).agg([pl.col('SSBS').n_unique().alias('n_sites'), pl.col('SSBS').len().alias('n_observations'), pl.col('SS').n_unique().alias('n_studies'), pl.col(true_col).std().alias('response_std'), pl.corr(true_col, pred_col).alias('Pearson_r')])
-    df_stats = df_stats.with_columns([pl.col('n_sites').log().alias('n_sites_log'), pl.col('n_observations').log().alias('n_observations_log'), pl.col('n_studies').log().alias('n_studies_log')])
-    df_gower = compute_covariate_gower_per_group(df=df_covars, group_col=group_col, covariate_cols=covariate_cols, k_neighbors=k_neighbors, selection=gower_selection, metric=gower_metric)
-    df_outliers = compute_outlier_proportions_per_group(df_joined, group_col=group_col, true_col=true_col)
-    df_taxa = compute_n_taxa_per_group(df_joined, group_col=group_col)
-    df_out = df_stats.join(df_outliers, on=group_col, how='left').join(df_gower, on=group_col, how='left').join(df_taxa, on=group_col, how='left').sort(group_col)
-    return df_out
+    non_population = df_term.filter(pl.col("level") != "population").join(
+        active_pairs,
+        on=["level", "group"],
+        how="inner",
+    )
 
-def plot_histogram(df: pl.DataFrame, data_col: str, bins: int=50, alpha: float=0.7, color: str='steelblue', figsize: tuple=(5, 4), axes_numbers_size: int=12, axes_label_size: int=12, show_axes_labels: bool=False, show_axes_numbers: bool=True) -> plt.Figure:
-    """Plot a single-column histogram for a dataframe variable."""
-    data_array = df.select(pl.col(data_col)).to_series().to_numpy()
-    fig, ax = plt.subplots(figsize=figsize)
-    sns.histplot(data_array, bins=bins, kde=False, ax=ax, color=color, alpha=alpha)
-    if not show_axes_labels:
-        ax.set_xlabel('')
-        ax.set_ylabel('')
-    else:
-        ax.set_xlabel(data_col, fontsize=axes_label_size)
-        ax.set_ylabel('Frequency', fontsize=axes_label_size)
-    if show_axes_numbers:
-        ax.tick_params(axis='x', labelsize=axes_numbers_size)
-        ax.tick_params(axis='y', labelsize=axes_numbers_size)
-    else:
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
-    plt.tight_layout()
-    return fig
+    has_population_support = (
+        active_pairs.filter(pl.col("level") == "Population").height > 0
+    )
+    population = df_term.filter(pl.col("level") == "population")
+    if not has_population_support:
+        population = population.head(0)
 
-def ols_forest_plot(model, var_names, include_intercept: bool=False, figsize: tuple[int, int]=(6, 4), show_mean_values: bool=True, show_axes_labels_values: bool=True, show_legend: bool=True, color: str='steelblue', alpha: float=0.8, mean_label_size: int=11, axes_label_size: int=11, axes_number_size: int=11, ci_method: str='Wald', ci_alpha: float=0.05) -> plt.Figure:
+    return pl.concat([non_population, population], how="vertical_relaxed")
+
+
+def prepare_effect_panel_inputs(
+    training_folders: dict[str, str],
+    diversity_name: str,
+    interval: str = effect_range_interval,
+    effect_scale: str = effect_size_scale,
+) -> tuple[dict[str, dict], list[str], tuple[float, float]]:
     """
-    Forest plot of standardized OLS effects with (1-ci_alpha)% CI.
-    Assumes model was fit with sm.add_constant(Xz) and var_names matches Xz
-    column order.
+    Load Fig 3 effect summaries from current training-run parameter outputs.
+
+    Each training run must contain `key_output/parameter_summary.parquet`, which
+    stores population, study, and ecological-group parameter summaries on both
+    latent and response scales. `mean` is the population-level fixed slope, SBM
+    ranges are active study-level total slopes, and BRM/BTM ranges are active
+    final ecological-group total slopes from `rolled_up_hierarchy_mapping.json`.
+    For binary land-use indicators, active means the study or final prediction
+    group has at least one training row with that category present. Continuous
+    covariates are not filtered by active support.
     """
-    names = ['Intercept'] + list(var_names)
-    params = np.asarray(model.params)
-    ci = np.asarray(model.conf_int(alpha=ci_alpha))
-    rows = []
-    for name, est, (lo, hi) in zip(names, params, ci):
-        if name == 'Intercept' and (not include_intercept):
+    value_col = {"latent": "mean", "response": "response_mean"}[effect_scale]
+    summaries = {}
+    train_dataframes = {}
+    effect_summaries: dict[str, dict] = {
+        model_name: {} for model_name in training_folders
+    }
+    for model_name in model_order:
+        if model_name not in training_folders:
             continue
-        rows.append((name, float(est), float(lo), float(hi)))
-    rows.sort(key=lambda r: r[1], reverse=False)
-    labels = [r[0] for r in rows]
-    means = np.array([r[1] for r in rows])
-    ci_lows = np.array([r[2] for r in rows])
-    ci_highs = np.array([r[3] for r in rows])
-    y_pos = np.arange(len(rows))
+        run_folder = training_folders[model_name]
+        run_path = Path(base_path) / run_folder / key_output_path
+        train_path = (
+            Path(base_path)
+            / run_folder
+            / brm_added_output_path
+            / "train_dataframe.parquet"
+        )
+        parameter_path = run_path / "parameter_summary.parquet"
+        if not parameter_path.exists():
+            raise FileNotFoundError(
+                f"Missing required parameter summary for {model_name}: "
+                f"{parameter_path}. The training run likely did not finish "
+                "the current output-writing step."
+            )
+        if not train_path.exists():
+            raise FileNotFoundError(
+                f"Missing training dataframe for {model_name}: {train_path}. "
+                "Fig 3 active land-use filtering requires this file."
+            )
+        summary = pl.read_parquet(parameter_path)
+        summary = summary.with_columns(pl.col("covariate").cast(pl.Utf8).alias("term"))
+        summaries[model_name] = summary
+        train_dataframes[model_name] = pl.read_parquet(train_path)
+        means = summary.filter(
+            (pl.col("parameter") == "mu_beta") & pl.col("term").is_not_null()
+        ).select(["term", value_col])
+        for term, value in means.iter_rows():
+            effect_summaries[model_name][term] = {"mean": float(value)}
+    effect_order = (
+        summaries["SBM"]
+        .filter((pl.col("parameter") == "mu_beta") & pl.col("term").is_not_null())
+        .get_column("term")
+        .unique(maintain_order=True)
+        .to_list()
+    )
+    sbm_study = summaries["SBM"].filter(
+        (pl.col("parameter") == "beta_study") & pl.col("term").is_not_null()
+    )
+    for term_key, df_term in sbm_study.partition_by("term", as_dict=True).items():
+        term = term_key[0] if isinstance(term_key, tuple) else term_key
+        if term not in effect_order:
+            continue
+        active_studies = active_study_names_for_term(train_dataframes["SBM"], term)
+        if active_studies is not None:
+            df_term = df_term.filter(pl.col("group").is_in(list(active_studies)))
+        if df_term.is_empty():
+            continue
+        low, high = effect_interval(df_term.get_column(value_col).to_list(), interval)
+        effect_summaries["SBM"][term]["random_slope_lower"] = low
+        effect_summaries["SBM"][term]["random_slope_upper"] = high
+    ecological_models = [
+        model_name
+        for model_name in model_order
+        if model_name != "SBM" and model_name in training_folders
+    ]
+    for model_name in ecological_models:
+        run_folder = training_folders[model_name]
+        with open(
+            Path(base_path) / run_folder / "rolled_up_hierarchy_mapping.json"
+        ) as f:
+            hierarchy = json.load(f)
+        final_rows = []
+        for level in hierarchy["column_names"]:
+            if not level.startswith("level_"):
+                continue
+            groups = list(hierarchy.get(level, {}))
+            if not groups:
+                continue
+            parameter = f"beta_{level.split('_')[-1]}"
+            final_rows.append(
+                summaries[model_name].filter(
+                    (pl.col("parameter") == parameter)
+                    & (pl.col("level") == level)
+                    & pl.col("group").is_in(groups)
+                    & pl.col("term").is_not_null()
+                )
+            )
+        if "Population" in hierarchy:
+            final_rows.append(
+                summaries[model_name].filter(
+                    (pl.col("parameter") == "mu_beta")
+                    & (pl.col("level") == "population")
+                    & pl.col("term").is_not_null()
+                )
+            )
+        if not final_rows:
+            continue
+        final_effects = pl.concat(final_rows, how="vertical")
+        for term_key, df_term in final_effects.partition_by(
+            "term", as_dict=True
+        ).items():
+            term = term_key[0] if isinstance(term_key, tuple) else term_key
+            if term not in effect_order or term not in effect_summaries[model_name]:
+                continue
+            df_term = filter_ecological_rows_to_active_term(
+                df_term,
+                train_dataframes[model_name],
+                term,
+            )
+            if df_term.is_empty():
+                continue
+            low, high = effect_interval(
+                df_term.get_column(value_col).to_list(), interval
+            )
+            effect_summaries[model_name][term]["ecological_slope_lower"] = low
+            effect_summaries[model_name][term]["ecological_slope_upper"] = high
+            effect_summaries[model_name][term]["random_slope_lower"] = effect_summaries[
+                "SBM"
+            ][term].get("random_slope_lower")
+            effect_summaries[model_name][term]["random_slope_upper"] = effect_summaries[
+                "SBM"
+            ][term].get("random_slope_upper")
+    limit_values = []
+    for effect_dict in effect_summaries.values():
+        for term in effect_order:
+            values = effect_dict.get(term, {})
+            for key in [
+                "mean",
+                "random_slope_lower",
+                "random_slope_upper",
+                "ecological_slope_lower",
+                "ecological_slope_upper",
+            ]:
+                if values.get(key) is not None:
+                    limit_values.append(values[key])
+    limit_array = np.asarray(limit_values, dtype=float)
+    padding = 0.08 * (limit_array.max() - limit_array.min())
+    effect_x_limits = (
+        min(limit_array.min(), 0) - padding,
+        max(limit_array.max(), 0) + padding,
+    )
+    return (effect_summaries, effect_order, effect_x_limits)
+
+
+def plot_effect_panel(
+    effect_summary: dict[str, dict[str, float]],
+    show_axes_labels_values: bool = True,
+    show_legend: bool = False,
+    show_mean_values: bool = True,
+    show_ecological_spread: bool = False,
+    figsize: tuple[float, float] = (3.8, 5.4),
+    axes_label_size: int = 9,
+    axes_number_size: int = 9,
+    ecological_line_width: float = 2.0,
+    plot_effect_order: list[str] | None = None,
+    plot_effect_x_limits: tuple[float, float] | None = None,
+) -> plt.Figure:
+    """
+    Plot one Fig 3 effect-spread panel.
+
+    Rows are covariates. Circles show population fixed-effect slopes. Peach bars
+    show the configured range of SBM study-level slopes. Optional blue bars show
+    the configured range of BRM/BTM final ecological-group slopes. Covariate
+    labels are raw output names so final figure labels can be added separately.
+    """
+    if plot_effect_order is None:
+        plot_effect_order = effect_order
+    if plot_effect_x_limits is None:
+        plot_effect_x_limits = effect_x_limits
+    terms = [term for term in plot_effect_order if term in effect_summary]
+    y_pos = np.arange(len(terms))
     fig, ax = plt.subplots(figsize=figsize)
-    ax.axvline(0, color='black', linestyle='--', linewidth=1.0)
-    ax.hlines(y=y_pos, xmin=ci_lows, xmax=ci_highs, color=color, linewidth=5, alpha=alpha, label=f'{int(round((1 - ci_alpha) * 100))}% CI ({ci_method})')
-    ax.plot(means, y_pos, 'o', markersize=8, color=color, alpha=alpha, label='Effect estimate')
+    ax.axvline(
+        0, color=color_scheme["zero_line"], linestyle="--", linewidth=1.0, zorder=1
+    )
+    showed_study_label = False
+    showed_ecological_label = False
+    for i, term in enumerate(terms):
+        values = effect_summary[term]
+        if values.get("random_slope_lower") is not None:
+            ax.hlines(
+                y=y_pos[i],
+                xmin=values["random_slope_lower"],
+                xmax=values["random_slope_upper"],
+                color=color_scheme["random_eff"],
+                linewidth=5,
+                label="" if showed_study_label else "Study heterogeneity",
+                zorder=2,
+            )
+            showed_study_label = True
+        if show_ecological_spread and values.get("ecological_slope_lower") is not None:
+            ax.hlines(
+                y=y_pos[i],
+                xmin=values["ecological_slope_lower"],
+                xmax=values["ecological_slope_upper"],
+                color=color_scheme["fixed_eff"],
+                linewidth=ecological_line_width,
+                label="" if showed_ecological_label else "Ecological group spread",
+                zorder=3,
+            )
+            showed_ecological_label = True
+    means = np.asarray([effect_summary[term]["mean"] for term in terms])
+    ax.plot(
+        means,
+        y_pos,
+        "o",
+        markersize=6,
+        color=color_scheme["fixed_eff"],
+        label="Population fixed-effect mean",
+        zorder=5,
+    )
     if show_mean_values:
-        for i, (m, lo, hi) in enumerate(zip(means, ci_lows, ci_highs)):
-            star = '*' if lo > 0 or hi < 0 else ''
-            ax.text(m, y_pos[i] - 0.1, f'{m:.2f}{star}', ha='center', va='bottom', fontsize=mean_label_size)
-    ax.invert_yaxis()
+        x_offset = 6 * np.sign(means)
+        x_offset[x_offset == 0] = 6
+        for y, mean, offset in zip(y_pos, means, x_offset):
+            ax.annotate(
+                f"{mean:.2f}",
+                xy=(mean, y),
+                xytext=(offset, 0),
+                textcoords="offset points",
+                ha="left" if offset > 0 else "right",
+                va="center",
+                fontsize=axes_number_size,
+            )
     ax.set_yticks(y_pos)
     if show_axes_labels_values:
-        ax.set_yticklabels(labels, fontsize=axes_label_size)
-        ax.tick_params(axis='x', labelsize=axes_number_size)
+        ax.set_yticklabels(terms, fontsize=axes_label_size)
     else:
         ax.set_yticklabels([])
-        ax.set_xticklabels([])
-        ax.set_xlabel('')
-        ax.set_ylabel('')
+    ax.set_ylim(len(terms) - 0.5, -0.5)
+    ax.set_xlim(*plot_effect_x_limits)
+    ax.tick_params(
+        axis="x", labelsize=axes_number_size, labelbottom=show_axes_labels_values
+    )
+    ax.tick_params(axis="y", length=0, labelleft=show_axes_labels_values)
     if show_legend:
-        handles, lab = ax.get_legend_handles_labels()
-        seen, uniq = (set(), [])
-        for h, l in zip(handles, lab):
-            if l and l not in seen:
-                uniq.append((h, l))
-                seen.add(l)
-        if uniq:
-            ax.legend([h for h, _ in uniq], [l for _, l in uniq], fontsize=axes_number_size, loc='upper left', bbox_to_anchor=(1.02, 1), frameon=False)
+        ax.legend(
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+            borderaxespad=0,
+            fontsize=axes_label_size,
+        )
     fig.tight_layout()
     return fig
 
-def get_train_test_data_per_fold(run_folder: str, base_path: str=base_path, key_output_dirname: str='key_output') -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """
-    Load CV fold prediction files and extract observed values per fold.
 
-    Expects files:
-      <run_folder>/<key_output_dirname>/train_predictions_fold_*.parquet
-      <run_folder>/<key_output_dirname>/test_predictions_fold_*.parquet
+def _load_glmm_parameter_values(path: Path, value_col: str) -> pl.DataFrame:
     """
-    key_output_dir = Path(base_path) / run_folder / key_output_dirname
-    train_files = sorted(key_output_dir.glob('train_predictions_fold_*.parquet'), key=lambda p: int(p.stem.split('_')[-1]))
-    test_files = sorted(key_output_dir.glob('test_predictions_fold_*.parquet'), key=lambda p: int(p.stem.split('_')[-1]))
-    train_y_list: list[np.ndarray] = []
-    test_y_list: list[np.ndarray] = []
-    for train_path, test_path in zip(train_files, test_files):
-        df_train = pl.read_parquet(train_path)
-        df_test = pl.read_parquet(test_path)
-        train_y_list.append(df_train.get_column('Observed').to_numpy())
-        test_y_list.append(df_test.get_column('Observed').to_numpy())
-    return (train_y_list, test_y_list)
+    Load GLMM fixed-effect estimates from train_effects JSON output.
 
-def foldwise_kde_subplots(train_data_list: list[np.ndarray], test_data_list: list[np.ndarray], test_r_list: list[float], figsize: tuple[int, int]=(4, 3), show_axes_labels_values: bool=True, show_fold_labels: bool=True, show_r_values: bool=False, show_legend: bool=True, xlabel: str='', colors: dict[str, str]={'train': 'steelblue', 'test': 'darkorange'}, alpha: float=0.8, r_label_size: int=11, axes_label_size: int=11, axes_number_size: int=11, xlim: tuple[float, float] | None=None) -> plt.Figure:
+    The returned table has one row per covariate and is used as either the
+    full-training baseline or a fold-specific estimate. Covariate names are used
+    exactly as written in the JSON output.
     """
-    Plot fold-wise KDE curves for train and test data distributions using
-    stacked subplots.
-    """
-    num_folds = len(train_data_list)
-    fig, axs = plt.subplots(nrows=num_folds, ncols=1, figsize=(figsize[0], figsize[1] * num_folds), sharex=True, gridspec_kw={'hspace': 0.1}, constrained_layout=True)
-    all_values = np.concatenate(train_data_list + test_data_list)
-    vmin, vmax = (all_values.min(), all_values.max())
-    x_pad = 0.05 * (vmax - vmin)
-    x_range = (vmin - x_pad, vmax + x_pad)
-    for i in range(num_folds):
-        ax = axs[i]
-        sns.kdeplot(train_data_list[i], ax=ax, color=colors['train'], fill=False, alpha=alpha, linewidth=2, bw_adjust=1.2)
-        sns.kdeplot(test_data_list[i], ax=ax, color=colors['test'], fill=False, alpha=alpha, linewidth=2, bw_adjust=1.2)
-        if xlim is not None:
-            ax.set_xlim(*xlim)
-        else:
-            ax.set_xlim(*x_range)
-        if show_fold_labels:
-            ax.set_ylabel(f'Fold {i + 1}', fontsize=axes_label_size, rotation=0, labelpad=30)
-        else:
-            ax.set_ylabel('')
-        ax.set_yticks([])
-        ax.set_yticklabels([])
-        if test_r_list is not None and show_r_values:
-            ax.text(0.95, 0.5, f'r = {test_r_list[i]:.2f}', transform=ax.transAxes, ha='left', va='center', fontsize=r_label_size)
-        if i == num_folds - 1 and show_axes_labels_values:
-            ax.set_xlabel(xlabel, fontsize=axes_label_size)
-        else:
-            ax.set_xlabel('')
-            ax.tick_params(axis='x', labelbottom=False)
-        ax.tick_params(axis='x', labelsize=axes_number_size)
-        for spine in ['top', 'right', 'left']:
-            ax.spines[spine].set_visible(False)
-    if show_legend:
-        legend_handles = [Line2D([0], [0], color=colors['train'], lw=2, label='Train'), Line2D([0], [0], color=colors['test'], lw=2, label='Test')]
-        fig.legend(handles=legend_handles, loc='upper right', fontsize=axes_label_size, frameon=False, bbox_to_anchor=(1.12, 1.05))
-    return fig
+    with open(path) as in_stream:
+        effects = json.load(in_stream)
+    rows = []
+    for term, values in effects.items():
+        if "mean" not in values:
+            continue
+        rows.append({"covariate": str(term), value_col: float(values["mean"])})
+    parameter_values = pl.DataFrame(rows)
+    return parameter_values
 
-def compute_gower_distances_train_test(run_folder: str, covariate_cols: list[str], base_path: str=base_path, k_neighbors: int=5, max_train_points: int=1000) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """Compute fold-wise train/test kNN Gower distances from saved CV folds."""
-    run_dir = Path(base_path) / run_folder
-    train_files = sorted(run_dir.glob('train_fold_*.parquet'), key=lambda p: int(p.stem.split('_')[-1]))
-    test_files = sorted(run_dir.glob('test_fold_*.parquet'), key=lambda p: int(p.stem.split('_')[-1]))
-    train_dist_list = []
-    test_dist_list = []
-    for train_path, test_path in zip(train_files, test_files):
-        df_train = pl.read_parquet(train_path)
-        df_test = pl.read_parquet(test_path)
-        train_x = df_train.select(covariate_cols).to_numpy()
-        test_x = df_test.select(covariate_cols).to_numpy()
-        train_dist_list.append(gower_knn_distances(query_x=train_x, reference_x=train_x, k=k_neighbors, max_reference_points=max_train_points, same_array=True, selection='nearest', metric='median'))
-        test_dist_list.append(gower_knn_distances(query_x=test_x, reference_x=train_x, k=k_neighbors, max_reference_points=max_train_points, same_array=False, selection='nearest', metric='median'))
-    return (train_dist_list, test_dist_list)
 
-def build_country_lookup_table() -> pd.DataFrame:
+def _load_bhm_parameter_values(
+    path: Path, model_name: str, value_col: str, train_path: Path
+) -> pl.DataFrame:
     """
-    Load Natural Earth country table with ADMIN and ISO_A3 information. Returns
-    a pandas DataFrame with columns ['country_std', 'iso_a3'] that can be
-    joined with model output data.
-    """
-    url = 'https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip'
-    world = gpd.read_file(url)[['ADMIN', 'ISO_A3']]
-    world = world.rename(columns={'ADMIN': 'country_std', 'ISO_A3': 'iso_a3'})
-    return world
+    Load BHM parameter posterior means for the component shown in Fig 4c-e.
 
-def add_iso_codes(df: pl.DataFrame) -> pl.DataFrame:
+    SBM uses population fixed-effect means. BRM and BTM use the ecological
+    parameter rows listed in `rolled_up_hierarchy_mapping.json`, i.e. the same
+    hierarchy levels that can be used for rolled-up out-of-sample prediction.
     """
-    Add Natural Earth `iso_a3` and `country_std` codes to a DataFrame with
-    model output data.
-    - Use Natural Earth country definitions for mapping
-    - Harmonize common country-name mismatches
-    - Explicitly patch known Natural Earth ISO gaps (-99 or null)
-    - Non-sovereign territories are either mapped to parent states or left
-      missing by design (see overrides below)
+    summary = pl.read_parquet(path)
+    if model_name == "SBM":
+        parameter_values = summary.filter(
+            (pl.col("parameter") == "mu_beta")
+            & (pl.col("level") == "population")
+            & pl.col("covariate").is_not_null()
+        ).select(["covariate", pl.col("response_mean").alias(value_col)])
+        return parameter_values
+    with open(train_path / "rolled_up_hierarchy_mapping.json") as in_stream:
+        hierarchy = json.load(in_stream)
+    final_rows = []
+    for level in hierarchy["column_names"]:
+        if not level.startswith("level_"):
+            continue
+        groups = list(hierarchy.get(level, {}))
+        if not groups:
+            continue
+        parameter = f"beta_{level.split('_')[-1]}"
+        level_rows = summary.filter(
+            (pl.col("parameter") == parameter)
+            & (pl.col("level") == level)
+            & pl.col("group").is_in(groups)
+            & pl.col("covariate").is_not_null()
+        ).select(["group", "covariate", pl.col("response_mean").alias(value_col)])
+        if level_rows.height:
+            final_rows.append(level_rows)
+    if "Population" in hierarchy:
+        population_rows = summary.filter(
+            (pl.col("parameter") == "mu_beta")
+            & (pl.col("level") == "population")
+            & pl.col("covariate").is_not_null()
+        ).select(
+            [
+                pl.lit("Population").alias("group"),
+                "covariate",
+                pl.col("response_mean").alias(value_col),
+            ]
+        )
+        if population_rows.height:
+            final_rows.append(population_rows)
+    if not final_rows:
+        return pl.DataFrame({"group": [], "covariate": [], value_col: []})
+    parameter_values = pl.concat(final_rows, how="vertical")
+    return parameter_values
 
-    Returns
-    -------
-    pl.DataFrame
-        Polars DataFrame with added `country_std` and `iso_a3` columns.
-        Rows with unresolved ISO codes will not appear in maps unless
-        handled downstream.
-    """
-    df_pd = df.to_pandas()
-    name_overrides = {'United States': 'United States of America', 'Czech Republic': 'Czechia', 'Korea, Republic of': 'South Korea', 'United Republic of Tanzania': 'Tanzania', "Cote d'Ivoire": "Côte d'Ivoire", 'Sao Tome and Principe': 'São Tomé and Príncipe', 'Viet Nam': 'Vietnam', "Lao People's Democratic Republic": 'Laos', 'Iran (Islamic Republic of)': 'Iran', 'Syrian Arab Republic': 'Syria', "Côte d'Ivoire": 'Ivory Coast', 'Serbia': 'Republic of Serbia', 'Comoros': 'Union of the Comoros'}
-    df_pd['Country'] = df_pd['Country'].replace(name_overrides)
-    country_lookup = build_country_lookup_table()
-    df_out = df_pd.merge(country_lookup, left_on='Country', right_on='country_std', how='left')
-    iso_overrides = {'France': 'FRA', 'Norway': 'NOR', 'Hong Kong': 'CHN', 'French Guiana': 'FRA', 'Puerto Rico': 'USA', 'São Tomé and Príncipe': 'STP', 'Tanzania': 'TZA', "Côte d'Ivoire": 'CIV', 'Union of the Comoros': 'COM'}
-    df_out['iso_a3'] = df_out['iso_a3'].where(df_out['iso_a3'].notna() & (df_out['iso_a3'] != '-99'), df_out['Country'].map(iso_overrides))
-    return pl.DataFrame(df_out)
 
-def calculate_country_stats(df_pred: pl.DataFrame, run_folder: str, pred_col: str, true_col: str='Observed', clip: tuple[float, float] | None=None) -> pl.DataFrame:
+def build_parameter_spread_table(
+    cv_folders: dict[str, dict[str, str]],
+    training_folders: dict[str, str] = beta_training_folders,
+) -> pl.DataFrame:
     """
-    Return one per-country dataframe containing:
-      - number of unique studies
-      - number of unique sites
-      - Pearson's r between predictions and observations
-      - ISO country codes (for plotting)
-    """
-    df_site_info = read_site_info_parquet(run_folder).select(['SS', 'SSBS', 'Country'])
-    df_merged = df_pred.join(df_site_info, on='SSBS', how='inner')
-    df_counts = df_merged.group_by('Country').agg([pl.col('SS').n_unique().alias('Nb_of_studies').cast(pl.Int32), pl.col('SSBS').n_unique().alias('Nb_of_sites').cast(pl.Int32)])
-    corr_expr = pl.corr(true_col, pred_col)
-    if clip is not None:
-        corr_expr = corr_expr.clip(clip[0], clip[1])
-    df_accuracy = df_merged.group_by('Country').agg(corr_expr.alias('Average_r'))
-    df_out = df_counts.join(df_accuracy, on='Country', how='left').sort('Nb_of_sites', descending=True)
-    df_out = add_iso_codes(df_out)
-    return df_out
+    Build Fig 4c-e conditional-shift parameter-change table.
 
-def calculate_per_country_accuracy(df_pred: pl.DataFrame, run_folder: str, pred_col: str, clip: tuple[float, float]=(0, 1), true_col: str='Observed') -> pl.DataFrame:
-    """Compute Pearson's r per country."""
-    df_site_info = read_site_info_parquet(run_folder)
-    site_country = df_site_info.select(['SSBS', 'Country'])
-    df_merged = df_pred.join(site_country, on='SSBS', how='inner')
-    df_accuracy = df_merged.group_by('Country').agg(pl.corr(true_col, pred_col).clip(clip[0], clip[1]).alias('Average_r')).sort('Country')
-    df_accuracy = add_iso_codes(df_accuracy)
-    return df_accuracy
+    For each model, CV mode, fold, covariate, and final group where applicable,
+    the datapoint is the fold-training estimate minus the full-training
+    estimate. BHM outputs are read from parameter_summary parquet files; GLMM
+    outputs are read from train_effects JSON files. The plot later summarizes
+    these datapoints with the selected IQR or 5th-95th percentile range.
+    """
+    rows = []
+    for cv_mode, model_folders in cv_folders.items():
+        for model_name, run_folder in model_folders.items():
+            train_path = Path(base_path) / training_folders[model_name]
+            cv_path = Path(base_path) / run_folder
+            bhm_train_path = train_path / key_output_path / "parameter_summary.parquet"
+            glmm_train_path = train_path / key_output_path / "train_effects.json"
+            if bhm_train_path.exists():
+                baseline = _load_bhm_parameter_values(
+                    path=bhm_train_path,
+                    model_name=model_name,
+                    value_col="baseline",
+                    train_path=train_path,
+                )
+                cv_files = sorted(
+                    (cv_path / key_output_path).glob(
+                        "parameter_summary_fold_*.parquet"
+                    ),
+                    key=lambda path: int(path.stem.split("_")[-1]),
+                )
+                for path in cv_files:
+                    fold = int(path.stem.split("_")[-1])
+                    values = _load_bhm_parameter_values(
+                        path=path,
+                        model_name=model_name,
+                        value_col="value",
+                        train_path=train_path,
+                    )
+                    join_cols = (
+                        ["covariate"] if model_name == "SBM" else ["group", "covariate"]
+                    )
+                    rows.append(
+                        values.join(baseline, on=join_cols, how="inner").with_columns(
+                            [
+                                (pl.col("value") - pl.col("baseline")).alias("change"),
+                                pl.lit(cv_mode).alias("CV mode"),
+                                pl.lit(model_name).alias("Model"),
+                                pl.lit(fold).alias("fold"),
+                            ]
+                        )
+                    )
+                continue
+            baseline = _load_glmm_parameter_values(glmm_train_path, "baseline")
+            cv_files = sorted(
+                (cv_path / key_output_path).glob("train_effects_fold_*.json"),
+                key=lambda path: int(path.stem.split("_")[-1]),
+            )
+            for path in cv_files:
+                fold = int(path.stem.split("_")[-1])
+                values = _load_glmm_parameter_values(path, "value")
+                rows.append(
+                    values.join(baseline, on="covariate", how="inner").with_columns(
+                        [
+                            (pl.col("value") - pl.col("baseline")).alias("change"),
+                            pl.lit(cv_mode).alias("CV mode"),
+                            pl.lit(model_name).alias("Model"),
+                            pl.lit(fold).alias("fold"),
+                        ]
+                    )
+                )
+    parameter_spread_table = pl.concat(rows, how="diagonal_relaxed")
+    return parameter_spread_table
 
-def plot_world_heatmap(df: pl.DataFrame, value_col: str, min_max: tuple[float, float] | None=None, figsize: tuple[int, int]=(12, 6), cmap: str='PuOr_r', show_legend: bool=True, legend_label: str | None=None, legend_decimals: bool=True, iso_col: str='iso_a3') -> plt.Figure:
+
+def plot_parameter_spread_panel(
+    parameter_table: pl.DataFrame,
+    model_name: str,
+    effect_order: list[str],
+    figsize: tuple[float, float] = (4.8, 5.2),
+    show_axes_labels_values: bool = True,
+    show_legend: bool = True,
+    interval: str = effect_range_interval,
+    x_limits: tuple[float, float] | None = None,
+) -> plt.Figure:
     """
-    Plot a choropleth heatmap of country-level values using ISO-A3 codes.
-    Countries without data are shown in light gray.
+    Plot one Fig 4c-e parameter-spread panel.
+
+    Rows are beta-diversity covariates. Each horizontal segment summarizes
+    fold-training parameter changes from the full-training fit, with standard
+    and cross-study CV overlaid. The interval argument controls whether IQR or
+    5th-95th percentile ranges are shown. Labels use raw output covariate names.
     """
-    url = 'https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip'
-    world = gpd.read_file(url)[['ADMIN', 'ISO_A3', 'geometry']]
-    world = world[world['ADMIN'] != 'Antarctica']
-    df = df.to_pandas()
-    merged = world.merge(df[[iso_col, value_col]], left_on='ISO_A3', right_on=iso_col, how='left')
-    vmin, vmax = (min_max[0], min_max[1] if min_max is not None else (None, None))
-    if vmin is None or vmax is None:
-        vals = merged[value_col].dropna().to_numpy()
-        vmin, vmax = (float(vals.min()), float(vals.max()))
-    if vmin < 0 < vmax:
-        norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
-    else:
-        norm = Normalize(vmin=vmin, vmax=vmax)
+    df = parameter_table.filter(pl.col("Model") == model_name).to_pandas()
+    terms = [term for term in effect_order if term in set(df["covariate"])]
+    y_lookup = {term: i for i, term in enumerate(terms)}
+    offsets = {"Standard CV": -0.16, "Cross-study CV": 0.16}
+    colors = {
+        cv_mode: color_scheme[evaluation_mode_color_keys[cv_mode]]
+        for cv_mode in cv_evaluation_mode_order
+    }
+    summary = (
+        df.groupby(["CV mode", "covariate"], as_index=False)["change"]
+        .agg(
+            q25=lambda values: np.quantile(values, 0.25),
+            q75=lambda values: np.quantile(values, 0.75),
+            p5=lambda values: np.quantile(values, 0.05),
+            p95=lambda values: np.quantile(values, 0.95),
+        )
+        .reset_index()
+    )
+    low_col, high_col = ("q25", "q75") if interval == "iqr" else ("p5", "p95")
     fig, ax = plt.subplots(figsize=figsize)
-    merged.plot(column=value_col, cmap=cmap, norm=norm, ax=ax, linewidth=0.3, edgecolor='0.7', legend=show_legend, legend_kwds={'label': legend_label or value_col, 'shrink': 0.6} if show_legend else None, missing_kwds={'color': 'lightgray', 'edgecolor': 'white'})
+    ax.axvline(
+        0, color=color_scheme["zero_line"], linestyle="--", linewidth=1, zorder=1
+    )
+    for cv_mode, color in colors.items():
+        cv_summary = summary.loc[summary["CV mode"] == cv_mode]
+        cv_summary = cv_summary.loc[cv_summary["covariate"].isin(terms)]
+        y_summary = np.asarray(
+            [y_lookup[term] + offsets[cv_mode] for term in cv_summary["covariate"]]
+        )
+        ax.hlines(
+            y=y_summary,
+            xmin=cv_summary[low_col],
+            xmax=cv_summary[high_col],
+            color=color,
+            linewidth=3,
+            alpha=0.95,
+            zorder=2,
+        )
+    ax.set_yticks(np.arange(len(terms)))
+    if show_axes_labels_values:
+        ax.set_yticklabels(terms)
+    else:
+        ax.set_yticklabels([])
+    ax.invert_yaxis()
+    ax.set_xlabel(
+        "Parameter change from training fit" if show_axes_labels_values else ""
+    )
+    ax.tick_params(axis="x", labelbottom=show_axes_labels_values)
+    ax.tick_params(axis="y", length=0, labelleft=show_axes_labels_values)
+    if x_limits is not None:
+        ax.set_xlim(*x_limits)
     if show_legend:
-        cax = fig.axes[-1]
-        if not legend_decimals:
-            cax.yaxis.set_major_formatter(FormatStrFormatter('%d'))
-    ax.set_axis_off()
+        handles = [
+            Line2D([0], [0], color=color, linewidth=3, label=cv_mode)
+            for cv_mode, color in colors.items()
+        ]
+        ax.legend(
+            handles=handles,
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+            borderaxespad=0,
+        )
     fig.tight_layout()
     return fig
