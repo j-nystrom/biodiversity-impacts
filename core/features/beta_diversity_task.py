@@ -26,8 +26,8 @@ logger = create_logger(__name__)
 class BetaDiversityTask:
     """
     Task to compute pairwise compositional similarity between study sites,
-    based on the (minimally-used primary vegetation) reference sites vs. all
-    other sites within each study. The metric implemented is the Bray–Curtis
+    based on the configured primary-vegetation reference sites vs. all other
+    sites within each study. The metric implemented is the Bray–Curtis
     similarity, which is the equivalent of the abundance-version of the
     Sorensen–Dice index.
 
@@ -38,8 +38,8 @@ class BetaDiversityTask:
     NOTE: To implement other metrics, this class can be reused with minimal
     refactoring. The only change needed is to implement the new metric in a
     separate function and call it in the pairwise_similarity_scores method.
-    Additionally, the current implementation only uses minimally used reference
-    sites, but this can be changed to use all primary vegetation sites.
+    Additionally, the reference baseline can be configured to use either
+    minimally used primary vegetation or all primary vegetation sites.
 
     The task also computes pairwise feature differences for all continuous
     pressure variables (e.g. population density, road density) and calculates
@@ -62,11 +62,23 @@ class BetaDiversityTask:
         """
         self.run_folder_path = run_folder_path
         self.feature_data_path: str = configs.feature_generation.feature_data_path
-        self.groupby_cols: list[str] = configs.diversity_metrics.groupby_cols
+        self.base_groupby_cols: list[str] = list(configs.diversity_metrics.groupby_cols)
+        self.groupby_cols: list[str] = list(self.base_groupby_cols)
         self.taxonomic_levels: list[str] = configs.diversity_metrics.taxonomic_levels
-        self.output_data_paths: dict[str, str] = (
-            configs.diversity_metrics.beta.output_data_paths
+        self.taxonomic_grouping_cols: dict[str, list[str]] = {
+            name: list(cols)
+            for name, cols in configs.diversity_metrics.taxonomic_grouping_cols.items()
+        }
+        self.output_data_paths: dict[str, dict[str, str]] = {
+            baseline: dict(paths)
+            for baseline, paths in (
+                configs.diversity_metrics.beta.output_data_paths.items()
+            )
+        }
+        self.reference_baselines: list[str] = list(
+            configs.diversity_metrics.reference_baselines
         )
+        self.reference_baseline: str = self.reference_baselines[0]
         self.density_vars = configs.feature_generation.density_vars
         self.bioclimatic_vars = configs.feature_generation.bioclimatic_vars
         self.topographic_vars = configs.feature_generation.topographic_vars
@@ -83,8 +95,8 @@ class BetaDiversityTask:
         """
         Perform the following processing steps:
             - Compute pairwise compositional similarity (Bray–Curtis) between
-                baseline sites (minimally-used primary vegetation) and all
-                other sites, for every study that meets the filtering criteria
+                configured reference sites and all other sites, for every study
+                that meets the filtering criteria
             - Compute pairwise feature differences for all continuous pressure
                 variables (e.g. population density, road density)
             - Calculate spatial and environmental distances between sites
@@ -131,107 +143,132 @@ class BetaDiversityTask:
 
         df_for_similarity = df.drop(all_predictors)
 
-        # Iterate through all taxonomic grouping levels (there is one output
-        # path for each)
-        for i, path in enumerate(self.output_data_paths.values()):
-            logger.info(f"Calculating at aggregation level: {self.groupby_cols}")
+        for reference_baseline in self.reference_baselines:
+            self.reference_baseline = reference_baseline
+            output_paths = self.output_data_paths[reference_baseline]
 
-            # Filter down to studies that contain reference sites and meet
-            # other criteria
-            df_filtered = self.filter_studies(df_for_similarity)
-            nb_studies = df_filtered.get_column("SS").n_unique()
-            logger.info(f"After filtering, {nb_studies} studies remain.")
-
-            # Get the list of included studies
-            studies = sorted(df_filtered.get_column("SS").unique().to_list())
-            all_results = []
-
-            # Iterate over the filtered studies, processing each one incrementally
-            for study_id in studies:
-                df_study = df_filtered.filter(pl.col("SS") == study_id)
-                df_features_group = df_site_attr.filter(pl.col("SS") == study_id)
-
-                # Compute pairwise similarity scores
-                results = self.pairwise_similarity_scores(study_id, df_study)
-
-                if results:  # Only process if valid site pairs exist in study
-                    df_comp_similarity_group = pl.DataFrame(results)
-
-                    # Compute feature differences and distances for this study
-                    df_comp_similarity_group = self.pairwise_feature_differences(
-                        df_comp_similarity_group, df_features_group
-                    )
-                    df_comp_similarity_group = self.calculate_spatial_distance(
-                        df_comp_similarity_group,
-                        median_extent_all_data,
-                    )
-                    df_comp_similarity_group = self.calculate_environmental_distance(
-                        df_comp_similarity_group
-                    )
-                    # Drop the reference site columns, since they are not used
-                    # for the modeling
-                    df_comp_similarity_group = df_comp_similarity_group.drop(
-                        [
-                            col
-                            for col in df_comp_similarity_group.columns
-                            if col.endswith("_reference")
-                        ]
-                    )
-
-                    # Store results from this study
-                    all_results.append(df_comp_similarity_group)
-
-            # Concatenate all processed results into a single DataFrame
-            df_final: pl.DataFrame = pl.concat(all_results)
-            df_final = df_final.rename({"Other_site": "SSBS"})
-
-            # Sanity check: Bray_Curtis must not contain NaNs
-            n_nan = df_final.select(pl.col("Bray_Curtis_score").is_nan().sum()).item()
-            if n_nan > 0:
-                logger.error(
-                    f"NaN Bray_Curtis values detected after beta generation: {n_nan}."
-                )
-                raise ValueError("NaN Bray-Curtis values detected.")
-
-            # Visibility log for NULLs (for cases with zero abundance at both sites)
-            n_null = df_final.select(pl.col("Bray_Curtis_score").is_null().sum()).item()
-            logger.info(
-                f"Number of NULL Bray-Curtis values (uninformative pairs): {n_null}."
-            )
-
-            # Verify all grouping columns are present in the final output
-            missing_cols = [
-                col for col in self.groupby_cols if col not in df_final.columns
-            ]
-
-            if missing_cols:
-                raise ValueError(
-                    f"The final beta-diversity dataframe is missing required grouping "
-                    f"columns: {missing_cols}."
+            # Each output defines its own taxonomic grouping. Custom and
+            # Custom_alt are siblings, not nested levels.
+            for output_name, path in output_paths.items():
+                self.groupby_cols = self.grouping_cols_for_output(output_name)
+                logger.info(
+                    f"Calculating {output_name} with {self.reference_baseline} "
+                    f"baseline at level: {self.groupby_cols}"
                 )
 
-            # Save the output file for this level of taxonomic aggregation
-            validate_output_files(
-                file_paths=[path], files=[df_final], allow_overwrite=True
-            )
-            df_final.write_parquet(path)
+                # Filter down to studies that contain reference sites and meet
+                # other criteria
+                df_filtered = self.filter_studies(df_for_similarity)
+                nb_studies = df_filtered.get_column("SS").n_unique()
+                logger.info(f"After filtering, {nb_studies} studies remain.")
 
-            logger.info(f"Finished beta calculations at level: {self.groupby_cols}")
+                # Get the list of included studies
+                studies = sorted(df_filtered.get_column("SS").unique().to_list())
+                all_results = []
 
-            # Update the list of grouping columns for the next iteration
-            if i < len(self.taxonomic_levels):
-                self.groupby_cols.append(self.taxonomic_levels[i])
-            else:
-                break
+                # Iterate over filtered studies, processing each one incrementally
+                for study_id in studies:
+                    df_study = df_filtered.filter(pl.col("SS") == study_id)
+                    df_features_group = df_site_attr.filter(pl.col("SS") == study_id)
+
+                    # Compute pairwise similarity scores
+                    results = self.pairwise_similarity_scores(study_id, df_study)
+
+                    if results:  # Only process if valid site pairs exist in study
+                        df_comp_similarity_group = pl.DataFrame(results)
+
+                        # Compute feature differences and distances for this study
+                        df_comp_similarity_group = self.pairwise_feature_differences(
+                            df_comp_similarity_group, df_features_group
+                        )
+                        df_comp_similarity_group = self.calculate_spatial_distance(
+                            df_comp_similarity_group,
+                            median_extent_all_data,
+                        )
+                        df_comp_similarity_group = (
+                            self.calculate_environmental_distance(
+                                df_comp_similarity_group
+                            )
+                        )
+                        # Drop the reference site columns, since they are not used
+                        # for the modeling
+                        df_comp_similarity_group = df_comp_similarity_group.drop(
+                            [
+                                col
+                                for col in df_comp_similarity_group.columns
+                                if col.endswith("_reference")
+                            ]
+                        )
+
+                        # Store results from this study
+                        all_results.append(df_comp_similarity_group)
+
+                # Concatenate all processed results into a single DataFrame
+                df_final: pl.DataFrame = pl.concat(all_results)
+                df_final = df_final.rename({"Other_site": "SSBS"})
+
+                # Sanity check: Bray_Curtis must not contain NaNs
+                n_nan = df_final.select(
+                    pl.col("Bray_Curtis_score").is_nan().sum()
+                ).item()
+                if n_nan > 0:
+                    logger.error(
+                        "NaN Bray_Curtis values detected after beta generation: "
+                        f"{n_nan}."
+                    )
+                    raise ValueError("NaN Bray-Curtis values detected.")
+
+                # Visibility log for NULLs, which are uninformative zero-zero pairs
+                n_null = df_final.select(
+                    pl.col("Bray_Curtis_score").is_null().sum()
+                ).item()
+                logger.info(
+                    "Number of NULL Bray-Curtis values "
+                    f"(uninformative pairs): {n_null}."
+                )
+
+                # Verify all grouping columns are present in the final output
+                missing_cols = [
+                    col for col in self.groupby_cols if col not in df_final.columns
+                ]
+
+                if missing_cols:
+                    raise ValueError(
+                        "The final beta-diversity dataframe is missing required "
+                        f"grouping columns: {missing_cols}."
+                    )
+
+                # Save the output file for this baseline and taxonomic aggregation
+                validate_output_files(
+                    file_paths=[path], files=[df_final], allow_overwrite=True
+                )
+                df_final.write_parquet(path)
+
+                logger.info(
+                    f"Finished {output_name} with {self.reference_baseline} baseline."
+                )
 
         run_time = str(timedelta(seconds=int(time.time() - start_time)))
         logger.info(f"Beta diversity calculations finished in {run_time}.")
+
+    def grouping_cols_for_output(self, output_name: str) -> list[str]:
+        """Return grouping columns for one configured beta output."""
+        return self.base_groupby_cols + self.taxonomic_grouping_cols[output_name]
+
+    def reference_filter_expr(self) -> pl.Expr:
+        """Return the configured primary-vegetation reference-site filter."""
+        primary = pl.col("Predominant_land_use") == "Primary vegetation"
+        if self.reference_baseline == "minimal_primary_vegetation":
+            return primary & (pl.col("Use_intensity") == "Minimal use")
+        if self.reference_baseline == "primary_vegetation":
+            return primary
+        raise ValueError(f"Unknown reference_baseline: {self.reference_baseline}.")
 
     def filter_studies(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         Filters studies to include:
           1) Single sampling effort across all sites in a study
-          2) At least one minimally-used primary vegetation site
+          2) At least one configured primary-vegetation reference site
           3) More than one taxon surveyed
         Returns the filtered DataFrame.
         """
@@ -250,15 +287,9 @@ class BetaDiversityTask:
             .to_list()
         )
 
-        # 2) Find studies with at least one minimally-used primary vegetation site
+        # 2) Find studies with at least one configured reference site.
         min_primary_studies = (
-            df.filter(
-                (pl.col("Predominant_land_use") == "Primary vegetation")
-                & (pl.col("Use_intensity") == "Minimal use")
-            )
-            .get_column("SS")
-            .unique()
-            .to_list()
+            df.filter(self.reference_filter_expr()).get_column("SS").unique().to_list()
         )
 
         # 3) Identify studies with more than one taxon
@@ -288,8 +319,8 @@ class BetaDiversityTask:
     ) -> list[dict]:
         """
         Within a single study (already filtered for consistent effort), compute
-        the similarity score for each pair of a minimally-used primary
-        vegetation site and another site.
+        the similarity score for each pair of a configured reference site and
+        another site.
 
         If self.groupby_cols is non-empty, the comparisons are done separately
         within each taxonomic / grouping unit defined by those columns. That is,
@@ -312,18 +343,16 @@ class BetaDiversityTask:
 
         tax_cols = [c for c in self.groupby_cols if c not in ("SS", "SSB", "SSBS")]
 
-        # Identify baseline sites (minimally-used primary vegetation)
+        # Identify configured primary-vegetation reference sites.
         min_primary_sites = (
-            df_study.filter(
-                (pl.col("Predominant_land_use") == "Primary vegetation")
-                & (pl.col("Use_intensity") == "Minimal use")
-            )
+            df_study.filter(self.reference_filter_expr())
             .get_column("SSBS")
             .unique()
+            .sort()
             .to_list()
         )
         # Get all the sites in the study, including reference sites
-        all_sites = df_study.get_column("SSBS").unique().to_list()
+        all_sites = df_study.get_column("SSBS").unique().sort().to_list()
         site_dfs = {site: df_study.filter(pl.col("SSBS") == site) for site in all_sites}
         results = []
         seen_pairs = set()  # Avoid duplicate ref-ref site comparisons
@@ -356,9 +385,11 @@ class BetaDiversityTask:
                     continue
 
                 # Case 2: Taxonomic grouping, per-group comparisons
-                taxa_1 = df_1.select(tax_cols).unique(maintain_order=True)
-                taxa_2 = df_2.select(tax_cols).unique(maintain_order=True)
-                shared_taxa = taxa_1.join(taxa_2, on=tax_cols, how="inner")
+                taxa_1 = df_1.select(tax_cols).unique().sort(tax_cols)
+                taxa_2 = df_2.select(tax_cols).unique().sort(tax_cols)
+                shared_taxa = taxa_1.join(taxa_2, on=tax_cols, how="inner").sort(
+                    tax_cols
+                )
                 if shared_taxa.height == 0:
                     continue  # no matching taxonomic units
 
@@ -395,17 +426,15 @@ class BetaDiversityTask:
     ) -> dict:
         """
         Calculate the Bray-Curtis similarity metric between a pair of sites,
-        where site_1 is a minimal primary vegetation site and site_2 is any
-        other site from the same study. Sampling effort is consistent which
-        implies that we can use the raw 'Measurement' instead of the effort
-        corrected one.
+        where site_1 is a configured reference site and site_2 is any other
+        site from the same study. Sampling effort is consistent which implies
+        that we can use the raw 'Measurement' instead of the effort corrected
+        one.
 
         Args:
-            df_1: DataFrame for the first site (minimal primary vegetation).
+            df_1: DataFrame for the first/reference site.
             df_2: DataFrame for the second site (any other site in the study).
             study_id: ID of the study being processed.
-            site_1: ID of the first site (minimal primary vegetation).
-            site_2: ID of the second site (any other site in the study).
 
         Returns:
             A dictionary with the Bray–Curtis score of the site pair.
@@ -445,6 +474,7 @@ class BetaDiversityTask:
 
         return {
             "SS": study_id,
+            "Reference_site": df_1.get_column("SSBS")[0],
             "Primary_minimal_site": df_1.get_column("SSBS")[0],
             "Other_site": df_2.get_column("SSBS")[0],
             "Bray_Curtis_score": bray_curtis,
@@ -502,7 +532,7 @@ class BetaDiversityTask:
             df_features.select(
                 ["SSBS"] + all_continuous_vars_list + ["Latitude", "Longitude"]
             ),
-            left_on="Primary_minimal_site",
+            left_on="Reference_site",
             right_on="SSBS",
             suffix="_reference",
         )

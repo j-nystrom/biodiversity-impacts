@@ -176,6 +176,6 @@ brm_beta_cross_study_incl_re:
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
             beta_likelihood:
-              beta: 25
+              beta: 20
     cv_settings:
       split_level: study

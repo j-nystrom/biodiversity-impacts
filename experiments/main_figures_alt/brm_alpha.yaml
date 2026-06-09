@@ -1,16 +1,17 @@
-brm_beta_training_main:
+brm_alpha_training_main_alt:
   dag: training
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: All_species
-        filtering_scope: Custom
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -22,11 +23,6 @@ brm_beta_training_main:
           level_2:
           - Realm
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
         training_components:
           ecological: true
           study_intercept: false
@@ -37,19 +33,20 @@ brm_beta_training_main:
           study_intercept: false
           study_slopes: false
           block_intercept: false
-brm_beta_standard_cv_main:
+brm_alpha_standard_cv_main_alt:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: All_species
-        filtering_scope: Custom
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -61,11 +58,6 @@ brm_beta_standard_cv_main:
           level_2:
           - Realm
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
         training_components:
           ecological: true
           study_intercept: false
@@ -78,19 +70,20 @@ brm_beta_standard_cv_main:
           block_intercept: false
     cv_settings:
       split_level: site
-brm_beta_cross_study_main:
+brm_alpha_cross_study_main_alt:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: All_species
-        filtering_scope: Custom
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -102,11 +95,6 @@ brm_beta_cross_study_main:
           level_2:
           - Realm
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
         training_components:
           ecological: true
           study_intercept: false

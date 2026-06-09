@@ -11,12 +11,13 @@ epsilon: 1e-6  # For clipping, e.g. to avoid exact 0 or 1 in beta distributed mo
 
 data_scope:
   diversity_type: alpha  # [alpha, beta]
-  min_sites_per_study: 0  # Min number of sites per study to be included in model
-  min_ref_sites_for_beta: 0  # Min nb of reference sites for beta diversity models
+  reference_baseline: minimal_primary_vegetation  # [minimal_primary_vegetation, primary_vegetation]
+  min_sites_per_study: 10  # Min number of sites per study to be included in model
+  min_ref_sites_for_beta: 3  # Min nb of reference sites for beta diversity models
   exclude_outliers: True  # Use IQR / Tukey rule to exclude outliers in target
   iqr_multiplier: 1.5  # Multiplier for IQR to define outliers
   sub_sampling:
-    fraction: 1.0  # Fraction of data to include (set to 0.1 for beta diversity)
+    fraction: 1.0  # Fraction of data to include (set to 0.15 for beta diversity)
     level: sites  # [sites, studies]
     min_k_per_study: 300  # For beta: min target number of sites per study
     max_k_per_study: 3000  # For beta: max target number of sites per study
@@ -39,12 +40,14 @@ data_scope:
 
   taxonomic:  # Taxonomic scope on which to train model
     resolution: Custom  # Determines scope and possible granularity of filtering
-    # [All_species, Custom, Kingdom, Phylum, Class, Order]
+    # [All_species, Custom, Custom_alt, Kingdom, Phylum, Class, Order]
     filtering_scope: Custom  # For consistent filtering when resolution is All_species
     include_all: True  # True if all species in scope, False if not
     filtering_logic: include
     filtering_dicts:  # Can only filter down to the resolution specified above
       All_species: []  # No need to specify groups for 'All_species'
+      Custom: []
+      Custom_alt: []
       Kingdom:  # Include / exclude the following species groups
         - Animalia
         - Plantae
@@ -209,18 +212,19 @@ model_variables:
     interaction_cols: []
 
   # Alternative alpha model using predominant land-use classes. Primary
-  # vegetation minimal use remains the intercept, so light and intense primary
-  # vegetation are still explicit covariates.
+  # vegetation is the reference state, regardless of use intensity.
   alpha_main_predominant_lu:
     response_var: Scaled_Geometric_mean_abundance
-    requires_intensity_data: True
+    requires_intensity_data: False
     categorical_vars:
-      - Primary vegetation_Light use
-      - Primary vegetation_Intense use
-      - Secondary vegetation_All uses
-      - Cropland_All uses
-      - Pasture_All uses
-      - Urban_All uses
+      - Young secondary vegetation
+      - Intermediate secondary vegetation
+      - Mature secondary vegetation
+      - Secondary vegetation (indeterminate age)
+      - Plantation forest
+      - Pasture
+      - Cropland
+      - Urban
     continuous_vars:
       - Pop_density_10km_log
       #- Pop_density_1km_log
@@ -296,17 +300,19 @@ model_variables:
       #- Terrain_roughness_10km
 
   # Alternative alpha GLMM with predominant land use instead of full intensity
-  # splits, except for primary vegetation light/intense effects.
+  # splits. Primary vegetation is the reference state.
   alpha_glmm_predominant_lu:
     response_var: Scaled_Geometric_mean_abundance
-    requires_intensity_data: True
+    requires_intensity_data: False
     categorical_vars:
-      - Primary vegetation_Light use
-      - Primary vegetation_Intense use
-      - Secondary vegetation_All uses
-      - Cropland_All uses
-      - Pasture_All uses
-      - Urban_All uses
+      - Young secondary vegetation
+      - Intermediate secondary vegetation
+      - Mature secondary vegetation
+      - Secondary vegetation (indeterminate age)
+      - Plantation forest
+      - Pasture
+      - Cropland
+      - Urban
     continuous_vars:
       - Pop_density_10km_log
       #- Pop_density_1km_log
@@ -324,12 +330,14 @@ model_variables:
       #- Terrain_roughness_10km
     interaction_cols: []
     slope_terms:  # This must be a subset of covariates above
-      - Primary vegetation_Light use
-      - Primary vegetation_Intense use
-      - Secondary vegetation_All uses
-      - Cropland_All uses
-      - Pasture_All uses
-      - Urban_All uses
+      - Young secondary vegetation
+      - Intermediate secondary vegetation
+      - Mature secondary vegetation
+      - Secondary vegetation (indeterminate age)
+      - Plantation forest
+      - Pasture
+      - Cropland
+      - Urban
       - Pop_density_10km_log
       - Road_density_10km_log
       - Annual_mean_temp_1km
@@ -382,17 +390,19 @@ model_variables:
     interaction_cols: []
 
   # Alternative beta model using predominant land-use classes. Primary
-  # vegetation minimal use remains the reference state.
+  # vegetation is the reference state, regardless of use intensity.
   beta_main_predominant_lu:
     response_var: Bray_Curtis_score
-    requires_intensity_data: True
+    requires_intensity_data: False
     categorical_vars:
-      - Primary vegetation_Light use
-      - Primary vegetation_Intense use
-      - Secondary vegetation_All uses
-      - Cropland_All uses
-      - Pasture_All uses
-      - Urban_All uses
+      - Young secondary vegetation
+      - Intermediate secondary vegetation
+      - Mature secondary vegetation
+      - Secondary vegetation (indeterminate age)
+      - Plantation forest
+      - Pasture
+      - Cropland
+      - Urban
     continuous_vars:
       - Pop_density_10km_log
       #- Pop_density_1km_log
@@ -481,17 +491,19 @@ model_variables:
       - Gower_distance_all_feat_log
 
   # Alternative beta GLMM with predominant land use instead of full intensity
-  # splits, except for primary vegetation light/intense effects.
+  # splits. Primary vegetation is the reference state.
   beta_glmm_predominant_lu:
     response_var: Bray_Curtis_score
-    requires_intensity_data: True
+    requires_intensity_data: False
     categorical_vars:
-      - Primary vegetation_Light use
-      - Primary vegetation_Intense use
-      - Secondary vegetation_All uses
-      - Cropland_All uses
-      - Pasture_All uses
-      - Urban_All uses
+      - Young secondary vegetation
+      - Intermediate secondary vegetation
+      - Mature secondary vegetation
+      - Secondary vegetation (indeterminate age)
+      - Plantation forest
+      - Pasture
+      - Cropland
+      - Urban
     continuous_vars:
       - Pop_density_10km_log
       #- Pop_density_1km_log
@@ -513,12 +525,14 @@ model_variables:
       - Gower_distance_all_feat_log
     interaction_cols: []
     slope_terms: # This must be a subset of covariates above
-      - Primary vegetation_Light use
-      - Primary vegetation_Intense use
-      - Secondary vegetation_All uses
-      - Cropland_All uses
-      - Pasture_All uses
-      - Urban_All uses
+      - Young secondary vegetation
+      - Intermediate secondary vegetation
+      - Mature secondary vegetation
+      - Secondary vegetation (indeterminate age)
+      - Plantation forest
+      - Pasture
+      - Cropland
+      - Urban
       #- Annual_mean_temp_1km
       #- Temp_seasonality_1km
       #- Annual_precip_1km
@@ -549,6 +563,7 @@ group_vars:
   taxonomic:
     All_species: []
     Custom: [Custom_taxonomic_group]
+    Custom_alt: [Custom_taxonomic_group_alt]
     Kingdom: [Kingdom]
     Phylum: [Kingdom, Phylum]
     Class: [Kingdom, Phylum, Class]

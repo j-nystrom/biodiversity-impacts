@@ -103,7 +103,7 @@ btm_beta_cross_study_main:
           beta:
             alpha_hyper_mean_mu: 0.25
             beta_likelihood:
-              beta: 25
+              beta: 20
         training_components:
           ecological: true
           study_intercept: false

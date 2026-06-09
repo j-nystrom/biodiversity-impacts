@@ -156,6 +156,13 @@ class BayesianHierarchicalModel:
             return []
         return list(self.model_settings.get("study_effects", {}).get("slope_terms", []))
 
+    @staticmethod
+    def taxon_column_for_dataframe(df: pl.DataFrame) -> str:
+        """Return the custom taxonomic grouping column present in model data."""
+        if "Custom_taxonomic_group_alt" in df.columns:
+            return "Custom_taxonomic_group_alt"
+        return "Custom_taxonomic_group"
+
     def get_fold_level_study_counts(
         self,
         level_key: str,
@@ -636,10 +643,11 @@ class BayesianHierarchicalModel:
         )
         # Add taxon indices for reference if applicable
         if hasattr(self, "taxon_name_to_idx") and self.taxon_name_to_idx:
+            taxon_column = self.taxon_column_for_dataframe(df)
             taxon_idx = np.array(
                 [
                     self.taxon_name_to_idx[taxon]
-                    for taxon in df.get_column("Custom_taxonomic_group").to_list()
+                    for taxon in df.get_column(taxon_column).to_list()
                 ]
             )
 
@@ -671,6 +679,7 @@ class BayesianHierarchicalModel:
         output_dict.update(level_n_studies)
         if hasattr(self, "taxon_name_to_idx") and self.taxon_name_to_idx:
             output_dict["taxon_idx"] = taxon_idx
+            output_dict["taxon_column"] = taxon_column
 
         self.logger.info("Data formatted for PyMC model.")
 
@@ -1612,7 +1621,8 @@ class BayesianHierarchicalModel:
             "Reference_pred": reference_pred,
         }
         if include_taxon:
-            prediction_rows["Custom_taxonomic_group"] = taxon_names
+            taxon_column = prediction_data.get("taxon_column", "Custom_taxonomic_group")
+            prediction_rows[taxon_column] = taxon_names
         df_pred = pl.DataFrame(prediction_rows)
 
         if include_predictive_distribution:

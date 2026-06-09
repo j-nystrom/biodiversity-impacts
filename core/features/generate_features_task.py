@@ -119,8 +119,8 @@ class GenerateFeaturesTask:
         )
         df = self.handle_invalid_values(df, columns=all_continuous_vars)
 
-        # Create a custom species grouping logic that is used in the alpha and
-        # beta diversity tasks
+        # Create custom species grouping columns used in alpha and beta diversity
+        # tasks.
         df = self.create_custom_taxonomic_grouping(df)
 
         # Save the final dataframe to disk
@@ -414,15 +414,15 @@ class GenerateFeaturesTask:
 
     def create_custom_taxonomic_grouping(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Create a custom species grouping logic that is used as a grouping
-        variable in the alpha and beta diversity tasks, complementing standard
-        taxonomic levels like Kingdom, Phylum, etc.
+        Create custom species grouping variables used in the alpha and beta
+        diversity tasks, complementing standard taxonomic levels like Kingdom,
+        Phylum, etc.
 
         Args:
             - df: Dataframe containing taxonomic data data.
 
         Returns:
-            - df: Dataframe with a column representing the new species grouping.
+            - df: Dataframe with two custom species grouping columns.
         """
         df = df.with_columns(
             [
@@ -449,7 +449,17 @@ class GenerateFeaturesTask:
                 .otherwise(
                     pl.lit("Other ") + pl.col("Kingdom")
                 )  # Other animals and plants
-                .alias("Custom_taxonomic_group")
+                .alias("Custom_taxonomic_group"),
+                pl.when(pl.col("Kingdom") == "Plantae")
+                .then(pl.lit("Plants"))
+                .when(pl.col("Kingdom") == "Fungi")
+                .then(pl.lit("Fungi"))
+                .when(pl.col("Phylum") == "Chordata")
+                .then(pl.lit("Vertebrates"))
+                .when(pl.col("Kingdom") == "Animalia")
+                .then(pl.lit("Invertebrates"))
+                .otherwise(pl.lit("Other taxa"))
+                .alias("Custom_taxonomic_group_alt"),
             ]
         )
 

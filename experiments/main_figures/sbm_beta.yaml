@@ -23,10 +23,10 @@ sbm_beta_training_main:
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 1.0
-            hyperprior_sd_beta: 1.0
-            random_intercept_sd: 1.0
-            random_slope_sd: 1.0
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.5
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.5
             beta_likelihood:
               beta: 20
         training_components:
@@ -64,10 +64,10 @@ sbm_beta_standard_cv_main:
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 1.0
-            hyperprior_sd_beta: 1.0
-            random_intercept_sd: 1.0
-            random_slope_sd: 1.0
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.5
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.5
             beta_likelihood:
               beta: 20
         training_components:
@@ -107,12 +107,12 @@ sbm_beta_cross_study_main:
         priors:
           beta:
             alpha_hyper_mean_mu: 0.25
-            hyperprior_sd_alpha: 1.0
-            hyperprior_sd_beta: 1.0
-            random_intercept_sd: 1.0
-            random_slope_sd: 1.0
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.5
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.5
             beta_likelihood:
-              beta: 25
+              beta: 20
         training_components:
           ecological: false
           study_intercept: true

@@ -1,4 +1,4 @@
-sbm_alpha_training_main:
+sbm_alpha_training_main_alt:
   dag: training
   overrides:
     data_scope:
@@ -7,10 +7,11 @@ sbm_alpha_training_main:
         fraction: 1.0
       taxonomic:
         resolution: All_species
-        filtering_scope: Custom
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: alpha_main
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchy:
           level_1:
@@ -19,7 +20,7 @@ sbm_alpha_training_main:
           - Realm
           level_3: []
         rolled_up_predictions: false
-        study_effects: alpha_glmm
+        study_effects: alpha_glmm_predominant_lu
         training_components:
           ecological: false
           study_intercept: true
@@ -36,7 +37,7 @@ sbm_alpha_training_main:
             hyperprior_sd_beta: 0.5
             random_intercept_sd: 0.75
             random_slope_sd: 0.5
-sbm_alpha_standard_cv_main:
+sbm_alpha_standard_cv_main_alt:
   dag: crossval
   overrides:
     data_scope:
@@ -45,10 +46,11 @@ sbm_alpha_standard_cv_main:
         fraction: 1.0
       taxonomic:
         resolution: All_species
-        filtering_scope: Custom
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: alpha_main
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchy:
           level_1:
@@ -57,7 +59,7 @@ sbm_alpha_standard_cv_main:
           - Realm
           level_3: []
         rolled_up_predictions: false
-        study_effects: alpha_glmm
+        study_effects: alpha_glmm_predominant_lu
         training_components:
           ecological: false
           study_intercept: true
@@ -76,7 +78,7 @@ sbm_alpha_standard_cv_main:
             random_slope_sd: 0.5
     cv_settings:
       split_level: site
-sbm_alpha_cross_study_main:
+sbm_alpha_cross_study_main_alt:
   dag: crossval
   overrides:
     data_scope:
@@ -85,10 +87,11 @@ sbm_alpha_cross_study_main:
         fraction: 1.0
       taxonomic:
         resolution: All_species
-        filtering_scope: Custom
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: alpha_main
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchy:
           level_1:
@@ -97,7 +100,7 @@ sbm_alpha_cross_study_main:
           - Realm
           level_3: []
         rolled_up_predictions: false
-        study_effects: alpha_glmm
+        study_effects: alpha_glmm_predominant_lu
         training_components:
           ecological: false
           study_intercept: true

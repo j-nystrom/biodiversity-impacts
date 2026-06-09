@@ -106,6 +106,9 @@ class ModelDataTask:
         # Configs related to scope and data resolution
         self.random_seed = configs.random_seed
         self.diversity_type: str = configs.data_scope.diversity_type
+        self.reference_baseline: str = getattr(
+            configs.data_scope, "reference_baseline", "minimal_primary_vegetation"
+        )
         self.taxonomic_resolution: str = configs.data_scope.taxonomic.resolution
         self.sub_sampling_settings: dict[str, Any] = configs.data_scope.sub_sampling
         self.min_sites_per_study: int = configs.data_scope.min_sites_per_study
@@ -118,12 +121,10 @@ class ModelDataTask:
             configs.data_scope.taxonomic, "filtering_scope", "Custom"
         )
 
-        self.all_species_data_path: str = feature_configs.diversity_metrics[
-            self.diversity_type
-        ].output_data_paths["All_species"]
-        self.input_data_path: str = feature_configs.diversity_metrics[
-            self.diversity_type
-        ].output_data_paths[self.taxonomic_resolution]
+        self.all_species_data_path: str = self.diversity_output_path("All_species")
+        self.input_data_path: str = self.diversity_output_path(
+            self.taxonomic_resolution
+        )
 
         self.group_vars: list[str] = (
             configs.group_vars.basic
@@ -164,6 +165,17 @@ class ModelDataTask:
         if self.mode == "crossval":
             self.cv_settings: dict[str, Any] = configs.cv_settings
 
+    def diversity_output_path(self, taxonomic_resolution: str) -> str:
+        """Return feature-output path for the configured reference baseline."""
+        output_paths = feature_configs.diversity_metrics[
+            self.diversity_type
+        ].output_data_paths
+
+        if self.reference_baseline in output_paths:
+            return output_paths[self.reference_baseline][taxonomic_resolution]
+
+        return output_paths[taxonomic_resolution]
+
     def run_task(self) -> None:
         """
         Generate one or several dataframes for model training or cross-validation.
@@ -196,16 +208,7 @@ class ModelDataTask:
             if scope_resolution == "All_species":
                 df_scope = df_all_species.clone()
             else:
-                scope_paths = feature_configs.diversity_metrics[
-                    self.diversity_type
-                ].output_data_paths
-                if scope_resolution not in scope_paths:
-                    raise ValueError(
-                        "Scope taxonomic resolution is not available in "
-                        "feature configs: "
-                        f"{scope_resolution}."
-                    )
-                scope_path = scope_paths[scope_resolution]
+                scope_path = self.diversity_output_path(scope_resolution)
                 validate_input_files(file_paths=[scope_path])
                 df_scope = pl.read_parquet(scope_path)
         else:
@@ -385,15 +388,10 @@ class ModelDataTask:
             # For Bayesian hierarchical models with taxonomic groupings,
             # also need a mapping between taxon names and index numbers
             if self.taxonomic_resolution != "All_species":
-                if self.taxonomic_resolution == "Custom":
-                    taxon_names = (
-                        df.get_column("Custom_taxonomic_group").unique().to_list()
-                    )
-
-                elif self.taxonomic_resolution != "All_species":
-                    taxon_names = (
-                        df.get_column(self.taxonomic_resolution).unique().to_list()
-                    )
+                taxonomic_col = self.taxonomic_column_for_resolution(
+                    self.taxonomic_resolution
+                )
+                taxon_names = df.get_column(taxonomic_col).unique().to_list()
 
                 # Generate the mapping and save to JSON
                 taxon_name_to_idx = {
@@ -451,10 +449,8 @@ class ModelDataTask:
         # Create dataframe with auxiliary site info
         df_site_info = df.select(all_site_info_vars)
         if self.taxonomic_resolution != "All_species":
-            taxonomic_col = (
+            taxonomic_col = self.taxonomic_column_for_resolution(
                 self.taxonomic_resolution
-                if self.taxonomic_resolution != "Custom"
-                else "Custom_taxonomic_group"
             )
             df_site_info = df_site_info.unique(
                 subset=["SSBS", taxonomic_col], keep="first"
@@ -607,10 +603,11 @@ class ModelDataTask:
         df_filtered = df
         for filter_col, filter_values in filtering_dicts.items():
             if filter_values and filter_col in allowed_filter_cols:
+                filtering_column = self.taxonomic_column_for_resolution(filter_col)
                 df_filtered = self._filter_data_scope(
                     df_filtered,
                     filtering_logic=filter_logic,
-                    filtering_column=filter_col,
+                    filtering_column=filtering_column,
                     filtering_values=filter_values,
                 )
                 nb_studies_before = counts_before["studies"]
@@ -773,7 +770,7 @@ class ModelDataTask:
 
         small_studies = (
             df.group_by("SS")
-            .agg(pl.count("SSBS").alias("n_sites"))
+            .agg(pl.col("SSBS").n_unique().alias("n_sites"))
             .filter(pl.col("n_sites") < threshold)
             .get_column("SS")
             .to_list()
@@ -791,9 +788,10 @@ class ModelDataTask:
         """
         Filter out studies with too few reference sites for beta diversity.
 
-        Reference sites are rows where 'Primary vegetation_Minimal use' equals 1.
-        Only studies with at least `min_ref_sites_for_beta` unique reference
-        sites are kept.
+        Reference sites are read from `Primary_minimal_site`, which stores the
+        configured beta-diversity reference site for each pair. With the
+        primary-vegetation baseline this includes any primary vegetation site,
+        not only minimally used primary vegetation.
         """
         threshold = self.min_ref_sites_for_beta
         logger.info(
@@ -801,12 +799,9 @@ class ModelDataTask:
         )
         counts_before = get_scope_counts(df, self.diversity_type)
 
-        # Reduce dataframe to only reference sites
-        df_ref = df.filter(pl.col("Primary vegetation_Minimal use") == 1)
-
-        # Count number of reference sites per study
-        site_counts = df_ref.group_by("SS").agg(
-            pl.col("SSBS").n_unique().alias("n_sites")
+        # Count unique reference sites per study from the pair reference column.
+        site_counts = df.group_by("SS").agg(
+            pl.col("Primary_minimal_site").n_unique().alias("n_sites")
         )
 
         # Filter studies with enough reference sites
@@ -941,6 +936,22 @@ class ModelDataTask:
 
             # If we still have too many pairs, subsample down to k_study
             if df_sub.height > k_study:
+                sort_cols = [
+                    col
+                    for col in [
+                        "SS",
+                        "SSBS",
+                        "Primary_minimal_site",
+                        "Custom_taxonomic_group",
+                        "Custom_taxonomic_group_alt",
+                        "Kingdom",
+                        "Phylum",
+                        "Class",
+                        "Order",
+                    ]
+                    if col in df_sub.columns
+                ]
+                df_sub = df_sub.sort(sort_cols)
                 df_sub = df_sub.sample(
                     n=k_study,
                     with_replacement=False,
@@ -1776,11 +1787,17 @@ class ModelDataTask:
             scope_resolution = self.taxonomic_resolution
         if scope_resolution == "All_species":
             return []
-        if scope_resolution == "Custom":
-            col = "Custom_taxonomic_group"
-        else:
-            col = scope_resolution
+        col = self.taxonomic_column_for_resolution(scope_resolution)
         return [col] if col in df.columns else []
+
+    @staticmethod
+    def taxonomic_column_for_resolution(resolution: str) -> str:
+        """Return the dataframe column backing a configured taxonomic resolution."""
+        if resolution == "Custom":
+            return "Custom_taxonomic_group"
+        if resolution == "Custom_alt":
+            return "Custom_taxonomic_group_alt"
+        return resolution
 
     def _log_scope_change(self, before: dict[str, int], after: dict[str, int]) -> None:
         """

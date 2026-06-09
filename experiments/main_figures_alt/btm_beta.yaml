@@ -1,4 +1,4 @@
-brm_beta_training_main:
+btm_beta_training_main_alt:
   dag: training
   overrides:
     data_scope:
@@ -6,11 +6,11 @@ brm_beta_training_main:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: All_species
-        filtering_scope: Custom
+        resolution: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: beta_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -20,7 +20,7 @@ brm_beta_training_main:
           level_1:
           - Biome
           level_2:
-          - Realm
+          - Custom_taxonomic_group_alt
           level_3: []
         priors:
           beta:
@@ -37,7 +37,7 @@ brm_beta_training_main:
           study_intercept: false
           study_slopes: false
           block_intercept: false
-brm_beta_standard_cv_main:
+btm_beta_standard_cv_main_alt:
   dag: crossval
   overrides:
     data_scope:
@@ -45,11 +45,11 @@ brm_beta_standard_cv_main:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: All_species
-        filtering_scope: Custom
+        resolution: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: beta_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -59,7 +59,7 @@ brm_beta_standard_cv_main:
           level_1:
           - Biome
           level_2:
-          - Realm
+          - Custom_taxonomic_group_alt
           level_3: []
         priors:
           beta:
@@ -78,7 +78,7 @@ brm_beta_standard_cv_main:
           block_intercept: false
     cv_settings:
       split_level: site
-brm_beta_cross_study_main:
+btm_beta_cross_study_main_alt:
   dag: crossval
   overrides:
     data_scope:
@@ -86,11 +86,11 @@ brm_beta_cross_study_main:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: All_species
-        filtering_scope: Custom
+        resolution: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: beta_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -100,7 +100,7 @@ brm_beta_cross_study_main:
           level_1:
           - Biome
           level_2:
-          - Realm
+          - Custom_taxonomic_group_alt
           level_3: []
         priors:
           beta:
