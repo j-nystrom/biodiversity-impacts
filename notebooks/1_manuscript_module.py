@@ -1,12 +1,23 @@
 import json
+import warnings
 from pathlib import Path
 
+import geopandas as gpd
+import gower
+import jupyter_black
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import polars as pl
 import seaborn as sns
+import statsmodels.api as sm
+from matplotlib.colors import Normalize
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from scipy.stats import spearmanr
+from shapely.geometry import LineString
+
+jupyter_black.load()
 
 # Set global Seaborn theme
 sns.set_theme(
@@ -64,8 +75,6 @@ evaluation_mode_color_keys = {
 
 model_order = ["SBM", "BRM", "BTM"]
 performance_metric_order = ["Spearman", "R2", "MAE"]
-effect_order: list[str] = []
-effect_x_limits = (0.0, 1.0)
 
 
 def find_project_root(start: Path = Path.cwd()) -> Path:
@@ -77,7 +86,6 @@ def find_project_root(start: Path = Path.cwd()) -> Path:
     for path in [start, *start.parents]:
         if (path / "core").exists() and (path / "notebooks").exists():
             return path
-    raise FileNotFoundError("Could not find repository root from notebook path.")
 
 
 # Locate the repository root once so all run-folder paths are stable.
@@ -87,11 +95,13 @@ key_output_path = "key_output"
 site_info_filename = "site_info.parquet"
 brm_added_output_path = "additional_output"
 
-effect_range_interval = "p5_95"  # "iqr" or "p5_95"
+fig3_effect_range_interval = "all"  # "all", "iqr", or "p1_99"
+fig4_effect_range_interval = "p1_99"  # "iqr" or "p1_99"
+effect_range_interval = fig3_effect_range_interval  # Backwards-compatible alias
 effect_size_scale = "response"  # "latent" or "response"
-effect_intervals = {"iqr": (0.25, 0.75), "p5_95": (0.05, 0.95)}
+effect_intervals = {"iqr": (0.25, 0.75), "p1_99": (0.05, 0.95)}
 
-beta_training_folders: dict[str, str] = {}
+beta_training_folders = {}
 
 
 def infer_run_folders(
@@ -119,7 +129,7 @@ def infer_run_folders(
 
 
 def load_prediction_dataframes(
-    model_folders: dict[str, str], base_path: Path | str = base_path
+    model_folders: dict[str, str], base_path: str = base_path
 ) -> dict[str, pl.DataFrame]:
     """
     Load prediction tables for one model across manuscript evaluation modes.
@@ -196,9 +206,9 @@ def build_model_performance_summary(
     """
     Build the tidy performance table used by Fig 2 bar plots.
 
-    For each model and evaluation mode, the function returns one all-observation
-    summary row per metric. For CV modes it also returns one row per fold; Fig 2
-    aggregates those fold rows to one median bar per model, CV mode, and metric.
+    For each model and evaluation mode, the function returns one pooled
+    all-observation summary row per metric. For CV modes it also returns one row
+    per fold for diagnostics and tables. Fig 2 displays the pooled CV value.
     `Metric` stores the display name directly: Spearman, MAE, or R2.
     """
     rows = []
@@ -248,7 +258,7 @@ def build_model_performance_summary(
 
 def read_site_info_parquet(
     run_folder: str,
-    base_path: Path | str = base_path,
+    base_path: str = base_path,
     site_info_filename: str = site_info_filename,
 ) -> pl.DataFrame:
     """
@@ -266,15 +276,19 @@ def effect_interval(values: list[float], interval: str) -> tuple[float, float]:
     """
     Return the selected interval for posterior-mean effect values.
 
-    Fig 3 uses either the interquartile range or the 5th-95th percentile
-    range. Each input value is one study-level slope for the SBM or one
-    final ecological-group slope for the BRM/BTM.
+    Fig 3 uses the full min-max range, the interquartile range, or the
+    1st-99th percentile range. Each input value is one study-level slope
+    for the SBM or one final ecological-group slope for the BRM/BTM.
     """
     arr = np.asarray(values, dtype=float)
     arr = arr[np.isfinite(arr)]
-    q_low, q_high = effect_intervals[interval]
-    low = float(np.quantile(arr, q_low))
-    high = float(np.quantile(arr, q_high))
+    if interval == "all":
+        low = float(arr.min())
+        high = float(arr.max())
+    else:
+        q_low, q_high = effect_intervals[interval]
+        low = float(np.quantile(arr, q_low))
+        high = float(np.quantile(arr, q_high))
     return (low, high)
 
 
@@ -288,11 +302,9 @@ def is_binary_land_use_term(df: pl.DataFrame, term: str) -> bool:
     """
     if term not in df.columns:
         return False
-
     values = df.select(pl.col(term).drop_nulls().unique()).get_column(term).to_list()
     if not values:
         return False
-
     return set(values).issubset({0, 1, 0.0, 1.0})
 
 
@@ -307,15 +319,12 @@ def active_study_names_for_term(train_df: pl.DataFrame, term: str) -> set[str] |
     """
     if not is_binary_land_use_term(train_df, term):
         return None
-
     active = train_df.filter(pl.col(term) == 1).get_column("SS").unique().to_list()
     return {str(study) for study in active}
 
 
 def filter_ecological_rows_to_active_term(
-    df_term: pl.DataFrame,
-    train_df: pl.DataFrame,
-    term: str,
+    df_term: pl.DataFrame, train_df: pl.DataFrame, term: str
 ) -> pl.DataFrame:
     """
     Keep ecological parameter rows whose final prediction group contains a term.
@@ -327,38 +336,31 @@ def filter_ecological_rows_to_active_term(
     """
     if not is_binary_land_use_term(train_df, term):
         return df_term
-
     active_rows = train_df.filter(pl.col(term) == 1)
     if active_rows.is_empty():
         return df_term.head(0)
-
     active_pairs = active_rows.select(
         [
             pl.col("Final_hierarchical_level").alias("level"),
             pl.col("Final_hierarchical_group").alias("group"),
         ]
     ).unique()
-
     non_population = df_term.filter(pl.col("level") != "population").join(
-        active_pairs,
-        on=["level", "group"],
-        how="inner",
+        active_pairs, on=["level", "group"], how="inner"
     )
-
     has_population_support = (
         active_pairs.filter(pl.col("level") == "Population").height > 0
     )
     population = df_term.filter(pl.col("level") == "population")
     if not has_population_support:
         population = population.head(0)
-
     return pl.concat([non_population, population], how="vertical_relaxed")
 
 
 def prepare_effect_panel_inputs(
     training_folders: dict[str, str],
     diversity_name: str,
-    interval: str = effect_range_interval,
+    interval: str = fig3_effect_range_interval,
     effect_scale: str = effect_size_scale,
 ) -> tuple[dict[str, dict], list[str], tuple[float, float]]:
     """
@@ -376,9 +378,7 @@ def prepare_effect_panel_inputs(
     value_col = {"latent": "mean", "response": "response_mean"}[effect_scale]
     summaries = {}
     train_dataframes = {}
-    effect_summaries: dict[str, dict] = {
-        model_name: {} for model_name in training_folders
-    }
+    effect_summaries = {model_name: {} for model_name in training_folders}
     for model_name in model_order:
         if model_name not in training_folders:
             continue
@@ -393,14 +393,11 @@ def prepare_effect_panel_inputs(
         parameter_path = run_path / "parameter_summary.parquet"
         if not parameter_path.exists():
             raise FileNotFoundError(
-                f"Missing required parameter summary for {model_name}: "
-                f"{parameter_path}. The training run likely did not finish "
-                "the current output-writing step."
+                f"Missing required parameter summary for {model_name}: {parameter_path}. The training run likely did not finish the current output-writing step."
             )
         if not train_path.exists():
             raise FileNotFoundError(
-                f"Missing training dataframe for {model_name}: {train_path}. "
-                "Fig 3 active land-use filtering requires this file."
+                f"Missing training dataframe for {model_name}: {train_path}. Fig 3 active land-use filtering requires this file."
             )
         summary = pl.read_parquet(parameter_path)
         summary = summary.with_columns(pl.col("covariate").cast(pl.Utf8).alias("term"))
@@ -478,9 +475,7 @@ def prepare_effect_panel_inputs(
             if term not in effect_order or term not in effect_summaries[model_name]:
                 continue
             df_term = filter_ecological_rows_to_active_term(
-                df_term,
-                train_dataframes[model_name],
-                term,
+                df_term, train_dataframes[model_name], term
             )
             if df_term.is_empty():
                 continue
@@ -508,11 +503,11 @@ def prepare_effect_panel_inputs(
             ]:
                 if values.get(key) is not None:
                     limit_values.append(values[key])
-    limit_array = np.asarray(limit_values, dtype=float)
-    padding = 0.08 * (limit_array.max() - limit_array.min())
+    limit_values = np.asarray(limit_values, dtype=float)
+    padding = 0.08 * (limit_values.max() - limit_values.min())
     effect_x_limits = (
-        min(limit_array.min(), 0) - padding,
-        max(limit_array.max(), 0) + padding,
+        min(limit_values.min(), 0) - padding,
+        max(limit_values.max(), 0) + padding,
     )
     return (effect_summaries, effect_order, effect_x_limits)
 
@@ -525,7 +520,7 @@ def plot_effect_panel(
     show_ecological_spread: bool = False,
     figsize: tuple[float, float] = (3.8, 5.4),
     axes_label_size: int = 9,
-    axes_number_size: int = 9,
+    axes_number_size: int = 12,
     ecological_line_width: float = 2.0,
     plot_effect_order: list[str] | None = None,
     plot_effect_x_limits: tuple[float, float] | None = None,
@@ -702,11 +697,7 @@ def build_parameter_spread_table(
     """
     Build Fig 4c-e conditional-shift parameter-change table.
 
-    For each model, CV mode, fold, covariate, and final group where applicable,
-    the datapoint is the fold-training estimate minus the full-training
-    estimate. BHM outputs are read from parameter_summary parquet files; GLMM
-    outputs are read from train_effects JSON files. The plot later summarizes
-    these datapoints with the selected IQR or 5th-95th percentile range.
+    For each model, CV mode, fold, covariate, and final group where applicable, the datapoint is the fold-training estimate minus the full-training estimate. BHM outputs are read from parameter_summary parquet files; GLMM outputs are read from train_effects JSON files. The plot later summarizes these datapoints with the selected IQR or 5th-95th percentile range.
     """
     rows = []
     for cv_mode, model_folders in cv_folders.items():
@@ -779,7 +770,7 @@ def plot_parameter_spread_panel(
     figsize: tuple[float, float] = (4.8, 5.2),
     show_axes_labels_values: bool = True,
     show_legend: bool = True,
-    interval: str = effect_range_interval,
+    interval: str = fig4_effect_range_interval,
     x_limits: tuple[float, float] | None = None,
 ) -> plt.Figure:
     """

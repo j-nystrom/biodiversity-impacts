@@ -3,6 +3,7 @@ sbm_alpha_training_main:
   overrides:
     data_scope:
       diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 1.0
       taxonomic:
@@ -41,6 +42,7 @@ sbm_alpha_standard_cv_main:
   overrides:
     data_scope:
       diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 1.0
       taxonomic:
@@ -81,6 +83,7 @@ sbm_alpha_cross_study_main:
   overrides:
     data_scope:
       diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 1.0
       taxonomic:

@@ -1,4 +1,4 @@
-btm_beta_training_incl_re:
+btm_beta_training_incl_re_alt_taxa:
   dag: training
   overrides:
     data_scope:
@@ -7,7 +7,7 @@ btm_beta_training_incl_re:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: Custom
+        resolution: Custom_alt
     run_settings:
       model_type: bayesian
       model_variables: beta_main
@@ -20,7 +20,7 @@ btm_beta_training_incl_re:
           level_1:
           - Biome
           level_2:
-          - Custom_taxonomic_group
+          - Custom_taxonomic_group_alt
           level_3: []
         study_effects:
           slope_terms:
@@ -57,7 +57,7 @@ btm_beta_training_incl_re:
             random_slope_sd: 0.05
             beta_likelihood:
               beta: 20
-btm_beta_standard_cv_incl_re:
+btm_beta_standard_cv_incl_re_alt_taxa:
   dag: crossval
   overrides:
     data_scope:
@@ -66,7 +66,7 @@ btm_beta_standard_cv_incl_re:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: Custom
+        resolution: Custom_alt
     run_settings:
       model_type: bayesian
       model_variables: beta_main
@@ -79,7 +79,7 @@ btm_beta_standard_cv_incl_re:
           level_1:
           - Biome
           level_2:
-          - Custom_taxonomic_group
+          - Custom_taxonomic_group_alt
           level_3: []
         study_effects:
           slope_terms:
@@ -118,7 +118,7 @@ btm_beta_standard_cv_incl_re:
               beta: 20
     cv_settings:
       split_level: site
-btm_beta_cross_study_incl_re:
+btm_beta_cross_study_incl_re_alt_taxa:
   dag: crossval
   overrides:
     data_scope:
@@ -127,7 +127,7 @@ btm_beta_cross_study_incl_re:
       sub_sampling:
         fraction: 0.15
       taxonomic:
-        resolution: Custom
+        resolution: Custom_alt
     run_settings:
       model_type: bayesian
       model_variables: beta_main
@@ -140,7 +140,7 @@ btm_beta_cross_study_incl_re:
           level_1:
           - Biome
           level_2:
-          - Custom_taxonomic_group
+          - Custom_taxonomic_group_alt
           level_3: []
         study_effects:
           slope_terms:

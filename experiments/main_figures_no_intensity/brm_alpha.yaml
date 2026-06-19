@@ -1,4 +1,4 @@
-brm_alpha_training_incl_re_alt:
+brm_alpha_training_main_no_intensity:
   dag: training
   overrides:
     data_scope:
@@ -23,33 +23,17 @@ brm_alpha_training_incl_re_alt:
           level_2:
           - Realm
           level_3: []
-        study_effects:
-          slope_terms:
-          - Young secondary vegetation
-          - Intermediate secondary vegetation
-          - Mature secondary vegetation
-          - Secondary vegetation (indeterminate age)
-          - Plantation forest
-          - Pasture
-          - Cropland
-          - Urban
-          - Pop_density_10km_log
-          - Road_density_10km_log
         training_components:
           ecological: true
-          study_intercept: true
-          study_slopes: true
+          study_intercept: false
+          study_slopes: false
           block_intercept: false
         prediction_components:
           ecological: true
-          study_intercept: true
-          study_slopes: true
+          study_intercept: false
+          study_slopes: false
           block_intercept: false
-        priors:
-          beta:
-            random_intercept_sd: 0.1
-            random_slope_sd: 0.05
-brm_alpha_standard_cv_incl_re_alt:
+brm_alpha_standard_cv_main_no_intensity:
   dag: crossval
   overrides:
     data_scope:
@@ -74,35 +58,19 @@ brm_alpha_standard_cv_incl_re_alt:
           level_2:
           - Realm
           level_3: []
-        study_effects:
-          slope_terms:
-          - Young secondary vegetation
-          - Intermediate secondary vegetation
-          - Mature secondary vegetation
-          - Secondary vegetation (indeterminate age)
-          - Plantation forest
-          - Pasture
-          - Cropland
-          - Urban
-          - Pop_density_10km_log
-          - Road_density_10km_log
         training_components:
           ecological: true
-          study_intercept: true
-          study_slopes: true
+          study_intercept: false
+          study_slopes: false
           block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
-        priors:
-          beta:
-            random_intercept_sd: 0.1
-            random_slope_sd: 0.05
     cv_settings:
       split_level: site
-brm_alpha_cross_study_incl_re_alt:
+brm_alpha_cross_study_main_no_intensity:
   dag: crossval
   overrides:
     data_scope:
@@ -127,31 +95,15 @@ brm_alpha_cross_study_incl_re_alt:
           level_2:
           - Realm
           level_3: []
-        study_effects:
-          slope_terms:
-          - Young secondary vegetation
-          - Intermediate secondary vegetation
-          - Mature secondary vegetation
-          - Secondary vegetation (indeterminate age)
-          - Plantation forest
-          - Pasture
-          - Cropland
-          - Urban
-          - Pop_density_10km_log
-          - Road_density_10km_log
         training_components:
           ecological: true
-          study_intercept: true
-          study_slopes: true
+          study_intercept: false
+          study_slopes: false
           block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
-        priors:
-          beta:
-            random_intercept_sd: 0.1
-            random_slope_sd: 0.05
     cv_settings:
       split_level: study

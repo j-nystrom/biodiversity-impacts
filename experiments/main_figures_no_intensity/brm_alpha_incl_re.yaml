@@ -1,17 +1,17 @@
-brm_beta_training_incl_re_alt:
+brm_alpha_training_incl_re_no_intensity:
   dag: training
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
       reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main_predominant_lu
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -35,8 +35,6 @@ brm_beta_training_incl_re_alt:
           - Urban
           - Pop_density_10km_log
           - Road_density_10km_log
-          - Pop_density_10km_log_diff
-          - Road_density_10km_log_diff
         training_components:
           ecological: true
           study_intercept: true
@@ -49,25 +47,22 @@ brm_beta_training_incl_re_alt:
           block_intercept: false
         priors:
           beta:
-            alpha_hyper_mean_mu: 0.25
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
-            beta_likelihood:
-              beta: 20
-brm_beta_standard_cv_incl_re_alt:
+brm_alpha_standard_cv_incl_re_no_intensity:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
       reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main_predominant_lu
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -91,8 +86,6 @@ brm_beta_standard_cv_incl_re_alt:
           - Urban
           - Pop_density_10km_log
           - Road_density_10km_log
-          - Pop_density_10km_log_diff
-          - Road_density_10km_log_diff
         training_components:
           ecological: true
           study_intercept: true
@@ -105,27 +98,24 @@ brm_beta_standard_cv_incl_re_alt:
           block_intercept: false
         priors:
           beta:
-            alpha_hyper_mean_mu: 0.25
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
-            beta_likelihood:
-              beta: 20
     cv_settings:
       split_level: site
-brm_beta_cross_study_incl_re_alt:
+brm_alpha_cross_study_incl_re_no_intensity:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
       reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main_predominant_lu
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -149,8 +139,6 @@ brm_beta_cross_study_incl_re_alt:
           - Urban
           - Pop_density_10km_log
           - Road_density_10km_log
-          - Pop_density_10km_log_diff
-          - Road_density_10km_log_diff
         training_components:
           ecological: true
           study_intercept: true
@@ -163,10 +151,7 @@ brm_beta_cross_study_incl_re_alt:
           block_intercept: false
         priors:
           beta:
-            alpha_hyper_mean_mu: 0.25
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
-            beta_likelihood:
-              beta: 20
     cv_settings:
       split_level: study

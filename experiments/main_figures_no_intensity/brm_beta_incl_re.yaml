@@ -1,10 +1,10 @@
-brm_beta_training_main_alt:
+brm_beta_training_incl_re_no_intensity:
   dag: training
   overrides:
     data_scope:
       diversity_type: beta
       sub_sampling:
-        fraction: 0.15
+        fraction: 0.10
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
@@ -23,28 +23,44 @@ brm_beta_training_main_alt:
           level_2:
           - Realm
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
+        study_effects:
+          slope_terms:
+          - Young secondary vegetation
+          - Intermediate secondary vegetation
+          - Mature secondary vegetation
+          - Secondary vegetation (indeterminate age)
+          - Plantation forest
+          - Pasture
+          - Cropland
+          - Urban
+          - Pop_density_10km_log
+          - Road_density_10km_log
+          - Pop_density_10km_log_diff
+          - Road_density_10km_log_diff
         training_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
         prediction_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
-brm_beta_standard_cv_main_alt:
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
+brm_beta_standard_cv_incl_re_no_intensity:
   dag: crossval
   overrides:
     data_scope:
       diversity_type: beta
       sub_sampling:
-        fraction: 0.15
+        fraction: 0.10
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
@@ -63,30 +79,46 @@ brm_beta_standard_cv_main_alt:
           level_2:
           - Realm
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
+        study_effects:
+          slope_terms:
+          - Young secondary vegetation
+          - Intermediate secondary vegetation
+          - Mature secondary vegetation
+          - Secondary vegetation (indeterminate age)
+          - Plantation forest
+          - Pasture
+          - Cropland
+          - Urban
+          - Pop_density_10km_log
+          - Road_density_10km_log
+          - Pop_density_10km_log_diff
+          - Road_density_10km_log_diff
         training_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
     cv_settings:
       split_level: site
-brm_beta_cross_study_main_alt:
+brm_beta_cross_study_incl_re_no_intensity:
   dag: crossval
   overrides:
     data_scope:
       diversity_type: beta
       sub_sampling:
-        fraction: 0.15
+        fraction: 0.10
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
@@ -105,20 +137,36 @@ brm_beta_cross_study_main_alt:
           level_2:
           - Realm
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
+        study_effects:
+          slope_terms:
+          - Young secondary vegetation
+          - Intermediate secondary vegetation
+          - Mature secondary vegetation
+          - Secondary vegetation (indeterminate age)
+          - Plantation forest
+          - Pasture
+          - Cropland
+          - Urban
+          - Pop_density_10km_log
+          - Road_density_10km_log
+          - Pop_density_10km_log_diff
+          - Road_density_10km_log_diff
         training_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
     cv_settings:
       split_level: study

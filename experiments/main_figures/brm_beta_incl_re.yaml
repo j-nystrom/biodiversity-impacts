@@ -3,6 +3,7 @@ brm_beta_training_incl_re:
   overrides:
     data_scope:
       diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 0.15
       taxonomic:
@@ -62,6 +63,7 @@ brm_beta_standard_cv_incl_re:
   overrides:
     data_scope:
       diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 0.15
       taxonomic:
@@ -123,6 +125,7 @@ brm_beta_cross_study_incl_re:
   overrides:
     data_scope:
       diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 0.15
       taxonomic:

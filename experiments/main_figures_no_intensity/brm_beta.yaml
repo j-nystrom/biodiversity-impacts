@@ -1,16 +1,17 @@
-btm_beta_training_main:
+brm_beta_training_main_no_intensity:
   dag: training
   overrides:
     data_scope:
       diversity_type: beta
-      reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.15
+        fraction: 0.1
       taxonomic:
-        resolution: Custom
+        resolution: All_species
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: beta_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -20,7 +21,7 @@ btm_beta_training_main:
           level_1:
           - Biome
           level_2:
-          - Custom_taxonomic_group
+          - Realm
           level_3: []
         priors:
           beta:
@@ -37,19 +38,20 @@ btm_beta_training_main:
           study_intercept: false
           study_slopes: false
           block_intercept: false
-btm_beta_standard_cv_main:
+brm_beta_standard_cv_main_no_intensity:
   dag: crossval
   overrides:
     data_scope:
       diversity_type: beta
-      reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.15
+        fraction: 0.10
       taxonomic:
-        resolution: Custom
+        resolution: All_species
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: beta_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -59,7 +61,7 @@ btm_beta_standard_cv_main:
           level_1:
           - Biome
           level_2:
-          - Custom_taxonomic_group
+          - Realm
           level_3: []
         priors:
           beta:
@@ -78,19 +80,20 @@ btm_beta_standard_cv_main:
           block_intercept: false
     cv_settings:
       split_level: site
-btm_beta_cross_study_main:
+brm_beta_cross_study_main_no_intensity:
   dag: crossval
   overrides:
     data_scope:
       diversity_type: beta
-      reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.15
+        fraction: 0.10
       taxonomic:
-        resolution: Custom
+        resolution: All_species
+        filtering_scope: Custom_alt
+      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main
+      model_variables: beta_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -100,7 +103,7 @@ btm_beta_cross_study_main:
           level_1:
           - Biome
           level_2:
-          - Custom_taxonomic_group
+          - Realm
           level_3: []
         priors:
           beta:

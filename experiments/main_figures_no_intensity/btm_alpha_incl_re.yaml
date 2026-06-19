@@ -1,16 +1,16 @@
-btm_beta_training_main_alt:
+btm_alpha_training_incl_re_no_intensity:
   dag: training
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: Custom_alt
       reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main_predominant_lu
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -22,34 +22,45 @@ btm_beta_training_main_alt:
           level_2:
           - Custom_taxonomic_group_alt
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
+        study_effects:
+          slope_terms:
+          - Young secondary vegetation
+          - Intermediate secondary vegetation
+          - Mature secondary vegetation
+          - Secondary vegetation (indeterminate age)
+          - Plantation forest
+          - Pasture
+          - Cropland
+          - Urban
+          - Pop_density_10km_log
+          - Road_density_10km_log
         training_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
         prediction_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
-btm_beta_standard_cv_main_alt:
+        priors:
+          beta:
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+btm_alpha_standard_cv_incl_re_no_intensity:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: Custom_alt
       reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main_predominant_lu
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -61,36 +72,47 @@ btm_beta_standard_cv_main_alt:
           level_2:
           - Custom_taxonomic_group_alt
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
+        study_effects:
+          slope_terms:
+          - Young secondary vegetation
+          - Intermediate secondary vegetation
+          - Mature secondary vegetation
+          - Secondary vegetation (indeterminate age)
+          - Plantation forest
+          - Pasture
+          - Cropland
+          - Urban
+          - Pop_density_10km_log
+          - Road_density_10km_log
         training_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
+        priors:
+          beta:
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
     cv_settings:
       split_level: site
-btm_beta_cross_study_main_alt:
+btm_alpha_cross_study_incl_re_no_intensity:
   dag: crossval
   overrides:
     data_scope:
-      diversity_type: beta
+      diversity_type: alpha
       sub_sampling:
-        fraction: 0.15
+        fraction: 1.0
       taxonomic:
         resolution: Custom_alt
       reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: beta_main_predominant_lu
+      model_variables: alpha_main_predominant_lu
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -102,20 +124,31 @@ btm_beta_cross_study_main_alt:
           level_2:
           - Custom_taxonomic_group_alt
           level_3: []
-        priors:
-          beta:
-            alpha_hyper_mean_mu: 0.25
-            beta_likelihood:
-              beta: 20
+        study_effects:
+          slope_terms:
+          - Young secondary vegetation
+          - Intermediate secondary vegetation
+          - Mature secondary vegetation
+          - Secondary vegetation (indeterminate age)
+          - Plantation forest
+          - Pasture
+          - Cropland
+          - Urban
+          - Pop_density_10km_log
+          - Road_density_10km_log
         training_components:
           ecological: true
-          study_intercept: false
-          study_slopes: false
+          study_intercept: true
+          study_slopes: true
           block_intercept: false
         prediction_components:
           ecological: true
           study_intercept: false
           study_slopes: false
           block_intercept: false
+        priors:
+          beta:
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
     cv_settings:
       split_level: study

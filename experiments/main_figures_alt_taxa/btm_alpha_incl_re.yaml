@@ -1,16 +1,16 @@
-btm_alpha_training_incl_re_alt:
+btm_alpha_training_incl_re_alt_taxa:
   dag: training
   overrides:
     data_scope:
       diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 1.0
       taxonomic:
         resolution: Custom_alt
-      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: alpha_main_predominant_lu
+      model_variables: alpha_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -24,14 +24,18 @@ btm_alpha_training_incl_re_alt:
           level_3: []
         study_effects:
           slope_terms:
-          - Young secondary vegetation
-          - Intermediate secondary vegetation
-          - Mature secondary vegetation
-          - Secondary vegetation (indeterminate age)
-          - Plantation forest
-          - Pasture
-          - Cropland
-          - Urban
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
           - Pop_density_10km_log
           - Road_density_10km_log
         training_components:
@@ -48,19 +52,19 @@ btm_alpha_training_incl_re_alt:
           beta:
             random_intercept_sd: 0.1
             random_slope_sd: 0.05
-btm_alpha_standard_cv_incl_re_alt:
+btm_alpha_standard_cv_incl_re_alt_taxa:
   dag: crossval
   overrides:
     data_scope:
       diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 1.0
       taxonomic:
         resolution: Custom_alt
-      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: alpha_main_predominant_lu
+      model_variables: alpha_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -74,14 +78,18 @@ btm_alpha_standard_cv_incl_re_alt:
           level_3: []
         study_effects:
           slope_terms:
-          - Young secondary vegetation
-          - Intermediate secondary vegetation
-          - Mature secondary vegetation
-          - Secondary vegetation (indeterminate age)
-          - Plantation forest
-          - Pasture
-          - Cropland
-          - Urban
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
           - Pop_density_10km_log
           - Road_density_10km_log
         training_components:
@@ -100,19 +108,19 @@ btm_alpha_standard_cv_incl_re_alt:
             random_slope_sd: 0.05
     cv_settings:
       split_level: site
-btm_alpha_cross_study_incl_re_alt:
+btm_alpha_cross_study_incl_re_alt_taxa:
   dag: crossval
   overrides:
     data_scope:
       diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
       sub_sampling:
         fraction: 1.0
       taxonomic:
         resolution: Custom_alt
-      reference_baseline: primary_vegetation
     run_settings:
       model_type: bayesian
-      model_variables: alpha_main_predominant_lu
+      model_variables: alpha_main
       bayesian:
         hierarchical_levels: 2
         varying_slope_level: 2
@@ -126,14 +134,18 @@ btm_alpha_cross_study_incl_re_alt:
           level_3: []
         study_effects:
           slope_terms:
-          - Young secondary vegetation
-          - Intermediate secondary vegetation
-          - Mature secondary vegetation
-          - Secondary vegetation (indeterminate age)
-          - Plantation forest
-          - Pasture
-          - Cropland
-          - Urban
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
           - Pop_density_10km_log
           - Road_density_10km_log
         training_components:
