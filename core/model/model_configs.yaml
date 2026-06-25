@@ -85,7 +85,10 @@ run_settings:
     hierarchical_levels: 3 # Number of hierarchical levels: [1, 2, 3]
     varying_slope_level: 3  # Most granular level at which varying slopes are fitted
     rolled_up_predictions: True  # Predictions use higher level params for small groups
-    ecological_group_dispersion: False  # Allow beta dispersion to vary by deepest ecological group
+    study_effect_centering: global  # Study random-effect centering: [global, ecological_group]
+    study_effect_centering_level: deepest  # Hierarchy level for ecological_group centering
+    ecological_group_dispersion: False  # Allow beta dispersion to vary by ecological group
+    ecological_group_dispersion_level: deepest  # Hierarchy level for group dispersion
     min_studies_per_group: 5  # Min studies needed to predict at a hierarchy group
     min_sites_per_group: 100  # Min unique focal sites needed for hierarchy group
     min_ref_sites_per_group: 5  # Min unique beta reference sites, if available

@@ -604,6 +604,20 @@ class BayesianHierarchicalModel:
             [study_name_to_idx[study] for study in df.get_column("SS").to_list()],
             dtype=np.int32,
         )
+        level_study_memberships = {}
+        for level_key, col_name in hierarchy.get("column_names", {}).items():
+            level_dict = hierarchy.get(level_key, {})
+            group_names = list(level_dict.keys())
+            membership = np.zeros(
+                (len(group_names), len(study_names)),
+                dtype=np.float64,
+            )
+            group_study_pairs = reference_df.select([col_name, "SS"]).unique()
+            for group, study in group_study_pairs.iter_rows():
+                if group in level_dict and study in study_name_to_idx:
+                    membership[level_dict[group], study_name_to_idx[study]] = 1.0
+            level_study_memberships[f"{level_key}_study_membership"] = membership
+
         block_names = sorted(df.get_column("SSB").unique().to_list())
         block_name_to_idx = {block: idx for idx, block in enumerate(block_names)}
         block_idx = np.array(
@@ -677,6 +691,7 @@ class BayesianHierarchicalModel:
         }
         output_dict.update(level_indices)
         output_dict.update(level_n_studies)
+        output_dict.update(level_study_memberships)
         if hasattr(self, "taxon_name_to_idx") and self.taxon_name_to_idx:
             output_dict["taxon_idx"] = taxon_idx
             output_dict["taxon_column"] = taxon_column
