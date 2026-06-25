@@ -775,12 +775,16 @@ class BayesianHierarchicalModel:
         candidate_names = [
             "mu_alpha",
             "mu_beta",
+            "sigma_raw",
+            "sigma_raw_group_sd",
             "gamma_study",
             "gamma_block",
             "delta_study_slope",
         ]
         for level in range(1, self.model_settings["hierarchical_levels"] + 1):
-            candidate_names.extend([f"alpha_{level}", f"beta_{level}"])
+            candidate_names.extend(
+                [f"alpha_{level}", f"beta_{level}", f"sigma_raw_{level}"]
+            )
 
         return [
             variable
@@ -918,10 +922,81 @@ class BayesianHierarchicalModel:
                 posterior=posterior,
             )
         )
+        rows.extend(self._dispersion_parameter_summary_rows(posterior=posterior))
 
         if not rows:
             return pl.DataFrame()
         return pl.DataFrame(rows)
+
+    def _dispersion_parameter_summary_rows(
+        self,
+        posterior: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return beta-dispersion summaries when present in the trace."""
+        if posterior is None:
+            posterior = self.trace.posterior
+        rows = []
+
+        if "sigma_raw" in posterior:
+            rows.append(
+                self._parameter_summary_row(
+                    parameter="sigma_raw",
+                    component="dispersion",
+                    effect="scale",
+                    level="population",
+                    group=None,
+                    covariate=None,
+                    values=self._stack_trace_values(
+                        "sigma_raw",
+                        posterior=posterior,
+                    ).reshape(-1),
+                )
+            )
+
+        if "sigma_raw_group_sd" in posterior:
+            rows.append(
+                self._parameter_summary_row(
+                    parameter="sigma_raw_group_sd",
+                    component="dispersion",
+                    effect="sd",
+                    level="ecological",
+                    group=None,
+                    covariate=None,
+                    values=self._stack_trace_values(
+                        "sigma_raw_group_sd",
+                        posterior=posterior,
+                    ).reshape(-1),
+                )
+            )
+
+        for level in range(1, self.model_settings["hierarchical_levels"] + 1):
+            parameter = f"sigma_raw_{level}"
+            if parameter not in posterior:
+                continue
+            parameter_dims = self._parameter_dims(parameter, posterior=posterior)
+            if not parameter_dims:
+                continue
+            group_dim = parameter_dims[0]
+            values = self._stack_trace_values(
+                parameter,
+                sample_first_dims=[group_dim],
+                posterior=posterior,
+            )
+            group_names = self._level_group_names(level, posterior=posterior)
+            for group_idx in range(values.shape[1]):
+                rows.append(
+                    self._parameter_summary_row(
+                        parameter=parameter,
+                        component="dispersion",
+                        effect="scale",
+                        level=f"level_{level}",
+                        group=group_names[group_idx],
+                        covariate=None,
+                        values=values[:, group_idx],
+                    )
+                )
+
+        return rows
 
     def _random_parameter_summary_rows(
         self,

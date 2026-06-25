@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
+import pymc as pm
 import xarray as xr
 
 from core.model.bhm_model import BayesianHierarchicalModel
@@ -235,3 +236,147 @@ def test_population_only_training_ignores_unused_hierarchy_data() -> None:
     pymc_model = model.build_training_model(model_data)
 
     assert "level_3_to_level_2_idx" not in pymc_model.named_vars
+
+
+def test_study_effects_are_globally_sum_to_zero_centered() -> None:
+    """Study intercepts and slopes are deviations around the global mean."""
+    model = GeneralHierarchicalModel(
+        settings={
+            "hierarchical_levels": 1,
+            "varying_slope_level": 1,
+            "likelihood": "beta",
+            "hierarchy": {
+                "level_1": ["Biome"],
+                "level_2": [],
+                "level_3": [],
+            },
+            "priors": {
+                "group_size_shrinkage": False,
+                "group_size_shrinkage_scaling": "log",
+                "beta": {
+                    "alpha_hyper_mean_mu": 0.35,
+                    "hyperprior_sd_alpha": 0.25,
+                    "hyperprior_sd_beta": 0.18,
+                    "random_intercept_sd": 0.1,
+                    "random_slope_sd": 0.05,
+                    "beta_likelihood": {"alpha": 2, "beta": 12},
+                },
+            },
+            "training_components": {
+                "ecological": False,
+                "study_intercept": True,
+                "study_slopes": True,
+                "block_intercept": False,
+            },
+            "prediction_components": {
+                "ecological": False,
+                "study_intercept": False,
+                "study_slopes": False,
+                "block_intercept": False,
+            },
+            "study_effects": {"slope_terms": ["x"]},
+        },
+        epsilon=1e-6,
+    )
+    model_data = {
+        "coords": {
+            "idx": [0, 1],
+            "x_vars": ["x"],
+            "study_slope_vars": ["x"],
+            "study_names": ["study_a", "study_b"],
+            "block_names": ["block_a", "block_b"],
+        },
+        "x_obs": np.asarray([[0.0], [1.0]]),
+        "x_study_slope_obs": np.asarray([[0.0], [1.0]]),
+        "site_idx": np.asarray([0, 1]),
+        "y_obs": np.asarray([0.4, 0.6]),
+        "study_idx": np.asarray([0, 1]),
+        "block_idx": np.asarray([0, 1]),
+        "block_to_study_idx": np.asarray([0, 1]),
+    }
+
+    pymc_model = model.build_training_model(model_data)
+
+    with pymc_model:
+        gamma_study = np.asarray(
+            pm.draw(pymc_model["gamma_study"], draws=5, random_seed=1)
+        )
+        delta_study_slope = np.asarray(
+            pm.draw(pymc_model["delta_study_slope"], draws=5, random_seed=2)
+        )
+
+    assert np.allclose(gamma_study.sum(axis=-1), 0.0)
+    assert np.allclose(delta_study_slope.sum(axis=-2), 0.0)
+
+
+def test_ecological_group_dispersion_adds_group_level_sigma() -> None:
+    """Opt-in beta dispersion varies by the deepest ecological group."""
+    model = GeneralHierarchicalModel(
+        settings={
+            "hierarchical_levels": 1,
+            "varying_slope_level": 1,
+            "likelihood": "beta",
+            "hierarchy": {
+                "level_1": ["Biome"],
+                "level_2": [],
+                "level_3": [],
+            },
+            "ecological_group_dispersion": True,
+            "priors": {
+                "group_size_shrinkage": False,
+                "group_size_shrinkage_scaling": "log",
+                "beta": {
+                    "alpha_hyper_mean_mu": 0.35,
+                    "hyperprior_sd_alpha": 0.25,
+                    "group_prior_sd_alpha": 0.15,
+                    "hyperprior_sd_beta": 0.18,
+                    "group_prior_sd_beta_level_1": 0.07,
+                    "random_intercept_sd": 0.1,
+                    "random_slope_sd": 0.05,
+                    "ecological_group_dispersion_sd": 0.5,
+                    "beta_likelihood": {"alpha": 2, "beta": 12},
+                },
+            },
+            "training_components": {
+                "ecological": True,
+                "study_intercept": False,
+                "study_slopes": False,
+                "block_intercept": False,
+            },
+            "prediction_components": {
+                "ecological": True,
+                "study_intercept": False,
+                "study_slopes": False,
+                "block_intercept": False,
+            },
+            "study_effects": {"slope_terms": []},
+        },
+        epsilon=1e-6,
+    )
+    model_data = {
+        "coords": {
+            "idx": [0, 1],
+            "x_vars": ["x"],
+            "study_slope_vars": [],
+            "study_names": ["study_a"],
+            "block_names": ["block_a"],
+            "level_1_values": ["group_a", "group_b"],
+        },
+        "x_obs": np.asarray([[0.0], [1.0]]),
+        "x_study_slope_obs": np.zeros((2, 0)),
+        "site_idx": np.asarray([0, 1]),
+        "y_obs": np.asarray([0.4, 0.6]),
+        "study_idx": np.asarray([0, 0]),
+        "block_idx": np.asarray([0, 0]),
+        "block_to_study_idx": np.asarray([0]),
+        "level_1_idx": np.asarray([0, 1]),
+        "level_1_n_studies": np.asarray([2, 2]),
+        "level_2_to_level_1_idx": None,
+        "level_3_to_level_2_idx": None,
+    }
+
+    pymc_model = model.build_training_model(model_data)
+
+    assert "sigma_raw" in pymc_model.named_vars
+    assert "sigma_raw_1" in pymc_model.named_vars
+    assert "sigma_raw_group_sd" in pymc_model.named_vars

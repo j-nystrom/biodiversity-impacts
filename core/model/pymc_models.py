@@ -56,6 +56,10 @@ class GeneralHierarchicalModel:
             "block_intercept": components.get("block_intercept", False),
         }
 
+    def _uses_ecological_group_dispersion(self) -> bool:
+        """Return True when beta dispersion should vary by ecological group."""
+        return bool(self.settings.get("ecological_group_dispersion", False))
+
     def build_training_model(self, model_data: dict[str, Any]) -> pm.Model:
         """
         Build the training model with hierarchical priors and likelihood.
@@ -113,6 +117,8 @@ class GeneralHierarchicalModel:
                 likelihood=self.likelihood,
                 y_cond_linear=y_cond_linear,
                 priors=self.priors,
+                model_data=model_data,
+                use_ecological=training_components["ecological"],
             )
 
             # Add likelihood function and other model outputs
@@ -181,7 +187,14 @@ class GeneralHierarchicalModel:
 
             # Data variance placeholders, depending on likelihood
             sigma_y = pm.Flat("sigma_y") if self.likelihood == "gaussian" else None
-            sigma_raw = pm.Flat("sigma_raw") if self.likelihood == "beta" else None
+            sigma_raw = (
+                self.define_prediction_beta_dispersion(
+                    model_data=model_data,
+                    use_ecological=prediction_components["ecological"],
+                )
+                if self.likelihood == "beta"
+                else None
+            )
 
             add_likelihood_outputs(
                 likelihood=self.likelihood,
@@ -432,20 +445,18 @@ class GeneralHierarchicalModel:
 
         gamma_study = None
         if components["study_intercept"] or components["block_intercept"]:
-            mu_gamma = pm.Normal(
-                "mu_gamma",
-                mu=0,
-                sigma=priors["random_intercept_sd"],
-            )
             sigma_gamma_study = pm.HalfNormal(
                 "sigma_gamma_study", sigma=priors["random_intercept_sd"]
             )
             offset_gamma_study = pm.Normal(
                 "offset_gamma_study", mu=0, sigma=1, dims="study_names"
             )
+            centered_offset_gamma_study = offset_gamma_study - pt.mean(
+                offset_gamma_study
+            )
             gamma_study = pm.Deterministic(
                 "gamma_study",
-                mu_gamma + sigma_gamma_study * offset_gamma_study,
+                sigma_gamma_study * centered_offset_gamma_study,
                 dims="study_names",
             )
 
@@ -485,9 +496,13 @@ class GeneralHierarchicalModel:
                 sigma=1,
                 dims=("study_names", "study_slope_vars"),
             )
+            centered_offset_delta_study = offset_delta_study - pt.mean(
+                offset_delta_study,
+                axis=0,
+            )
             delta_study_slope = pm.Deterministic(
                 "delta_study_slope",
-                sigma_delta_study[None, :] * offset_delta_study,
+                sigma_delta_study[None, :] * centered_offset_delta_study,
                 dims=("study_names", "study_slope_vars"),
             )
             slope_contrib = pt.sum(
@@ -538,6 +553,8 @@ class GeneralHierarchicalModel:
         likelihood: str,
         y_cond_linear: pt.TensorVariable,
         priors: dict[str, Any],
+        model_data: dict[str, Any] | None = None,
+        use_ecological: bool = True,
     ) -> pt.TensorVariable:
         """
         Define the observation noise prior for the given likelihood.
@@ -556,12 +573,76 @@ class GeneralHierarchicalModel:
                 alpha=priors["beta_likelihood"]["alpha"],
                 beta=priors["beta_likelihood"]["beta"],
             )
+            sigma_raw_obs = self.define_training_beta_dispersion(
+                sigma_raw=sigma_raw,
+                priors=priors,
+                model_data=model_data,
+                use_ecological=use_ecological,
+            )
             y_cond = clip(invlogit(y_cond_linear), self.eps, 1 - self.eps)
             sigma_y = pm.Deterministic(
-                "sigma_y", sigma_raw * pt.sqrt(y_cond * (1 - y_cond))
+                "sigma_y", sigma_raw_obs * pt.sqrt(y_cond * (1 - y_cond))
             )
 
         return sigma_y
+
+    def define_training_beta_dispersion(
+        self,
+        sigma_raw: pt.TensorVariable,
+        priors: dict[str, Any],
+        model_data: dict[str, Any] | None,
+        use_ecological: bool,
+    ) -> pt.TensorVariable:
+        """Return scalar or row-level beta dispersion for training."""
+        if (
+            not self._uses_ecological_group_dispersion()
+            or not use_ecological
+            or model_data is None
+        ):
+            return sigma_raw
+
+        level = self.hierarchical_levels
+        level_idx_name = f"level_{level}_idx"
+        group_dim = f"level_{level}_values"
+        if level_idx_name not in model_data or group_dim not in model_data["coords"]:
+            return sigma_raw
+
+        group_sd = pm.HalfNormal(
+            "sigma_raw_group_sd",
+            sigma=priors.get("ecological_group_dispersion_sd", 0.5),
+        )
+        offset_group = pm.Normal(
+            f"offset_sigma_raw_{level}",
+            mu=0,
+            sigma=1,
+            dims=group_dim,
+        )
+        sigma_raw_group = pm.Deterministic(
+            f"sigma_raw_{level}",
+            invlogit(logit(sigma_raw) + group_sd * offset_group),
+            dims=group_dim,
+        )
+
+        return sigma_raw_group[model_data[level_idx_name]]
+
+    def define_prediction_beta_dispersion(
+        self,
+        model_data: dict[str, Any],
+        use_ecological: bool,
+    ) -> pt.TensorVariable:
+        """Return scalar or row-level beta dispersion for prediction."""
+        sigma_raw = pm.Flat("sigma_raw")
+        if not self._uses_ecological_group_dispersion() or not use_ecological:
+            return sigma_raw
+
+        level = self.hierarchical_levels
+        level_idx_name = f"level_{level}_idx"
+        group_dim = f"level_{level}_values"
+        if level_idx_name not in model_data or group_dim not in model_data["coords"]:
+            return sigma_raw
+
+        sigma_raw_group = pm.Flat(f"sigma_raw_{level}", dims=group_dim)
+        return sigma_raw_group[model_data[level_idx_name]]
 
 
 def add_likelihood_outputs(
@@ -719,6 +800,10 @@ def validate_model_settings(settings: dict[str, Any]) -> None:
     ):
         raise ValueError("Study-slope prediction requires study-slope training.")
 
+    ecological_group_dispersion = settings.get("ecological_group_dispersion", False)
+    if not isinstance(ecological_group_dispersion, bool):
+        raise ValueError("ecological_group_dispersion must be a boolean.")
+
 
 def rolled_up_prediction_model(
     model_data: dict[str, Any],
@@ -746,6 +831,9 @@ def rolled_up_prediction_model(
     use_study_intercept = prediction_components.get("study_intercept", False)
     use_study_slopes = prediction_components.get("study_slopes", False)
     use_block_intercept = prediction_components.get("block_intercept", False)
+    use_ecological_group_dispersion = bool(
+        settings.get("ecological_group_dispersion", False)
+    )
 
     def _update_coords_from_trace(
         existing_coords: dict[str, Any],
@@ -899,9 +987,28 @@ def rolled_up_prediction_model(
             )
             y_cond_linear = y_cond_linear + slope_contrib
 
-        # Data variance placeholders, depending on likelihood
+        # Data variance placeholders, depending on likelihood.
         sigma_y = pm.Flat("sigma_y") if likelihood == "gaussian" else None
-        sigma_raw = pm.Flat("sigma_raw") if likelihood == "beta" else None
+        sigma_raw = None
+        if likelihood == "beta":
+            sigma_raw = pm.Flat("sigma_raw")
+            if use_ecological_group_dispersion and use_ecological:
+                deepest_level = hierarchical_levels
+                deepest_idx_name = f"level_{deepest_level}_idx"
+                deepest_dim = f"level_{deepest_level}_values"
+                sigma_raw_group = pm.Flat(
+                    f"sigma_raw_{deepest_level}",
+                    dims=deepest_dim,
+                )
+                sigma_raw_obs = pt.ones_like(y_cond_linear) * sigma_raw
+                deepest_mask = pt.eq(level_assignment, deepest_level)
+                obs_idx = pt.nonzero(deepest_mask)[0]
+                groups = pt.take(model_data[deepest_idx_name], obs_idx)
+                sigma_raw_obs = pt.set_subtensor(
+                    sigma_raw_obs[obs_idx],
+                    pt.take(sigma_raw_group, groups),
+                )
+                sigma_raw = sigma_raw_obs
 
         add_likelihood_outputs(
             likelihood=likelihood,

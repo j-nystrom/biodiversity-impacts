@@ -85,6 +85,7 @@ run_settings:
     hierarchical_levels: 3 # Number of hierarchical levels: [1, 2, 3]
     varying_slope_level: 3  # Most granular level at which varying slopes are fitted
     rolled_up_predictions: True  # Predictions use higher level params for small groups
+    ecological_group_dispersion: False  # Allow beta dispersion to vary by deepest ecological group
     min_studies_per_group: 5  # Min studies needed to predict at a hierarchy group
     min_sites_per_group: 100  # Min unique focal sites needed for hierarchy group
     min_ref_sites_per_group: 5  # Min unique beta reference sites, if available
@@ -136,6 +137,7 @@ run_settings:
         group_prior_sd_beta_level_3: 0.03  # Level-3 ecological slope prior SD
         random_intercept_sd: 0.1  # Study/block random intercept prior SD
         random_slope_sd: 0.05  # Study random slope prior SD
+        ecological_group_dispersion_sd: 0.5  # Logit-scale SD for group dispersion deviations
         beta_likelihood:
           alpha: 2
           beta: 12  # Alpha training/standard CV; experiments override other cases
