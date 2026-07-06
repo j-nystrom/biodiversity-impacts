@@ -78,7 +78,7 @@ run_settings:
       - [prior, beta_2]
       - [prior_predictive, y_like]
       - [observed_data, y_like]
-    sampling_statistics: False  # Calculate ESS and R-hat statistics
+    sampling_statistics: True  # Calculate ESS and R-hat statistics
     save_models_and_traces: False  # Save PyMC model objects and traces to disk (can be large)
     save_predictive_distributions: False  # Save full predictive distributions (very large)
 
@@ -150,7 +150,7 @@ run_settings:
       tune: 1000
       cores: 4
       chains: 4
-      target_accept: 0.95
+      target_accept: 0.97
       nuts_sampler: numpyro  # [numpyro, pymc]
 
   # Structural settings for generalized linear mixed models

@@ -1,0 +1,70 @@
+# Mirrors env.yaml dependency order for pip-based installs.
+# Conda-only/runtime-selection entries are kept as comments.
+
+# -----------------------
+# Core
+# -----------------------
+# python==3.11
+
+# Data & array stack
+numpy
+pandas
+polars==1.15.*
+pyarrow
+# libopenblas
+
+# Plotting
+matplotlib
+seaborn
+
+# -----------------------
+# Geospatial
+# -----------------------
+geopandas
+rasterio
+shapely
+pygeoprocessing
+rasterstats
+utm
+
+# -----------------------
+# Modelling
+# -----------------------
+scikit-learn
+pymc==5.21.*
+pytensor
+numpyro
+jax
+jaxlib
+
+# -----------------------
+# Dev tools / linting
+# -----------------------
+black
+flake8
+flake8-docstrings
+flake8-rst-docstrings
+pep8-naming
+autopep8
+isort
+pyupgrade
+mypy
+types-pyyaml
+pre-commit
+
+# -----------------------
+# Notebooks
+# -----------------------
+jupyter
+ipykernel
+jupyter-black
+
+# -----------------------
+# Other utilities
+# -----------------------
+python-box
+dill
+wakepy
+
+# Pip
+gower

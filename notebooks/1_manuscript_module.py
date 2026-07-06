@@ -1,5 +1,6 @@
+# flake8: noqa
+# mypy: ignore-errors
 import json
-import warnings
 from pathlib import Path
 
 import geopandas as gpd
@@ -94,12 +95,15 @@ base_path = project_root.parent / "data" / "runs_revision"
 key_output_path = "key_output"
 site_info_filename = "site_info.parquet"
 brm_added_output_path = "additional_output"
+current_run_folder_suffix = "main_alt_taxa"
 
-fig3_effect_range_interval = "all"  # "all", "iqr", or "p1_99"
-fig4_effect_range_interval = "p1_99"  # "iqr" or "p1_99"
-effect_range_interval = fig3_effect_range_interval  # Backwards-compatible alias
+effect_range_interval = "p1_99"  # "all", "iqr", "p5_95", or "p1_99"
 effect_size_scale = "response"  # "latent" or "response"
-effect_intervals = {"iqr": (0.25, 0.75), "p1_99": (0.05, 0.95)}
+effect_intervals = {
+    "iqr": (0.25, 0.75),
+    "p5_95": (0.05, 0.95),
+    "p1_99": (0.01, 0.99),
+}
 
 beta_training_folders = {}
 
@@ -164,6 +168,39 @@ def load_prediction_dataframes(
     return out
 
 
+def print_prediction_shapes_and_studies(
+    model_label: str, results: dict[str, pl.DataFrame], folders: dict[str, str]
+) -> None:
+    """Print prediction table shapes and unique study counts by mode."""
+    print(f"{model_label} shapes and studies:")
+    for mode, df in results.items():
+        if "SS" in df.columns:
+            n_studies = df.get_column("SS").n_unique()
+        else:
+            site_info_path = Path(base_path) / folders[mode] / site_info_filename
+            site_info = pl.read_parquet(site_info_path, columns=["SSBS", "SS"])
+            prediction_sites = df.select("SSBS").unique()
+            prediction_studies = prediction_sites.join(site_info, on="SSBS", how="left")
+            n_studies = prediction_studies.get_column("SS").n_unique()
+        print(f"{mode}, {df.shape}, studies={n_studies}")
+
+
+def read_site_info_parquet(
+    run_folder: str,
+    base_path: str = base_path,
+    site_info_filename: str = site_info_filename,
+) -> pl.DataFrame:
+    """
+    Load the site metadata table for a run folder.
+
+    The metadata are used to add land-use, study, biome, realm, and taxonomic
+    group labels to prediction outputs before derived summaries are calculated.
+    """
+    site_info_file = Path(base_path) / run_folder / site_info_filename
+    df_site_info = pl.read_parquet(site_info_file)
+    return df_site_info
+
+
 def _pick_pred_col(df: pl.DataFrame, mode: str) -> str:
     """
     Return the prediction column used by the current output table. Depending on
@@ -186,7 +223,7 @@ def _compute_performance_metrics(
 
     Rows are the datapoints being evaluated: observations for base predictions,
     site-pair deltas for Fig 2c-d, or group/fold subsets when called from
-    Fig 5/Fig 5 driver. Spearman measures rank correlation. MAE is the mean absolute
+    Fig 5 driver. Spearman measures rank correlation. MAE is the mean absolute
     prediction error on the evaluated rows. R2 is 1 - SSE/SST for the same rows.
     """
     y_true = df.get_column(true_col).to_numpy()
@@ -256,22 +293,6 @@ def build_model_performance_summary(
     return df_out
 
 
-def read_site_info_parquet(
-    run_folder: str,
-    base_path: str = base_path,
-    site_info_filename: str = site_info_filename,
-) -> pl.DataFrame:
-    """
-    Load the site metadata table for a run folder.
-
-    The metadata are used to add land-use, study, biome, realm, and taxonomic
-    group labels to prediction outputs before derived summaries are calculated.
-    """
-    site_info_file = Path(base_path) / run_folder / site_info_filename
-    df_site_info = pl.read_parquet(site_info_file)
-    return df_site_info
-
-
 def effect_interval(values: list[float], interval: str) -> tuple[float, float]:
     """
     Return the selected interval for posterior-mean effect values.
@@ -292,37 +313,6 @@ def effect_interval(values: list[float], interval: str) -> tuple[float, float]:
     return (low, high)
 
 
-def is_binary_land_use_term(df: pl.DataFrame, term: str) -> bool:
-    """
-    Return True when a term is a binary indicator in the training dataframe.
-
-    Fig 3 active-support filtering is only applied to categorical land-use
-    indicators. Continuous covariates are left unfiltered because every study or
-    ecological group has a value by construction.
-    """
-    if term not in df.columns:
-        return False
-    values = df.select(pl.col(term).drop_nulls().unique()).get_column(term).to_list()
-    if not values:
-        return False
-    return set(values).issubset({0, 1, 0.0, 1.0})
-
-
-def active_study_names_for_term(train_df: pl.DataFrame, term: str) -> set[str] | None:
-    """
-    Return studies with observations for a binary land-use term.
-
-    A study contributes to Fig 3 SBM study heterogeneity for a land-use category
-    only if at least one training row has that category indicator set to one.
-    `None` means the term is not a binary land-use indicator and should not be
-    filtered.
-    """
-    if not is_binary_land_use_term(train_df, term):
-        return None
-    active = train_df.filter(pl.col(term) == 1).get_column("SS").unique().to_list()
-    return {str(study) for study in active}
-
-
 def filter_ecological_rows_to_active_term(
     df_term: pl.DataFrame, train_df: pl.DataFrame, term: str
 ) -> pl.DataFrame:
@@ -330,11 +320,19 @@ def filter_ecological_rows_to_active_term(
     Keep ecological parameter rows whose final prediction group contains a term.
 
     BRM/BTM ecological ranges are intended to describe the group-level effects
-    actually informed by a land-use category. For land-use indicators, this
-    drops final rolled-up groups with no training observations in that category.
-    Continuous terms are returned unchanged.
+    actually informed by a land-use category. For binary land-use indicators,
+    this drops final rolled-up groups with no training observations in that
+    category. Continuous terms are returned unchanged.
     """
-    if not is_binary_land_use_term(train_df, term):
+    if term not in train_df.columns:
+        return df_term
+    term_values = (
+        train_df.select(pl.col(term).drop_nulls().unique()).get_column(term).to_list()
+    )
+    is_binary_indicator = bool(term_values) and set(term_values).issubset(
+        {0, 1, 0.0, 1.0}
+    )
+    if not is_binary_indicator:
         return df_term
     active_rows = train_df.filter(pl.col(term) == 1)
     if active_rows.is_empty():
@@ -360,7 +358,7 @@ def filter_ecological_rows_to_active_term(
 def prepare_effect_panel_inputs(
     training_folders: dict[str, str],
     diversity_name: str,
-    interval: str = fig3_effect_range_interval,
+    interval: str = effect_range_interval,
     effect_scale: str = effect_size_scale,
 ) -> tuple[dict[str, dict], list[str], tuple[float, float]]:
     """
@@ -422,9 +420,29 @@ def prepare_effect_panel_inputs(
         term = term_key[0] if isinstance(term_key, tuple) else term_key
         if term not in effect_order:
             continue
-        active_studies = active_study_names_for_term(train_dataframes["SBM"], term)
+        active_studies = None
+        if term in train_dataframes["SBM"].columns:
+            term_values = (
+                train_dataframes["SBM"]
+                .select(pl.col(term).drop_nulls().unique())
+                .get_column(term)
+                .to_list()
+            )
+            is_binary_indicator = bool(term_values) and set(term_values).issubset(
+                {0, 1, 0.0, 1.0}
+            )
+            if is_binary_indicator:
+                active_studies = (
+                    train_dataframes["SBM"]
+                    .filter(pl.col(term) == 1)
+                    .get_column("SS")
+                    .unique()
+                    .to_list()
+                )
         if active_studies is not None:
-            df_term = df_term.filter(pl.col("group").is_in(list(active_studies)))
+            df_term = df_term.filter(
+                pl.col("group").is_in([str(study) for study in active_studies])
+            )
         if df_term.is_empty():
             continue
         low, high = effect_interval(df_term.get_column(value_col).to_list(), interval)
@@ -770,13 +788,13 @@ def plot_parameter_spread_panel(
     figsize: tuple[float, float] = (4.8, 5.2),
     show_axes_labels_values: bool = True,
     show_legend: bool = True,
-    interval: str = fig4_effect_range_interval,
+    interval: str = effect_range_interval,
     x_limits: tuple[float, float] | None = None,
 ) -> plt.Figure:
     """
     Plot one Fig 4c-e parameter-spread panel.
 
-    Rows are beta-diversity covariates. Each horizontal segment summarizes
+    Rows are the selected diversity metric's covariates. Each horizontal segment summarizes
     fold-training parameter changes from the full-training fit, with standard
     and cross-study CV overlaid. The interval argument controls whether IQR or
     5th-95th percentile ranges are shown. Labels use raw output covariate names.
