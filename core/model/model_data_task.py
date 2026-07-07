@@ -106,6 +106,9 @@ class ModelDataTask:
         # Configs related to scope and data resolution
         self.random_seed = configs.random_seed
         self.diversity_type: str = configs.data_scope.diversity_type
+        self.reference_baseline: str = getattr(
+            configs.data_scope, "reference_baseline", "minimal_primary_vegetation"
+        )
         self.taxonomic_resolution: str = configs.data_scope.taxonomic.resolution
         self.sub_sampling_settings: dict[str, Any] = configs.data_scope.sub_sampling
         self.min_sites_per_study: int = configs.data_scope.min_sites_per_study
@@ -118,12 +121,10 @@ class ModelDataTask:
             configs.data_scope.taxonomic, "filtering_scope", "Custom"
         )
 
-        self.all_species_data_path: str = feature_configs.diversity_metrics[
-            self.diversity_type
-        ].output_data_paths["All_species"]
-        self.input_data_path: str = feature_configs.diversity_metrics[
-            self.diversity_type
-        ].output_data_paths[self.taxonomic_resolution]
+        self.all_species_data_path: str = self.diversity_output_path("All_species")
+        self.input_data_path: str = self.diversity_output_path(
+            self.taxonomic_resolution
+        )
 
         self.group_vars: list[str] = (
             configs.group_vars.basic
@@ -145,14 +146,35 @@ class ModelDataTask:
             self.rolled_up_predictions: bool = model_run_settings[
                 "rolled_up_predictions"
             ]
+            prediction_components = model_run_settings.get("prediction_components", {})
+            self.use_ecological_predictions: bool = prediction_components.get(
+                "ecological", True
+            )
             self.min_studies_per_group: int = model_run_settings[
                 "min_studies_per_group"
             ]
+            self.min_sites_per_group: int = model_run_settings.get(
+                "min_sites_per_group", 0
+            )
+            self.min_ref_sites_per_group: int = model_run_settings.get(
+                "min_ref_sites_per_group", 0
+            )
             self.hierarchy: dict[str, list[str]] = model_run_settings["hierarchy"]
 
         # If running cross-validation
         if self.mode == "crossval":
             self.cv_settings: dict[str, Any] = configs.cv_settings
+
+    def diversity_output_path(self, taxonomic_resolution: str) -> str:
+        """Return feature-output path for the configured reference baseline."""
+        output_paths = feature_configs.diversity_metrics[
+            self.diversity_type
+        ].output_data_paths
+
+        if self.reference_baseline in output_paths:
+            return output_paths[self.reference_baseline][taxonomic_resolution]
+
+        return output_paths[taxonomic_resolution]
 
     def run_task(self) -> None:
         """
@@ -186,16 +208,7 @@ class ModelDataTask:
             if scope_resolution == "All_species":
                 df_scope = df_all_species.clone()
             else:
-                scope_paths = feature_configs.diversity_metrics[
-                    self.diversity_type
-                ].output_data_paths
-                if scope_resolution not in scope_paths:
-                    raise ValueError(
-                        "Scope taxonomic resolution is not available in "
-                        "feature configs: "
-                        f"{scope_resolution}."
-                    )
-                scope_path = scope_paths[scope_resolution]
+                scope_path = self.diversity_output_path(scope_resolution)
                 validate_input_files(file_paths=[scope_path])
                 df_scope = pl.read_parquet(scope_path)
         else:
@@ -305,6 +318,8 @@ class ModelDataTask:
             + self.continuous_vars
             + interaction_terms
         )
+        if self.diversity_type == "beta":
+            all_model_vars.append("Primary_minimal_site")
 
         # Save interaction terms to a JSON file, since they are created on the fly
         interaction_terms_path = os.path.join(
@@ -339,7 +354,7 @@ class ModelDataTask:
             # If specified, roll up small hierarchical groups to the next level
             # and save these mapping like above. These will be used to create
             # CV folds and for predictions
-            if self.rolled_up_predictions:
+            if self.rolled_up_predictions and self.use_ecological_predictions:
                 df, rolled_up_mapping, rolled_up_cols = self.apply_hierarchical_rollup(
                     df,
                     levels,
@@ -353,6 +368,11 @@ class ModelDataTask:
                     json.dump(rolled_up_mapping, f)
 
                 all_model_vars = list(set(all_model_vars + rolled_up_cols))
+            elif self.rolled_up_predictions:
+                logger.info(
+                    "Skipping hierarchical roll-up because ecological prediction "
+                    "is disabled."
+                )
 
         # For the Bayesian hierarchical model, we additionally need a fixed
         # mapping between site names and index numbers
@@ -368,15 +388,10 @@ class ModelDataTask:
             # For Bayesian hierarchical models with taxonomic groupings,
             # also need a mapping between taxon names and index numbers
             if self.taxonomic_resolution != "All_species":
-                if self.taxonomic_resolution == "Custom":
-                    taxon_names = (
-                        df.get_column("Custom_taxonomic_group").unique().to_list()
-                    )
-
-                elif self.taxonomic_resolution != "All_species":
-                    taxon_names = (
-                        df.get_column(self.taxonomic_resolution).unique().to_list()
-                    )
+                taxonomic_col = self.taxonomic_column_for_resolution(
+                    self.taxonomic_resolution
+                )
+                taxon_names = df.get_column(taxonomic_col).unique().to_list()
 
                 # Generate the mapping and save to JSON
                 taxon_name_to_idx = {
@@ -434,10 +449,8 @@ class ModelDataTask:
         # Create dataframe with auxiliary site info
         df_site_info = df.select(all_site_info_vars)
         if self.taxonomic_resolution != "All_species":
-            taxonomic_col = (
+            taxonomic_col = self.taxonomic_column_for_resolution(
                 self.taxonomic_resolution
-                if self.taxonomic_resolution != "Custom"
-                else "Custom_taxonomic_group"
             )
             df_site_info = df_site_info.unique(
                 subset=["SSBS", taxonomic_col], keep="first"
@@ -590,10 +603,11 @@ class ModelDataTask:
         df_filtered = df
         for filter_col, filter_values in filtering_dicts.items():
             if filter_values and filter_col in allowed_filter_cols:
+                filtering_column = self.taxonomic_column_for_resolution(filter_col)
                 df_filtered = self._filter_data_scope(
                     df_filtered,
                     filtering_logic=filter_logic,
-                    filtering_column=filter_col,
+                    filtering_column=filtering_column,
                     filtering_values=filter_values,
                 )
                 nb_studies_before = counts_before["studies"]
@@ -756,7 +770,7 @@ class ModelDataTask:
 
         small_studies = (
             df.group_by("SS")
-            .agg(pl.count("SSBS").alias("n_sites"))
+            .agg(pl.col("SSBS").n_unique().alias("n_sites"))
             .filter(pl.col("n_sites") < threshold)
             .get_column("SS")
             .to_list()
@@ -774,9 +788,10 @@ class ModelDataTask:
         """
         Filter out studies with too few reference sites for beta diversity.
 
-        Reference sites are rows where 'Primary vegetation_Minimal use' equals 1.
-        Only studies with at least `min_ref_sites_for_beta` unique reference
-        sites are kept.
+        Reference sites are read from `Primary_minimal_site`, which stores the
+        configured beta-diversity reference site for each pair. With the
+        primary-vegetation baseline this includes any primary vegetation site,
+        not only minimally used primary vegetation.
         """
         threshold = self.min_ref_sites_for_beta
         logger.info(
@@ -784,12 +799,9 @@ class ModelDataTask:
         )
         counts_before = get_scope_counts(df, self.diversity_type)
 
-        # Reduce dataframe to only reference sites
-        df_ref = df.filter(pl.col("Primary vegetation_Minimal use") == 1)
-
-        # Count number of reference sites per study
-        site_counts = df_ref.group_by("SS").agg(
-            pl.col("SSBS").n_unique().alias("n_sites")
+        # Count unique reference sites per study from the pair reference column.
+        site_counts = df.group_by("SS").agg(
+            pl.col("Primary_minimal_site").n_unique().alias("n_sites")
         )
 
         # Filter studies with enough reference sites
@@ -924,6 +936,22 @@ class ModelDataTask:
 
             # If we still have too many pairs, subsample down to k_study
             if df_sub.height > k_study:
+                sort_cols = [
+                    col
+                    for col in [
+                        "SS",
+                        "SSBS",
+                        "Primary_minimal_site",
+                        "Custom_taxonomic_group",
+                        "Custom_taxonomic_group_alt",
+                        "Kingdom",
+                        "Phylum",
+                        "Class",
+                        "Order",
+                    ]
+                    if col in df_sub.columns
+                ]
+                df_sub = df_sub.sort(sort_cols)
                 df_sub = df_sub.sample(
                     n=k_study,
                     with_replacement=False,
@@ -1049,11 +1077,30 @@ class ModelDataTask:
             unique_values = df.get_column(col_name).unique().to_list()
             mapping[level] = {value: idx for idx, value in enumerate(unique_values)}
 
-            # Count number of studies per group, for use in priors and roll up
+            # Count studies for prior scaling and group size metrics for roll-up.
+            count_exprs = [
+                pl.col("SS").n_unique().alias("n_studies"),
+                pl.col("SSBS").n_unique().alias("n_sites"),
+            ]
+            if "Primary_minimal_site" in df.columns:
+                count_exprs.append(
+                    pl.col("Primary_minimal_site").n_unique().alias("n_ref_sites")
+                )
             group_study_counts = (
-                df.select([pl.col(col_name), pl.col("SS")])
+                df.select(
+                    [
+                        col_name,
+                        "SS",
+                        "SSBS",
+                        *(
+                            ["Primary_minimal_site"]
+                            if "Primary_minimal_site" in df.columns
+                            else []
+                        ),
+                    ]
+                )
                 .group_by(col_name)
-                .agg(pl.col("SS").n_unique().alias("n_studies"))
+                .agg(count_exprs)
             )
             study_counts[level] = group_study_counts
             mapping[f"{level}_n_studies"] = dict(
@@ -1097,9 +1144,9 @@ class ModelDataTask:
         """
         Roll small hierarchy groups up to broader levels for prediction.
 
-        Groups are assigned from the most specific level upwards based on
-        `min_studies_per_group`, with a final population-level fallback for any
-        still-unassigned rows.
+        Groups are assigned from the most specific level upwards when they have
+        enough studies, focal sites, and, for beta diversity, reference sites.
+        Any still-unassigned rows fall back to the population-level parameters.
         """
         if self.rolled_up_predictions and self.min_studies_per_group < 2:
             raise ValueError(
@@ -1111,6 +1158,8 @@ class ModelDataTask:
         nb_initial_groups = df.get_column(label_cols[levels[-1]]).unique().len()
         logger.info(f"Initial number of groups: {nb_initial_groups}.")
         min_studies = self.min_studies_per_group
+        min_sites = self.min_sites_per_group
+        min_ref_sites = self.min_ref_sites_per_group
 
         # Step 1: Initialize Final group and level
         df = df.with_columns(
@@ -1126,10 +1175,14 @@ class ModelDataTask:
             group_study_counts = study_counts[level]
             df = df.join(group_study_counts, on=label_name, how="left")
 
-            # Assign group if unassigned and above threshold
+            # Assign group if unassigned and above all available thresholds.
             mask = pl.col("Final_hierarchical_group").is_null() & (
                 pl.col("n_studies") >= min_studies
             )
+            if min_sites > 0 and "n_sites" in group_study_counts.columns:
+                mask = mask & (pl.col("n_sites") >= min_sites)
+            if min_ref_sites > 0 and "n_ref_sites" in group_study_counts.columns:
+                mask = mask & (pl.col("n_ref_sites") >= min_ref_sites)
             df = df.with_columns(
                 [
                     pl.when(mask)
@@ -1141,35 +1194,61 @@ class ModelDataTask:
                     .otherwise(pl.col("Final_hierarchical_level"))
                     .alias("Final_hierarchical_level"),
                 ]
-            ).drop("n_studies")
+            ).drop(
+                [
+                    col
+                    for col in ["n_studies", "n_sites", "n_ref_sites"]
+                    if col in df.columns
+                ]
+            )
 
         # Step 3: Fallback to population-level
+        count_exprs = [
+            pl.col("SS").n_unique().alias("actual_study_count"),
+            pl.col("SSBS").n_unique().alias("actual_site_count"),
+        ]
+        if "Primary_minimal_site" in df.columns:
+            count_exprs.append(
+                pl.col("Primary_minimal_site").n_unique().alias("actual_ref_site_count")
+            )
+        count_cols = ["Final_hierarchical_group", "SS", "SSBS"]
+        if "Primary_minimal_site" in df.columns:
+            count_cols.append("Primary_minimal_site")
         group_study_counts = (
-            df.select(["Final_hierarchical_group", "SS"])
+            df.select(count_cols)
             .unique()
             .group_by("Final_hierarchical_group")
-            .agg(pl.count("SS").alias("actual_study_count"))
+            .agg(count_exprs)
         )
         logger.info("Applying population-level fallback for groups below threshold.")
         df = df.join(group_study_counts, on="Final_hierarchical_group", how="left")
+        too_small = pl.col("actual_study_count") < min_studies
+        if min_sites > 0 and "actual_site_count" in df.columns:
+            too_small = too_small | (pl.col("actual_site_count") < min_sites)
+        if min_ref_sites > 0 and "actual_ref_site_count" in df.columns:
+            too_small = too_small | (pl.col("actual_ref_site_count") < min_ref_sites)
         df = df.with_columns(
             [
-                pl.when(
-                    pl.col("Final_hierarchical_group").is_null()
-                    | (pl.col("actual_study_count") < min_studies)
-                )
+                pl.when(pl.col("Final_hierarchical_group").is_null() | too_small)
                 .then(pl.lit("Population"))
                 .otherwise(pl.col("Final_hierarchical_group"))
                 .alias("Final_hierarchical_group"),
-                pl.when(
-                    pl.col("Final_hierarchical_level").is_null()
-                    | (pl.col("actual_study_count") < min_studies)
-                )
+                pl.when(pl.col("Final_hierarchical_level").is_null() | too_small)
                 .then(pl.lit("Population"))
                 .otherwise(pl.col("Final_hierarchical_level"))
                 .alias("Final_hierarchical_level"),
             ]
-        ).drop("actual_study_count")
+        ).drop(
+            [
+                col
+                for col in [
+                    "actual_study_count",
+                    "actual_site_count",
+                    "actual_ref_site_count",
+                ]
+                if col in df.columns
+            ]
+        )
         post_counts = (
             df.select(["Final_hierarchical_group", "SS"])
             .unique()
@@ -1708,11 +1787,17 @@ class ModelDataTask:
             scope_resolution = self.taxonomic_resolution
         if scope_resolution == "All_species":
             return []
-        if scope_resolution == "Custom":
-            col = "Custom_taxonomic_group"
-        else:
-            col = scope_resolution
+        col = self.taxonomic_column_for_resolution(scope_resolution)
         return [col] if col in df.columns else []
+
+    @staticmethod
+    def taxonomic_column_for_resolution(resolution: str) -> str:
+        """Return the dataframe column backing a configured taxonomic resolution."""
+        if resolution == "Custom":
+            return "Custom_taxonomic_group"
+        if resolution == "Custom_alt":
+            return "Custom_taxonomic_group_alt"
+        return resolution
 
     def _log_scope_change(self, before: dict[str, int], after: dict[str, int]) -> None:
         """

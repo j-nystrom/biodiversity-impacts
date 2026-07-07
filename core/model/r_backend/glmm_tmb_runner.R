@@ -74,6 +74,7 @@ model_path <- params[["model-path"]]
 prediction_output_path <- params[["prediction-output-path"]]
 effects_output_path <- params[["effects-output-path"]]
 phi_output_path <- params[["phi-output-path"]]
+parameter_summary_output_path <- params[["parameter-summary-output-path"]]
 formula_str <- params[["formula"]]
 family <- params[["family"]]
 link <- params[["link"]]
@@ -344,8 +345,12 @@ if (mode == "extract-effects") {
 
     if (!is.null(re_study) && term %in% colnames(re_study)) {
       deviations <- re_study[[term]]
+      names(deviations) <- rownames(re_study)
       deviations <- deviations[!is.na(deviations)]
       if (length(deviations) > 1) {
+        study_values <- to_response_delta(est + deviations)
+        study_values <- as.list(as.numeric(study_values))
+        names(study_values) <- names(deviations)
         lower_eta <- est + as.numeric(
           quantile(deviations, probs = re_lower / 100)
         )
@@ -358,6 +363,7 @@ if (mode == "extract-effects") {
         ))
         info$random_slope_lower <- as.numeric(rs_resp[1])
         info$random_slope_upper <- as.numeric(rs_resp[2])
+        info$study_effect_values <- study_values
       }
     }
 
@@ -379,6 +385,175 @@ if (mode == "extract-phi") {
     phi <- exp(unname(disp_fixef[["(Intercept)"]]))
   }
   write_json(list(phi = as.numeric(phi)), phi_output_path, auto_unbox = TRUE)
+  quit(save = "no")
+}
+
+if (mode == "extract-parameter-summary") {
+  if (is.null(parameter_summary_output_path) || parameter_summary_output_path == "") {
+    stop("Missing --parameter-summary-output-path for extract-parameter-summary mode.")
+  }
+  model <- readRDS(model_path)
+
+  fixef_cond <- fixef(model)$cond
+  coef_tab <- summary(model)$coefficients$cond
+  intercept <- if ("(Intercept)" %in% names(fixef_cond)) {
+    as.numeric(fixef_cond[["(Intercept)"]])
+  } else {
+    0
+  }
+  linkinv_func <- model$family$linkinv
+  if (!is.function(linkinv_func)) {
+    linkinv_func <- make.link(link)$linkinv
+  }
+  to_response_delta <- function(intercept_eta, delta_eta) {
+    as.numeric(linkinv_func(intercept_eta + delta_eta) - linkinv_func(intercept_eta))
+  }
+
+  rows <- list()
+  add_row <- function(
+    parameter,
+    component,
+    effect,
+    level,
+    group,
+    covariate,
+    mean,
+    q2_5 = mean,
+    q50 = mean,
+    q97_5 = mean,
+    response_mean = NA_real_,
+    response_q2_5 = response_mean,
+    response_q50 = response_mean,
+    response_q97_5 = response_mean
+  ) {
+    rows[[length(rows) + 1L]] <<- list(
+      parameter = parameter,
+      component = component,
+      effect = effect,
+      level = level,
+      group = group,
+      covariate = covariate,
+      mean = as.numeric(mean),
+      q2_5 = as.numeric(q2_5),
+      q50 = as.numeric(q50),
+      q97_5 = as.numeric(q97_5),
+      response_mean = as.numeric(response_mean),
+      response_q2_5 = as.numeric(response_q2_5),
+      response_q50 = as.numeric(response_q50),
+      response_q97_5 = as.numeric(response_q97_5)
+    )
+  }
+
+  fixed_ci <- function(term) {
+    if (!(term %in% names(fixef_cond))) {
+      return(c(intercept, intercept))
+    }
+    if (term %in% rownames(coef_tab)) {
+      est <- as.numeric(fixef_cond[[term]])
+      se <- as.numeric(coef_tab[term, "Std. Error"])
+      return(c(est - 1.96 * se, est + 1.96 * se))
+    }
+    est <- as.numeric(fixef_cond[[term]])
+    c(est, est)
+  }
+
+  intercept_ci <- fixed_ci("(Intercept)")
+  add_row(
+    parameter = "mu_alpha",
+    component = "population",
+    effect = "intercept",
+    level = "population",
+    group = NULL,
+    covariate = NULL,
+    mean = intercept,
+    q2_5 = intercept_ci[1],
+    q50 = intercept,
+    q97_5 = intercept_ci[2],
+    response_mean = linkinv_func(intercept),
+    response_q2_5 = linkinv_func(intercept_ci[1]),
+    response_q50 = linkinv_func(intercept),
+    response_q97_5 = linkinv_func(intercept_ci[2])
+  )
+
+  slope_terms <- setdiff(names(fixef_cond), "(Intercept)")
+  for (term in slope_terms) {
+    est <- as.numeric(fixef_cond[[term]])
+    ci <- fixed_ci(term)
+    ci_resp <- sort(c(
+      to_response_delta(intercept, ci[1]),
+      to_response_delta(intercept, ci[2])
+    ))
+    add_row(
+      parameter = "mu_beta",
+      component = "population",
+      effect = "slope",
+      level = "population",
+      group = NULL,
+      covariate = term,
+      mean = est,
+      q2_5 = ci[1],
+      q50 = est,
+      q97_5 = ci[2],
+      response_mean = to_response_delta(intercept, est),
+      response_q2_5 = ci_resp[1],
+      response_q50 = to_response_delta(intercept, est),
+      response_q97_5 = ci_resp[2]
+    )
+  }
+
+  re_cond <- tryCatch(ranef(model)$cond, error = function(e) NULL)
+  if (!is.null(re_cond)) {
+    for (group_level in names(re_cond)) {
+      re_group <- as.data.frame(re_cond[[group_level]])
+      if (!nrow(re_group)) {
+        next
+      }
+      group_names <- rownames(re_group)
+      intercept_deviation <- rep(0, nrow(re_group))
+      if ("(Intercept)" %in% names(re_group)) {
+        intercept_deviation <- as.numeric(re_group[["(Intercept)"]])
+      }
+      group_alpha <- intercept + intercept_deviation
+      level_name <- if (group_level == "SS") "study" else "block"
+      alpha_parameter <- if (level_name == "study") "alpha_study" else "alpha_block"
+      beta_parameter <- if (level_name == "study") "beta_study" else "beta_block"
+
+      for (idx in seq_along(group_names)) {
+        add_row(
+          parameter = alpha_parameter,
+          component = "random",
+          effect = "intercept",
+          level = level_name,
+          group = group_names[idx],
+          covariate = NULL,
+          mean = group_alpha[idx],
+          response_mean = linkinv_func(group_alpha[idx])
+        )
+      }
+
+      for (term in slope_terms) {
+        if (!(term %in% names(re_group))) {
+          next
+        }
+        slope_values <- as.numeric(fixef_cond[[term]]) + as.numeric(re_group[[term]])
+        response_values <- to_response_delta(group_alpha, slope_values)
+        for (idx in seq_along(group_names)) {
+          add_row(
+            parameter = beta_parameter,
+            component = "random",
+            effect = "slope",
+            level = level_name,
+            group = group_names[idx],
+            covariate = term,
+            mean = slope_values[idx],
+            response_mean = response_values[idx]
+          )
+        }
+      }
+    }
+  }
+
+  write_json(rows, parameter_summary_output_path, auto_unbox = TRUE, na = "null")
   quit(save = "no")
 }
 

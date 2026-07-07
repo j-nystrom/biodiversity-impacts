@@ -12,6 +12,79 @@ from core.utils.general_utils import create_logger
 logger = create_logger(__name__)
 
 
+def _get_config_value(config: Any, key: str, default: Any = None) -> Any:
+    """Read a value from a dict-like config object."""
+    if hasattr(config, "get"):
+        return config.get(key, default)
+    try:
+        return config[key]
+    except (KeyError, TypeError):
+        return default
+
+
+def _deduplicate_preserve_order(values: list[str]) -> list[str]:
+    """Return values without duplicates, preserving first occurrence."""
+    return list(dict.fromkeys(values))
+
+
+def model_variable_slope_terms(model_vars: Any) -> list[str]:
+    """
+    Return study-slope terms implied by a model-variable config.
+
+    If the referenced model variable set has explicit slope_terms, those are
+    used. Otherwise, all categorical and continuous covariates are used.
+    """
+    explicit_terms = _get_config_value(model_vars, "slope_terms", [])
+    if explicit_terms:
+        return list(explicit_terms)
+
+    terms = []
+    for key in ["categorical_vars", "continuous_vars"]:
+        terms.extend(_get_config_value(model_vars, key, []))
+    return _deduplicate_preserve_order(terms)
+
+
+def resolve_bayesian_study_effects(
+    model_settings: Any,
+    model_vars: Any,
+    all_model_variables: Any,
+) -> Any:
+    """
+    Resolve referenced BHM study-effect settings to explicit slope terms.
+
+    Accepted compact forms:
+      - study_effects: model_variables  # active model covariates
+      - study_effects: alpha_glmm       # named model_variables entry
+      - study_effects:
+          slope_terms: alpha_glmm       # same, nested form
+    """
+    study_effects = _get_config_value(model_settings, "study_effects", {})
+
+    if isinstance(study_effects, str):
+        reference = study_effects
+    elif isinstance(study_effects, dict) and isinstance(
+        study_effects.get("slope_terms"), str
+    ):
+        reference = study_effects["slope_terms"]
+    else:
+        return model_settings
+
+    if reference == "model_variables":
+        source_model_vars = model_vars
+    else:
+        source_model_vars = _get_config_value(all_model_variables, reference)
+        if source_model_vars is None:
+            raise ValueError(
+                "Unknown study_effects model-variable reference: " f"{reference!r}."
+            )
+
+    resolved = dict(model_settings)
+    resolved["study_effects"] = {
+        "slope_terms": model_variable_slope_terms(source_model_vars),
+    }
+    return resolved
+
+
 def standardize_continuous_covariates(
     df_train: pl.DataFrame,
     df_test: pl.DataFrame,
@@ -182,6 +255,15 @@ def calculate_performance_metrics(
     """
     logger.info("Evaluating model performance metrics.")
 
+    def _mae_skill(y_true_slice: np.ndarray, y_pred_slice: np.ndarray) -> float:
+        if y_true_slice.size == 0:
+            return np.nan
+        baseline_mae = np.mean(np.abs(y_true_slice - np.mean(y_true_slice)))
+        if np.isclose(baseline_mae, 0.0):
+            return np.nan
+        model_mae = np.mean(np.abs(y_true_slice - y_pred_slice))
+        return float(1 - model_mae / baseline_mae)
+
     # Extract observed and predicted values
     y_true = df.get_column("Observed").to_numpy()
     y_pred_re: np.ndarray | None = None
@@ -216,6 +298,7 @@ def calculate_performance_metrics(
         r2_var = np.var(y_pred) / (np.var(y_pred) + np.var(y_true - y_pred))
     mean_abs_error = mean_absolute_error(y_true, y_pred)
     median_abs_error = median_absolute_error(y_true, y_pred)
+    mae_skill = _mae_skill(y_true, y_pred)
 
     def _safe_corr(
         y_true_slice: np.ndarray,
@@ -267,6 +350,7 @@ def calculate_performance_metrics(
         f" - R2 (variance explained): {r2_var:.3f}\n"
         f" - Mean absolute error: {mean_abs_error:.3f}\n"
         f" - Median absolute error: {median_abs_error:.3f}\n"
+        f" - MAE skill: {mae_skill:.3f}\n"
         f" - Pearson correlation: {pearson_corr:.3f}\n"
         f" - Spearman rank correlation: {spearman_corr:.3f}\n"
         f" - Bias ratio (pred/obs): {bias_metrics['overall_bias_ratio']:.3f}\n"
@@ -296,6 +380,7 @@ def calculate_performance_metrics(
     median_abs_error_bottom = median_absolute_error(
         bottom_quartile_true, bottom_quartile_pred
     )
+    mae_skill_bottom = _mae_skill(bottom_quartile_true, bottom_quartile_pred)
     pearson_corr_bottom, spearman_corr_bottom = _safe_corr(
         bottom_quartile_true, bottom_quartile_pred, "Bottom quartile"
     )
@@ -319,6 +404,7 @@ def calculate_performance_metrics(
 
     mean_abs_error_top = mean_absolute_error(top_quartile_true, top_quartile_pred)
     median_abs_error_top = median_absolute_error(top_quartile_true, top_quartile_pred)
+    mae_skill_top = _mae_skill(top_quartile_true, top_quartile_pred)
     pearson_corr_top, spearman_corr_top = _safe_corr(
         top_quartile_true, top_quartile_pred, "Top quartile"
     )
@@ -329,18 +415,21 @@ def calculate_performance_metrics(
         "r2_var": r2_var,
         "mean_abs_error": mean_abs_error,
         "median_abs_error": median_abs_error,
+        "mae_skill": mae_skill,
         "pearson_corr": pearson_corr,
         "spearman_corr": spearman_corr,
         "r2_std_bottom": r2_std_bottom,
         "r2_var_bottom": r2_var_bottom,
         "mean_abs_error_bottom": mean_abs_error_bottom,
         "median_abs_error_bottom": median_abs_error_bottom,
+        "mae_skill_bottom": mae_skill_bottom,
         "pearson_corr_bottom": pearson_corr_bottom,
         "spearman_corr_bottom": spearman_corr_bottom,
         "r2_std_top": r2_std_top,
         "r2_var_top": r2_var_top,
         "mean_abs_error_top": mean_abs_error_top,
         "median_abs_error_top": median_abs_error_top,
+        "mae_skill_top": mae_skill_top,
         "pearson_corr_top": pearson_corr_top,
         "spearman_corr_top": spearman_corr_top,
         "bias_metrics": bias_metrics,

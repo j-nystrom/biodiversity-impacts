@@ -33,6 +33,55 @@ class GeneralHierarchicalModel:
         self.likelihood = self.settings["likelihood"]
         self.priors = self.settings["priors"][self.likelihood]
 
+    def _training_components(self) -> dict[str, bool]:
+        """Return training component switches with legacy defaults."""
+        components = self.settings.get("training_components", {})
+        study_effects = self.settings.get("study_effects", {})
+        return {
+            "ecological": components.get("ecological", True),
+            "study_intercept": components.get("study_intercept", True),
+            "study_slopes": components.get(
+                "study_slopes", bool(study_effects.get("slope_terms", []))
+            ),
+            "block_intercept": components.get("block_intercept", True),
+        }
+
+    def _prediction_components(self) -> dict[str, bool]:
+        """Return prediction component switches with explicit zeroed defaults."""
+        components = self.settings.get("prediction_components", {})
+        return {
+            "ecological": components.get("ecological", True),
+            "study_intercept": components.get("study_intercept", False),
+            "study_slopes": components.get("study_slopes", False),
+            "block_intercept": components.get("block_intercept", False),
+        }
+
+    def _uses_ecological_group_dispersion(self) -> bool:
+        """Return True when beta dispersion should vary by ecological group."""
+        return bool(self.settings.get("ecological_group_dispersion", False))
+
+    def _study_effect_centering(self) -> str:
+        """Return the centering mode for study random effects."""
+        return str(self.settings.get("study_effect_centering", "global"))
+
+    def _configured_hierarchy_level(self, setting_name: str) -> int:
+        """Return a configured hierarchy level, defaulting to deepest."""
+        raw_level = self.settings.get(setting_name)
+        if raw_level is None or raw_level == "deepest":
+            return self.hierarchical_levels
+        if isinstance(raw_level, str) and raw_level.startswith("level_"):
+            return int(raw_level.removeprefix("level_"))
+        assert raw_level is not None
+        return int(raw_level)
+
+    def _study_effect_centering_level(self) -> int:
+        """Return the ecological level used for group-centered study effects."""
+        return self._configured_hierarchy_level("study_effect_centering_level")
+
+    def _ecological_group_dispersion_level(self) -> int:
+        """Return the ecological level used for group-level beta dispersion."""
+        return self._configured_hierarchy_level("ecological_group_dispersion_level")
+
     def build_training_model(self, model_data: dict[str, Any]) -> pm.Model:
         """
         Build the training model with hierarchical priors and likelihood.
@@ -49,36 +98,49 @@ class GeneralHierarchicalModel:
             # Set up data nodes and hierarchical indexing
             self.add_data_nodes(model_data, self.settings)
 
-            # Define hierarchical priors for the intercepts and slopes
-            # Returns the most granular level, which is used in the likelihood
-            alpha, beta = self.define_hierarchical_normal_priors(
-                model_data,
-                priors=self.priors,
-                hierarchical_levels=self.hierarchical_levels,
-                varying_slope_level=self.settings["varying_slope_level"],
-            )
+            training_components = self._training_components()
+            y_template = pt.as_tensor_variable(model_data["y_obs"])
+            ecological_linear = pt.zeros_like(y_template)
+            ecological_intercept_linear = pt.zeros_like(y_template)
 
-            # Get priors for study and block control variables, used in training
-            # but not for out-of-sample prediction
-            gamma_block = self.define_control_variable_priors(
-                model_data,
-                priors=self.priors,
+            if training_components["ecological"]:
+                # Define hierarchical priors for the intercepts and slopes.
+                # Returns the most granular level, used in the likelihood.
+                alpha, beta = self.define_hierarchical_normal_priors(
+                    model_data,
+                    priors=self.priors,
+                    hierarchical_levels=self.hierarchical_levels,
+                    varying_slope_level=self.settings["varying_slope_level"],
+                )
+
+                level_idx = model[f"level_{self.hierarchical_levels}_idx"]
+                ecological_linear = alpha[level_idx] + pt.sum(
+                    model["x_obs"] * beta[level_idx], axis=1
+                )
+                ecological_intercept_linear = alpha[level_idx]
+            else:
+                mu_alpha, mu_beta = self.define_population_priors(self.priors)
+                ecological_linear = mu_alpha + pt.sum(model["x_obs"] * mu_beta, axis=1)
+                ecological_intercept_linear = mu_alpha
+
+            control_linear, control_intercept_linear = (
+                self.define_control_variable_priors(
+                    model_data,
+                    priors=self.priors,
+                )
             )
 
             # Compute linear conditional mean and intercept
-            level_idx = model[f"level_{self.hierarchical_levels}_idx"]
-            y_cond_linear = (
-                alpha[level_idx]
-                + pt.sum(model["x_obs"] * beta[level_idx], axis=1)
-                + gamma_block[model["block_idx"]]
-            )
-            y_intercept_linear = alpha[level_idx] + gamma_block[model["block_idx"]]
+            y_cond_linear = ecological_linear + control_linear
+            y_intercept_linear = ecological_intercept_linear + control_intercept_linear
 
             # Define data variance prior
             sigma_y = self.define_data_variance_prior(
                 likelihood=self.likelihood,
                 y_cond_linear=y_cond_linear,
                 priors=self.priors,
+                model_data=model_data,
+                use_ecological=training_components["ecological"],
             )
 
             # Add likelihood function and other model outputs
@@ -94,7 +156,7 @@ class GeneralHierarchicalModel:
 
             return model
 
-    def build_prediction_model(self, model_data: dict[str, Any]) -> pm.Model:
+    def build_prediction_model(self, model_data: dict[str, Any], mode: str) -> pm.Model:
         """
         Build a prediction model that reuses the trained hierarchical
         parameters, but injects new data.
@@ -107,31 +169,60 @@ class GeneralHierarchicalModel:
         """
         with pm.Model(coords=model_data["coords"]) as pred_model:
             # Set up data nodes and hierarchical indexing
-            self.add_data_nodes(model_data, self.settings)
-
-            # Get the most granular hierarchical level
-            level = self.settings["hierarchical_levels"]
-
-            # Get posterior samples from the training model for this level
-            alpha = pm.Flat(f"alpha_{level}", dims=f"level_{level}_values")
-            beta = pm.Flat(f"beta_{level}", dims=(f"level_{level}_values", "x_vars"))
-            level_idx = model_data[f"level_{level}_idx"]
-
-            # Linear conditional mean and intercept
-            y_cond_linear = alpha[level_idx] + pt.sum(
-                pred_model["x_obs"] * beta[level_idx], axis=1
+            prediction_components = self._prediction_components()
+            self.add_data_nodes(
+                model_data,
+                self.settings,
+                use_ecological=prediction_components["ecological"],
             )
-            y_intercept_linear = alpha[level_idx]
+            y_template = pt.as_tensor_variable(model_data["y_obs"])
+            y_cond_linear = pt.zeros_like(y_template)
+            y_intercept_linear = pt.zeros_like(y_template)
+
+            if prediction_components["ecological"]:
+                # Get the most granular hierarchical level
+                level = self.settings["hierarchical_levels"]
+
+                # Get posterior samples from the training model for this level
+                alpha = pm.Flat(f"alpha_{level}", dims=f"level_{level}_values")
+                beta = pm.Flat(
+                    f"beta_{level}", dims=(f"level_{level}_values", "x_vars")
+                )
+                level_idx = model_data[f"level_{level}_idx"]
+
+                # Linear conditional mean and intercept
+                y_cond_linear = alpha[level_idx] + pt.sum(
+                    pred_model["x_obs"] * beta[level_idx], axis=1
+                )
+                y_intercept_linear = alpha[level_idx]
+            else:
+                mu_alpha = pm.Flat("mu_alpha")
+                mu_beta = pm.Flat("mu_beta", dims="x_vars")
+                y_cond_linear = mu_alpha + pt.sum(pred_model["x_obs"] * mu_beta, axis=1)
+                y_intercept_linear = mu_alpha
+
+            control_linear, control_intercept_linear = (
+                self.define_prediction_control_terms(model_data)
+            )
+            y_cond_linear = y_cond_linear + control_linear
+            y_intercept_linear = y_intercept_linear + control_intercept_linear
 
             # Data variance placeholders, depending on likelihood
             sigma_y = pm.Flat("sigma_y") if self.likelihood == "gaussian" else None
-            sigma_raw = pm.Flat("sigma_raw") if self.likelihood == "beta" else None
+            sigma_raw = (
+                self.define_prediction_beta_dispersion(
+                    model_data=model_data,
+                    use_ecological=prediction_components["ecological"],
+                )
+                if self.likelihood == "beta"
+                else None
+            )
 
             add_likelihood_outputs(
                 likelihood=self.likelihood,
                 y_cond_linear=y_cond_linear,
                 y_intercept_linear=y_intercept_linear,
-                mode="test",
+                mode=mode,
                 eps=self.eps,
                 sigma_y=sigma_y,
                 sigma_raw=sigma_raw,
@@ -139,11 +230,22 @@ class GeneralHierarchicalModel:
 
             return pred_model
 
-    def add_data_nodes(self, model_data: dict, settings: dict[str, Any]) -> None:
+    def add_data_nodes(
+        self,
+        model_data: dict,
+        settings: dict[str, Any],
+        use_ecological: bool | None = None,
+    ) -> None:
         """Add input data nodes to the PyMC model."""
         pm.Data("x_obs", model_data["x_obs"], dims=("idx", "x_vars"))
+        pm.Data(
+            "x_study_slope_obs",
+            model_data["x_study_slope_obs"],
+            dims=("idx", "study_slope_vars"),
+        )
         pm.Data("site_idx", model_data["site_idx"], dims="idx")
-        pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
+        if "taxon_idx" in model_data:
+            pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
         if self.likelihood == "beta":
             y_obs = np.clip(model_data["y_obs"], self.eps, 1 - self.eps)
         else:
@@ -156,6 +258,11 @@ class GeneralHierarchicalModel:
         pm.Data(
             "block_to_study_idx", model_data["block_to_study_idx"], dims="block_names"
         )
+
+        if use_ecological is None:
+            use_ecological = self._training_components()["ecological"]
+        if not use_ecological:
+            return
 
         # Process each hierarchical level and add relevant indices and mappings
         hierarchical_levels = settings["hierarchical_levels"]
@@ -190,6 +297,7 @@ class GeneralHierarchicalModel:
         priors_config = self.settings["priors"]
         use_group_size_shrinkage = bool(priors_config["group_size_shrinkage"])
         shrinkage_scaling = priors_config["group_size_shrinkage_scaling"]
+        shrinkage_max_scale = priors_config.get("group_size_shrinkage_max_scale")
 
         def _group_prior_sd_beta(level: str) -> float:
             level_key = f"group_prior_sd_beta_level_{level}"
@@ -233,6 +341,8 @@ class GeneralHierarchicalModel:
                 else:  # "log"
                     raw_scale = np.log(n_studies_values) - 1.0
                 scale = np.maximum(raw_scale, self.eps)
+                if shrinkage_max_scale is not None:
+                    scale = np.minimum(scale, float(shrinkage_max_scale))
 
                 sigma_alpha = pm.Deterministic(
                     f"sigma_alpha_{level}",
@@ -283,18 +393,7 @@ class GeneralHierarchicalModel:
 
             return alpha, beta
 
-        # Global hyperpriors for intercept and slopes, depending on likelihood
-        if self.likelihood == "gaussian":
-            mu_alpha_mean = priors["alpha_hyper_mean"]
-        elif self.likelihood == "beta":
-            mu_alpha_mean = logit(priors["alpha_hyper_mean_mu"])
-
-        mu_alpha = pm.Normal(
-            "mu_alpha", mu=mu_alpha_mean, sigma=priors["hyperprior_sd_alpha"]
-        )
-        mu_beta = pm.Normal(
-            "mu_beta", mu=0, sigma=priors["hyperprior_sd_beta"], dims="x_vars"
-        )
+        mu_alpha, mu_beta = self.define_population_priors(priors)
 
         # Level 1 priors
         alpha, beta = _make_level(
@@ -332,11 +431,27 @@ class GeneralHierarchicalModel:
 
         return alpha, beta
 
+    def define_population_priors(self, priors: dict) -> tuple[Any, Any]:
+        """Define population-level intercept and fixed-effect slope priors."""
+        if self.likelihood == "gaussian":
+            mu_alpha_mean = priors["alpha_hyper_mean"]
+        elif self.likelihood == "beta":
+            mu_alpha_mean = logit(priors["alpha_hyper_mean_mu"])
+
+        mu_alpha = pm.Normal(
+            "mu_alpha", mu=mu_alpha_mean, sigma=priors["hyperprior_sd_alpha"]
+        )
+        mu_beta = pm.Normal(
+            "mu_beta", mu=0, sigma=priors["hyperprior_sd_beta"], dims="x_vars"
+        )
+
+        return mu_alpha, mu_beta
+
     def define_control_variable_priors(
         self,
         model_data: dict[str, Any],
         priors: dict[str, Any],
-    ) -> pt.TensorVariable:
+    ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
         """
         Define random effects for study and block intercepts. These are used as
         control variables during training.
@@ -345,44 +460,208 @@ class GeneralHierarchicalModel:
             - model_data: Dictionary of arrays and coords from the data task.
             - priors: Prior settings for random intercepts.
         """
-        # Priors on study and block IDs
-        mu_gamma = pm.Normal(
-            "mu_gamma",
-            mu=0,
-            sigma=priors["random_intercept_sd"],
-        )
+        components = self._training_components()
+        y_template = pt.as_tensor_variable(model_data["y_obs"])
+        control_linear = pt.zeros_like(y_template)
+        control_intercept = pt.zeros_like(y_template)
+        centering = self._study_effect_centering()
+        centering_level = self._study_effect_centering_level()
+        centering_group_dim = f"level_{centering_level}_values"
+        centering_idx_name = f"level_{centering_level}_idx"
+        centering_membership_name = f"level_{centering_level}_study_membership"
 
-        # Study level priors
-        sigma_gamma_study = pm.HalfNormal(
-            "sigma_gamma_study", sigma=priors["random_intercept_sd"]
-        )
-        offset_gamma_study = pm.Normal(
-            "offset_gamma_study", mu=0, sigma=1, dims="study_names"
-        )
-        gamma_study = pm.Deterministic(
-            "gamma_study", mu_gamma + sigma_gamma_study * offset_gamma_study
-        )
+        def _center_study_offsets(
+            offsets: pt.TensorVariable,
+        ) -> pt.TensorVariable:
+            if centering == "global":
+                return offsets - pt.mean(offsets)
 
-        # Block level priors
-        block_to_study_idx = model_data["block_to_study_idx"]
-        sigma_gamma_block = pm.HalfNormal(
-            "sigma_gamma_block", sigma=priors["random_intercept_sd"]
-        )
-        offset_gamma_block = pm.Normal(
-            "offset_gamma_block", mu=0, sigma=1, dims="block_names"
-        )
-        gamma_block = pm.Deterministic(
-            "gamma_block",
-            gamma_study[block_to_study_idx] + sigma_gamma_block * offset_gamma_block,
-        )
+            membership = pt.as_tensor_variable(model_data[centering_membership_name])
+            membership_count = pt.sum(membership, axis=1)
+            membership_count = pt.maximum(membership_count, 1.0)
+            group_means = pt.sum(membership * offsets[None, :], axis=1)
+            group_means = group_means / membership_count
+            return offsets[None, :] - group_means[:, None]
 
-        return gamma_block
+        def _center_study_slope_offsets(
+            offsets: pt.TensorVariable,
+        ) -> pt.TensorVariable:
+            if centering == "global":
+                return offsets - pt.mean(offsets, axis=0)
+
+            membership = pt.as_tensor_variable(model_data[centering_membership_name])
+            membership_count = pt.sum(membership, axis=1)
+            membership_count = pt.maximum(membership_count, 1.0)
+            group_means = pt.sum(membership[:, :, None] * offsets[None, :, :], axis=1)
+            group_means = group_means / membership_count[:, None]
+            return offsets[None, :, :] - group_means[:, None, :]
+
+        gamma_study = None
+        gamma_study_group = None
+        if components["study_intercept"] or components["block_intercept"]:
+            sigma_gamma_study = pm.HalfNormal(
+                "sigma_gamma_study", sigma=priors["random_intercept_sd"]
+            )
+            offset_gamma_study = pm.Normal(
+                "offset_gamma_study", mu=0, sigma=1, dims="study_names"
+            )
+            centered_offset_gamma_study = _center_study_offsets(offset_gamma_study)
+            if centering == "global":
+                gamma_study = pm.Deterministic(
+                    "gamma_study",
+                    sigma_gamma_study * centered_offset_gamma_study,
+                    dims="study_names",
+                )
+            else:
+                gamma_study_group = pm.Deterministic(
+                    "gamma_study_group",
+                    sigma_gamma_study * centered_offset_gamma_study,
+                    dims=(centering_group_dim, "study_names"),
+                )
+
+        if components["block_intercept"]:
+            if gamma_study is None:
+                raise ValueError("Block intercepts require study intercept priors.")
+            block_to_study_idx = model_data["block_to_study_idx"]
+            sigma_gamma_block = pm.HalfNormal(
+                "sigma_gamma_block", sigma=priors["random_intercept_sd"]
+            )
+            offset_gamma_block = pm.Normal(
+                "offset_gamma_block", mu=0, sigma=1, dims="block_names"
+            )
+            gamma_block = pm.Deterministic(
+                "gamma_block",
+                gamma_study[block_to_study_idx]
+                + sigma_gamma_block * offset_gamma_block,
+                dims="block_names",
+            )
+            block_intercept = gamma_block[model_data["block_idx"]]
+            control_linear = control_linear + block_intercept
+            control_intercept = control_intercept + block_intercept
+        elif components["study_intercept"]:
+            if centering == "global" and gamma_study is not None:
+                study_intercept = gamma_study[model_data["study_idx"]]
+            elif gamma_study_group is not None:
+                study_intercept = gamma_study_group[
+                    model_data[centering_idx_name],
+                    model_data["study_idx"],
+                ]
+            else:
+                raise ValueError("Study intercept priors were not initialized.")
+            control_linear = control_linear + study_intercept
+            control_intercept = control_intercept + study_intercept
+
+        if components["study_slopes"] and model_data["x_study_slope_obs"].shape[1]:
+            sigma_delta_study = pm.HalfNormal(
+                "sigma_delta_study",
+                sigma=priors.get("random_slope_sd", priors["random_intercept_sd"]),
+                dims="study_slope_vars",
+            )
+            offset_delta_study = pm.Normal(
+                "offset_delta_study",
+                mu=0,
+                sigma=1,
+                dims=("study_names", "study_slope_vars"),
+            )
+            centered_offset_delta_study = _center_study_slope_offsets(
+                offset_delta_study
+            )
+            if centering == "global":
+                delta_study_slope = pm.Deterministic(
+                    "delta_study_slope",
+                    sigma_delta_study[None, :] * centered_offset_delta_study,
+                    dims=("study_names", "study_slope_vars"),
+                )
+                selected_delta_study_slope = delta_study_slope[model_data["study_idx"]]
+            else:
+                delta_study_slope_group = pm.Deterministic(
+                    "delta_study_slope_group",
+                    sigma_delta_study[None, None, :] * centered_offset_delta_study,
+                    dims=(centering_group_dim, "study_names", "study_slope_vars"),
+                )
+                selected_delta_study_slope = delta_study_slope_group[
+                    model_data[centering_idx_name],
+                    model_data["study_idx"],
+                ]
+            slope_contrib = pt.sum(
+                pt.as_tensor_variable(model_data["x_study_slope_obs"])
+                * selected_delta_study_slope,
+                axis=1,
+            )
+            control_linear = control_linear + slope_contrib
+
+        return control_linear, control_intercept
+
+    def define_prediction_control_terms(
+        self,
+        model_data: dict[str, Any],
+    ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
+        """Add sampled study and block effects to prediction when requested."""
+        components = self._prediction_components()
+        y_template = pt.as_tensor_variable(model_data["y_obs"])
+        control_linear = pt.zeros_like(y_template)
+        control_intercept = pt.zeros_like(y_template)
+        centering = self._study_effect_centering()
+        centering_level = self._study_effect_centering_level()
+        centering_group_dim = f"level_{centering_level}_values"
+        centering_idx_name = f"level_{centering_level}_idx"
+
+        if components["block_intercept"]:
+            gamma_block = pm.Flat("gamma_block", dims="block_names")
+            block_intercept = gamma_block[model_data["block_idx"]]
+            control_linear = control_linear + block_intercept
+            control_intercept = control_intercept + block_intercept
+        elif components["study_intercept"]:
+            if centering == "global":
+                gamma_study = pm.Flat("gamma_study", dims="study_names")
+                study_intercept = gamma_study[model_data["study_idx"]]
+            else:
+                gamma_study_group = pm.Flat(
+                    "gamma_study_group",
+                    dims=(centering_group_dim, "study_names"),
+                )
+                study_intercept = gamma_study_group[
+                    model_data[centering_idx_name],
+                    model_data["study_idx"],
+                ]
+            control_linear = control_linear + study_intercept
+            control_intercept = control_intercept + study_intercept
+
+        if components["study_slopes"] and model_data["x_study_slope_obs"].shape[1]:
+            if centering == "global":
+                delta_study_slope = pm.Flat(
+                    "delta_study_slope", dims=("study_names", "study_slope_vars")
+                )
+                selected_delta_study_slope = delta_study_slope[model_data["study_idx"]]
+            else:
+                delta_study_slope_group = pm.Flat(
+                    "delta_study_slope_group",
+                    dims=(
+                        centering_group_dim,
+                        "study_names",
+                        "study_slope_vars",
+                    ),
+                )
+                selected_delta_study_slope = delta_study_slope_group[
+                    model_data[centering_idx_name],
+                    model_data["study_idx"],
+                ]
+            slope_contrib = pt.sum(
+                pt.as_tensor_variable(model_data["x_study_slope_obs"])
+                * selected_delta_study_slope,
+                axis=1,
+            )
+            control_linear = control_linear + slope_contrib
+
+        return control_linear, control_intercept
 
     def define_data_variance_prior(
         self,
         likelihood: str,
         y_cond_linear: pt.TensorVariable,
         priors: dict[str, Any],
+        model_data: dict[str, Any] | None = None,
+        use_ecological: bool = True,
     ) -> pt.TensorVariable:
         """
         Define the observation noise prior for the given likelihood.
@@ -401,12 +680,76 @@ class GeneralHierarchicalModel:
                 alpha=priors["beta_likelihood"]["alpha"],
                 beta=priors["beta_likelihood"]["beta"],
             )
+            sigma_raw_obs = self.define_training_beta_dispersion(
+                sigma_raw=sigma_raw,
+                priors=priors,
+                model_data=model_data,
+                use_ecological=use_ecological,
+            )
             y_cond = clip(invlogit(y_cond_linear), self.eps, 1 - self.eps)
             sigma_y = pm.Deterministic(
-                "sigma_y", sigma_raw * pt.sqrt(y_cond * (1 - y_cond))
+                "sigma_y", sigma_raw_obs * pt.sqrt(y_cond * (1 - y_cond))
             )
 
         return sigma_y
+
+    def define_training_beta_dispersion(
+        self,
+        sigma_raw: pt.TensorVariable,
+        priors: dict[str, Any],
+        model_data: dict[str, Any] | None,
+        use_ecological: bool,
+    ) -> pt.TensorVariable:
+        """Return scalar or row-level beta dispersion for training."""
+        if (
+            not self._uses_ecological_group_dispersion()
+            or not use_ecological
+            or model_data is None
+        ):
+            return sigma_raw
+
+        level = self._ecological_group_dispersion_level()
+        level_idx_name = f"level_{level}_idx"
+        group_dim = f"level_{level}_values"
+        if level_idx_name not in model_data or group_dim not in model_data["coords"]:
+            return sigma_raw
+
+        group_sd = pm.HalfNormal(
+            "sigma_raw_group_sd",
+            sigma=priors.get("ecological_group_dispersion_sd", 0.5),
+        )
+        offset_group = pm.Normal(
+            f"offset_sigma_raw_{level}",
+            mu=0,
+            sigma=1,
+            dims=group_dim,
+        )
+        sigma_raw_group = pm.Deterministic(
+            f"sigma_raw_{level}",
+            invlogit(logit(sigma_raw) + group_sd * offset_group),
+            dims=group_dim,
+        )
+
+        return sigma_raw_group[model_data[level_idx_name]]
+
+    def define_prediction_beta_dispersion(
+        self,
+        model_data: dict[str, Any],
+        use_ecological: bool,
+    ) -> pt.TensorVariable:
+        """Return scalar or row-level beta dispersion for prediction."""
+        sigma_raw = pm.Flat("sigma_raw")
+        if not self._uses_ecological_group_dispersion() or not use_ecological:
+            return sigma_raw
+
+        level = self._ecological_group_dispersion_level()
+        level_idx_name = f"level_{level}_idx"
+        group_dim = f"level_{level}_values"
+        if level_idx_name not in model_data or group_dim not in model_data["coords"]:
+            return sigma_raw
+
+        sigma_raw_group = pm.Flat(f"sigma_raw_{level}", dims=group_dim)
+        return sigma_raw_group[model_data[level_idx_name]]
 
 
 def add_likelihood_outputs(
@@ -517,6 +860,94 @@ def validate_model_settings(settings: dict[str, Any]) -> None:
     shrinkage_scaling = priors_cfg["group_size_shrinkage_scaling"]
     if shrinkage_scaling not in {"sqrt", "log"}:
         raise ValueError("priors.group_size_shrinkage_scaling must be 'sqrt' or 'log'.")
+    shrinkage_max_scale = priors_cfg.get("group_size_shrinkage_max_scale")
+    if shrinkage_max_scale is not None and shrinkage_max_scale <= 0:
+        raise ValueError("priors.group_size_shrinkage_max_scale must be > 0.")
+
+    training_components = settings.get("training_components", {})
+    prediction_components = settings.get("prediction_components", {})
+    component_keys = {
+        "ecological",
+        "study_intercept",
+        "study_slopes",
+        "block_intercept",
+    }
+    for section_name, components in (
+        ("training_components", training_components),
+        ("prediction_components", prediction_components),
+    ):
+        unknown = set(components) - component_keys
+        if unknown:
+            raise ValueError(f"Unknown {section_name}: {sorted(unknown)}")
+        non_bool = [
+            key for key, value in components.items() if not isinstance(value, bool)
+        ]
+        if non_bool:
+            raise ValueError(f"{section_name} values must be booleans: {non_bool}")
+
+    if prediction_components.get("ecological", True) and not training_components.get(
+        "ecological", True
+    ):
+        raise ValueError("Ecological prediction requires ecological training.")
+    if prediction_components.get(
+        "block_intercept", False
+    ) and not training_components.get("block_intercept", True):
+        raise ValueError(
+            "Block-intercept prediction requires block-intercept training."
+        )
+    if prediction_components.get("study_intercept", False) and not (
+        training_components.get("study_intercept", True)
+        or training_components.get("block_intercept", True)
+    ):
+        raise ValueError(
+            "Study-intercept prediction requires study- or block-intercept training."
+        )
+    if prediction_components.get("study_slopes", False) and not training_components.get(
+        "study_slopes", bool(settings.get("study_effects", {}).get("slope_terms", []))
+    ):
+        raise ValueError("Study-slope prediction requires study-slope training.")
+
+    ecological_group_dispersion = settings.get("ecological_group_dispersion", False)
+    if not isinstance(ecological_group_dispersion, bool):
+        raise ValueError("ecological_group_dispersion must be a boolean.")
+
+    study_effect_centering = settings.get("study_effect_centering", "global")
+    if study_effect_centering not in {"global", "ecological_group"}:
+        raise ValueError(
+            "study_effect_centering must be 'global' or 'ecological_group'."
+        )
+
+    def _validate_hierarchy_level(setting_name: str) -> None:
+        raw_level = settings.get(setting_name)
+        if raw_level is None or raw_level == "deepest":
+            return
+        if isinstance(raw_level, str) and raw_level.startswith("level_"):
+            raw_level = raw_level.removeprefix("level_")
+        assert raw_level is not None
+        level = int(raw_level)
+        if not (1 <= level <= settings["hierarchical_levels"]):
+            raise ValueError(
+                f"{setting_name} must be between 1 and hierarchical_levels."
+            )
+
+    _validate_hierarchy_level("study_effect_centering_level")
+    _validate_hierarchy_level("ecological_group_dispersion_level")
+
+    if study_effect_centering == "ecological_group":
+        if not training_components.get("ecological", True):
+            raise ValueError(
+                "Ecological-group study-effect centering requires ecological training."
+            )
+        if training_components.get("block_intercept", True):
+            raise ValueError(
+                "Ecological-group study-effect centering does not support "
+                "block_intercept=True."
+            )
+        if prediction_components.get("block_intercept", False):
+            raise ValueError(
+                "Ecological-group study-effect centering does not support "
+                "block-intercept prediction."
+            )
 
 
 def rolled_up_prediction_model(
@@ -540,6 +971,33 @@ def rolled_up_prediction_model(
     hierarchical_levels = settings["hierarchical_levels"]
     likelihood = settings["likelihood"]
     eps = epsilon
+    prediction_components = settings.get("prediction_components", {})
+    use_ecological = prediction_components.get("ecological", True)
+    use_study_intercept = prediction_components.get("study_intercept", False)
+    use_study_slopes = prediction_components.get("study_slopes", False)
+    use_block_intercept = prediction_components.get("block_intercept", False)
+    use_ecological_group_dispersion = bool(
+        settings.get("ecological_group_dispersion", False)
+    )
+    study_effect_centering = str(settings.get("study_effect_centering", "global"))
+
+    def _configured_hierarchy_level(setting_name: str) -> int:
+        raw_level = settings.get(setting_name)
+        if raw_level is None or raw_level == "deepest":
+            return hierarchical_levels
+        if isinstance(raw_level, str) and raw_level.startswith("level_"):
+            return int(raw_level.removeprefix("level_"))
+        assert raw_level is not None
+        return int(raw_level)
+
+    study_effect_centering_level = _configured_hierarchy_level(
+        "study_effect_centering_level"
+    )
+    study_effect_centering_dim = f"level_{study_effect_centering_level}_values"
+    study_effect_centering_idx = f"level_{study_effect_centering_level}_idx"
+    ecological_group_dispersion_level = _configured_hierarchy_level(
+        "ecological_group_dispersion_level"
+    )
 
     def _update_coords_from_trace(
         existing_coords: dict[str, Any],
@@ -560,8 +1018,14 @@ def rolled_up_prediction_model(
     with pm.Model(coords=coords) as prediction_model:
         # Data nodes
         x_obs = pm.Data("x_obs", model_data["x_obs"], dims=("idx", "x_vars"))
+        x_study_slope_obs = pm.Data(
+            "x_study_slope_obs",
+            model_data["x_study_slope_obs"],
+            dims=("idx", "study_slope_vars"),
+        )
         pm.Data("site_idx", model_data["site_idx"], dims="idx")
-        pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
+        if "taxon_idx" in model_data:
+            pm.Data("taxon_idx", model_data["taxon_idx"], dims="idx")
         if likelihood == "beta":
             y_obs = np.clip(model_data["y_obs"], eps, 1 - eps)
         else:
@@ -576,18 +1040,8 @@ def rolled_up_prediction_model(
             pm.Data("level_2_idx", model_data["level_2_idx"], dims="idx")
         if hierarchical_levels == 3:
             pm.Data("level_3_idx", model_data["level_3_idx"], dims="idx")
-
-        # Load sampled posterior variables with matching dims
-        mu_alpha = pm.Flat("mu_alpha")
-        mu_beta = pm.Flat("mu_beta", dims="x_vars")
-        alpha_1 = pm.Flat("alpha_1", dims="alpha_1_dim_0")
-        beta_1 = pm.Flat("beta_1", dims=("beta_1_dim_0", "beta_1_dim_1"))
-        if hierarchical_levels >= 2:
-            alpha_2 = pm.Flat("alpha_2", dims="alpha_2_dim_0")
-            beta_2 = pm.Flat("beta_2", dims=("beta_2_dim_0", "beta_2_dim_1"))
-        if hierarchical_levels == 3:
-            alpha_3 = pm.Flat("alpha_3", dims="alpha_3_dim_0")
-            beta_3 = pm.Flat("beta_3", dims=("beta_3_dim_0", "beta_3_dim_1"))
+        pm.Data("study_idx", model_data["study_idx"], dims="idx")
+        pm.Data("block_idx", model_data["block_idx"], dims="idx")
 
         # Initialize linear predictors
         y_cond_linear = pt.zeros_like(model_data["y_obs"])
@@ -615,55 +1069,134 @@ def rolled_up_prediction_model(
 
             return y_cond_linear, y_intercept_linear
 
-        # Population-level fallback (level 0)
-        mask_0 = pt.eq(level_assignment, 0)
-        obs_idx_0 = pt.nonzero(mask_0)[0]
-        x_sel_0 = pt.take(x_obs, obs_idx_0, axis=0)
-        y_pred_0 = mu_alpha + pt.sum(x_sel_0 * mu_beta, axis=1)
-        y_cond_linear = pt.set_subtensor(y_cond_linear[obs_idx_0], y_pred_0)
-        y_intercept_linear = pt.set_subtensor(y_intercept_linear[obs_idx_0], mu_alpha)
+        if use_ecological:
+            # Load sampled posterior variables with matching dims
+            mu_alpha = pm.Flat("mu_alpha")
+            mu_beta = pm.Flat("mu_beta", dims="x_vars")
+            alpha_1 = pm.Flat("alpha_1", dims="alpha_1_dim_0")
+            beta_1 = pm.Flat("beta_1", dims=("beta_1_dim_0", "beta_1_dim_1"))
+            if hierarchical_levels >= 2:
+                alpha_2 = pm.Flat("alpha_2", dims="alpha_2_dim_0")
+                beta_2 = pm.Flat("beta_2", dims=("beta_2_dim_0", "beta_2_dim_1"))
+            if hierarchical_levels == 3:
+                alpha_3 = pm.Flat("alpha_3", dims="alpha_3_dim_0")
+                beta_3 = pm.Flat("beta_3", dims=("beta_3_dim_0", "beta_3_dim_1"))
 
-        # Level 1
-        mask_1 = pt.eq(level_assignment, 1)
-        y_cond_linear, y_intercept_linear = _set_level_prediction(
-            y_cond_linear,
-            y_intercept_linear,
-            mask_1,
-            x_obs,
-            model_data["level_1_idx"],
-            alpha_1,
-            beta_1,
-        )
+            # Population-level fallback (level 0)
+            mask_0 = pt.eq(level_assignment, 0)
+            obs_idx_0 = pt.nonzero(mask_0)[0]
+            x_sel_0 = pt.take(x_obs, obs_idx_0, axis=0)
+            y_pred_0 = mu_alpha + pt.sum(x_sel_0 * mu_beta, axis=1)
+            y_cond_linear = pt.set_subtensor(y_cond_linear[obs_idx_0], y_pred_0)
+            y_intercept_linear = pt.set_subtensor(
+                y_intercept_linear[obs_idx_0], mu_alpha
+            )
 
-        # Level 2
-        if hierarchical_levels >= 2:
-            mask_2 = pt.eq(level_assignment, 2)
+            # Level 1
+            mask_1 = pt.eq(level_assignment, 1)
             y_cond_linear, y_intercept_linear = _set_level_prediction(
                 y_cond_linear,
                 y_intercept_linear,
-                mask_2,
+                mask_1,
                 x_obs,
-                model_data["level_2_idx"],
-                alpha_2,
-                beta_2,
+                model_data["level_1_idx"],
+                alpha_1,
+                beta_1,
             )
 
-        # Level 3
-        if hierarchical_levels == 3:
-            mask_3 = pt.eq(level_assignment, 3)
-            y_cond_linear, y_intercept_linear = _set_level_prediction(
-                y_cond_linear,
-                y_intercept_linear,
-                mask_3,
-                x_obs,
-                model_data["level_3_idx"],
-                alpha_3,
-                beta_3,
-            )
+            # Level 2
+            if hierarchical_levels >= 2:
+                mask_2 = pt.eq(level_assignment, 2)
+                y_cond_linear, y_intercept_linear = _set_level_prediction(
+                    y_cond_linear,
+                    y_intercept_linear,
+                    mask_2,
+                    x_obs,
+                    model_data["level_2_idx"],
+                    alpha_2,
+                    beta_2,
+                )
 
-        # Data variance placeholders, depending on likelihood
+            # Level 3
+            if hierarchical_levels == 3:
+                mask_3 = pt.eq(level_assignment, 3)
+                y_cond_linear, y_intercept_linear = _set_level_prediction(
+                    y_cond_linear,
+                    y_intercept_linear,
+                    mask_3,
+                    x_obs,
+                    model_data["level_3_idx"],
+                    alpha_3,
+                    beta_3,
+                )
+
+        if use_block_intercept:
+            gamma_block = pm.Flat("gamma_block", dims="block_names")
+            block_intercept = gamma_block[model_data["block_idx"]]
+            y_cond_linear = y_cond_linear + block_intercept
+            y_intercept_linear = y_intercept_linear + block_intercept
+        elif use_study_intercept:
+            if study_effect_centering == "global":
+                gamma_study = pm.Flat("gamma_study", dims="study_names")
+                study_intercept = gamma_study[model_data["study_idx"]]
+            else:
+                gamma_study_group = pm.Flat(
+                    "gamma_study_group",
+                    dims=(study_effect_centering_dim, "study_names"),
+                )
+                study_intercept = gamma_study_group[
+                    model_data[study_effect_centering_idx],
+                    model_data["study_idx"],
+                ]
+            y_cond_linear = y_cond_linear + study_intercept
+            y_intercept_linear = y_intercept_linear + study_intercept
+
+        if use_study_slopes and model_data["x_study_slope_obs"].shape[1]:
+            if study_effect_centering == "global":
+                delta_study_slope = pm.Flat(
+                    "delta_study_slope", dims=("study_names", "study_slope_vars")
+                )
+                selected_delta_study_slope = delta_study_slope[model_data["study_idx"]]
+            else:
+                delta_study_slope_group = pm.Flat(
+                    "delta_study_slope_group",
+                    dims=(
+                        study_effect_centering_dim,
+                        "study_names",
+                        "study_slope_vars",
+                    ),
+                )
+                selected_delta_study_slope = delta_study_slope_group[
+                    model_data[study_effect_centering_idx],
+                    model_data["study_idx"],
+                ]
+            slope_contrib = pt.sum(
+                x_study_slope_obs * selected_delta_study_slope,
+                axis=1,
+            )
+            y_cond_linear = y_cond_linear + slope_contrib
+
+        # Data variance placeholders, depending on likelihood.
         sigma_y = pm.Flat("sigma_y") if likelihood == "gaussian" else None
-        sigma_raw = pm.Flat("sigma_raw") if likelihood == "beta" else None
+        sigma_raw = None
+        if likelihood == "beta":
+            sigma_raw = pm.Flat("sigma_raw")
+            if use_ecological_group_dispersion and use_ecological:
+                dispersion_idx_name = f"level_{ecological_group_dispersion_level}_idx"
+                dispersion_dim = f"level_{ecological_group_dispersion_level}_values"
+                sigma_raw_group = pm.Flat(
+                    f"sigma_raw_{ecological_group_dispersion_level}",
+                    dims=dispersion_dim,
+                )
+                sigma_raw_obs = pt.ones_like(y_cond_linear) * sigma_raw
+                group_mask = level_assignment >= ecological_group_dispersion_level
+                obs_idx = pt.nonzero(group_mask)[0]
+                groups = pt.take(model_data[dispersion_idx_name], obs_idx)
+                sigma_raw_obs = pt.set_subtensor(
+                    sigma_raw_obs[obs_idx],
+                    pt.take(sigma_raw_group, groups),
+                )
+                sigma_raw = sigma_raw_obs
 
         add_likelihood_outputs(
             likelihood=likelihood,

@@ -179,8 +179,20 @@ diversity_metrics:
   # of groupby columns. For each of the taxonomic levels below, one dataframe
   # is created (i.e. each frame has a different level of granularity)
   groupby_cols: [SS, SSB, SSBS]
+  reference_baselines:
+    - minimal_primary_vegetation
+    - primary_vegetation
+  taxonomic_grouping_cols:
+    All_species: []
+    Custom: [Custom_taxonomic_group]
+    Custom_alt: [Custom_taxonomic_group_alt]
+    Kingdom: [Kingdom]
+    Phylum: [Kingdom, Phylum]
+    Class: [Kingdom, Phylum, Class]
+    Order: [Kingdom, Phylum, Class, Order]
   taxonomic_levels:
     - Custom_taxonomic_group  # This is defined in the generate features task
+    - Custom_taxonomic_group_alt
     - Kingdom
     - Phylum
     - Class
@@ -189,10 +201,16 @@ diversity_metrics:
 # AlphaDiversityTask --------------------------------------
 
   alpha:
-    output_data_paths:  # NOTE: Logic for the "Custom" version is specified in the task
+    output_data_paths:  # One path per reference baseline and taxonomic grouping
       # NOTE: Temporarily commented out to avoid unnecessary processing
-      All_species: "../../../data/output/alpha_diversity/alpha_all_species.parquet"
-      Custom: "../../../data/output/alpha_diversity/alpha_custom.parquet"
+      minimal_primary_vegetation:
+        All_species: "../../../data/output/alpha_diversity/alpha_all_species.parquet"
+        Custom: "../../../data/output/alpha_diversity/alpha_custom.parquet"
+        Custom_alt: "../../../data/output/alpha_diversity/alpha_custom_alt.parquet"
+      primary_vegetation:
+        All_species: "../../../data/output/alpha_diversity/alpha_all_species_primary.parquet"
+        Custom: "../../../data/output/alpha_diversity/alpha_custom_primary.parquet"
+        Custom_alt: "../../../data/output/alpha_diversity/alpha_custom_alt_primary.parquet"
       # Kingdom: "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
       # Phylum: "../../../data/output/alpha_diversity/alpha_phylum.parquet"
       # Class: "../../../data/output/alpha_diversity/alpha_class.parquet"
@@ -202,17 +220,35 @@ diversity_metrics:
 
   beta:
     environmental_dist_vars:  # Used to calculate the environmental distance
-    # NOTE: Potentially just use all the environmental variables
-      - Max_temp_warmest_month_1km
-      - Min_temp_coldest_month_1km
-      - Precip_wettest_month_1km
-      - Precip_driest_month_1km
-      - Elevation_1km
+      alpha_equivalents:
+        - Annual_mean_temp_1km
+        - Temp_seasonality_1km
+        - Annual_precip_1km
+        - Precip_seasonality_1km
+        - Elevation_1km
+        - Terrain_roughness_1km
+      all:
+        - Annual_mean_temp_1km
+        - Temp_seasonality_1km
+        - Annual_precip_1km
+        - Precip_seasonality_1km
+        - Max_temp_warmest_month_1km
+        - Min_temp_coldest_month_1km
+        - Precip_wettest_month_1km
+        - Precip_driest_month_1km
+        - Elevation_1km
+        - Terrain_roughness_1km
 
-    output_data_paths:  # NOTE: Logic for the "Custom" version is specified in the task
+    output_data_paths:  # One path per reference baseline and taxonomic grouping
       # NOTE: Temporarily commented out to avoid unnecessary processing
-      All_species: "../../../data/output/beta_diversity/beta_all_species.parquet"
-      Custom: "../../../data/output/beta_diversity/beta_custom.parquet"
+      minimal_primary_vegetation:
+        All_species: "../../../data/output/beta_diversity/beta_all_species.parquet"
+        Custom: "../../../data/output/beta_diversity/beta_custom.parquet"
+        Custom_alt: "../../../data/output/beta_diversity/beta_custom_alt.parquet"
+      primary_vegetation:
+        All_species: "../../../data/output/beta_diversity/beta_all_species_primary.parquet"
+        Custom: "../../../data/output/beta_diversity/beta_custom_primary.parquet"
+        Custom_alt: "../../../data/output/beta_diversity/beta_custom_alt_primary.parquet"
       # Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
       # Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
       # Class: "../../../data/output/beta_diversity/beta_class.parquet"

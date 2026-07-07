@@ -1,0 +1,181 @@
+btm_beta_training_incl_re:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Custom_taxonomic_group
+          level_3: []
+        study_effects:
+          slope_terms:
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
+          - Pop_density_10km_log
+          - Road_density_10km_log
+          - Pop_density_10km_log_diff
+          - Road_density_10km_log_diff
+        training_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: false
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
+btm_beta_standard_cv_incl_re:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Custom_taxonomic_group
+          level_3: []
+        study_effects:
+          slope_terms:
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
+          - Pop_density_10km_log
+          - Road_density_10km_log
+          - Pop_density_10km_log_diff
+          - Road_density_10km_log_diff
+        training_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
+    cv_settings:
+      split_level: site
+btm_beta_cross_study_incl_re:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: Custom
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Custom_taxonomic_group
+          level_3: []
+        study_effects:
+          slope_terms:
+          - Primary vegetation_Light use
+          - Primary vegetation_Intense use
+          - Secondary vegetation_Minimal use
+          - Secondary vegetation_Light use
+          - Secondary vegetation_Intense use
+          - Cropland_Minimal use
+          - Cropland_Light use
+          - Cropland_Intense use
+          - Pasture_Minimal use
+          - Pasture_Light use
+          - Pasture_Intense use
+          - Urban_All uses
+          - Pop_density_10km_log
+          - Road_density_10km_log
+          - Pop_density_10km_log_diff
+          - Road_density_10km_log_diff
+        training_components:
+          ecological: true
+          study_intercept: true
+          study_slopes: true
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            random_intercept_sd: 0.1
+            random_slope_sd: 0.05
+            beta_likelihood:
+              beta: 20
+    cv_settings:
+      split_level: study

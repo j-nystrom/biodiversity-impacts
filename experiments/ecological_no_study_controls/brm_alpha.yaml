@@ -1,0 +1,109 @@
+brm_alpha_training_ecological_no_study_controls:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom_alt
+    run_settings:
+      model_type: bayesian
+      model_variables: alpha_main
+      bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        training_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+brm_alpha_standard_cv_ecological_no_study_controls:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom_alt
+    run_settings:
+      model_type: bayesian
+      model_variables: alpha_main
+      bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        training_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+    cv_settings:
+      split_level: site
+brm_alpha_cross_study_ecological_no_study_controls:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom_alt
+    run_settings:
+      model_type: bayesian
+      model_variables: alpha_main
+      bayesian:
+        hierarchical_levels: 2
+        varying_slope_level: 2
+        rolled_up_predictions: true
+        min_studies_per_group: 5
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        training_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+        prediction_components:
+          ecological: true
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+    cv_settings:
+      split_level: study

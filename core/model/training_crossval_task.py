@@ -13,7 +13,10 @@ from box import Box
 
 from core.model.bhm_model import BayesianHierarchicalModel
 from core.model.glmm_model import GeneralizedLinearMixedModel
-from core.model.model_utils import calculate_performance_metrics
+from core.model.model_utils import (
+    calculate_performance_metrics,
+    resolve_bayesian_study_effects,
+)
 from core.tests.shared.validate_shared import (
     validate_input_files,
     validate_output_files,
@@ -81,6 +84,12 @@ class BaseModelTask:
         self.model_vars: dict[str, Any] = configs.model_variables[
             configs.run_settings.model_variables
         ]
+        if self.model_type == "bayesian":
+            self.model_settings = resolve_bayesian_study_effects(
+                model_settings=self.model_settings,
+                model_vars=self.model_vars,
+                all_model_variables=configs.model_variables,
+            )
         self.continuous_vars: list[str] = self.model_vars["continuous_vars"]
 
         # Shared data paths
@@ -103,7 +112,11 @@ class BaseModelTask:
             self.save_predictive_distributions: bool = self.model_settings[
                 "save_predictive_distributions"
             ]
-            if self.model_settings["rolled_up_predictions"]:
+            prediction_components = self.model_settings.get("prediction_components", {})
+            self.use_rolled_up_predictions = self.model_settings[
+                "rolled_up_predictions"
+            ] and prediction_components.get("ecological", True)
+            if self.use_rolled_up_predictions:
                 self.rolled_up_mapping_path = os.path.join(
                     run_folder_path, "rolled_up_hierarchy_mapping.json"
                 )
@@ -127,7 +140,7 @@ class BaseModelTask:
             validate_input_files(file_paths=[self.hierarchy_mapping_path])
             with open(self.hierarchy_mapping_path) as f:
                 self.hierarchy_mapping = json.load(f)
-            if self.model_settings["rolled_up_predictions"]:
+            if self.use_rolled_up_predictions:
                 validate_input_files(file_paths=[self.rolled_up_mapping_path])
                 with open(self.rolled_up_mapping_path) as f:
                     self.rolled_up_mapping = json.load(f)
@@ -141,6 +154,8 @@ class BaseModelTask:
                 validate_input_files(file_paths=[self.taxon_mapping_path])
                 with open(self.taxon_mapping_path) as f:
                     self.taxon_name_to_idx = json.load(f)
+            else:
+                self.taxon_name_to_idx = {}
 
     def initialize_model(
         self,
@@ -169,10 +184,9 @@ class BaseModelTask:
             model_init_kwargs["save_predictive_distributions"] = (
                 self.save_predictive_distributions
             )
-            if self.model_settings["rolled_up_predictions"]:
+            if self.use_rolled_up_predictions:
                 model_init_kwargs["rolled_up_mapping"] = self.rolled_up_mapping
-            if self.taxonomic_resolution != "All_species":
-                model_init_kwargs["taxon_name_to_idx"] = self.taxon_name_to_idx
+            model_init_kwargs["taxon_name_to_idx"] = self.taxon_name_to_idx
 
         if self.model_type == "glmm":
             model_init_kwargs["run_folder_path"] = self.run_folder_path
@@ -295,6 +309,35 @@ class ModelTrainingTask(BaseModelTask):
 
         # Bayesian model-specific outputs
         if isinstance(model, BayesianHierarchicalModel):
+            effect_summary = model.extract_effects()
+            effects_output_path = os.path.join(key_output_dir, "train_effects.json")
+            validate_output_files(
+                file_paths=[effects_output_path],
+                files=[effect_summary],
+            )
+            with open(effects_output_path, "w") as out_stream:
+                json.dump(effect_summary, out_stream, indent=2)
+
+            parameter_summary = model.extract_parameter_summary()
+            parameter_summary.write_parquet(
+                os.path.join(key_output_dir, "parameter_summary.parquet")
+            )
+            parameter_summary.write_parquet(
+                os.path.join(key_output_dir, "bhm_parameter_summary.parquet")
+            )
+
+            prior_parameter_summary = model.prior_parameter_summary
+            if (
+                prior_parameter_summary is not None
+                and not prior_parameter_summary.is_empty()
+            ):
+                prior_parameter_summary.write_parquet(
+                    os.path.join(key_output_dir, "prior_parameter_summary.parquet")
+                )
+                prior_parameter_summary.write_parquet(
+                    os.path.join(key_output_dir, "bhm_prior_parameter_summary.parquet")
+                )
+
             if model.prior_predictive is not None:
                 self.save_outputs(
                     outputs=[{"prior_predictive": model.prior_predictive}],
@@ -332,6 +375,10 @@ class ModelTrainingTask(BaseModelTask):
             )
             with open(effects_output_path, "w") as out_stream:
                 json.dump(effect_summary, out_stream, indent=2)
+            parameter_summary = model.extract_parameter_summary()
+            parameter_summary.write_parquet(
+                os.path.join(key_output_dir, "parameter_summary.parquet")
+            )
             if model.family == "beta":
                 beta_phi = {"phi": model.extract_beta_phi()}
                 phi_output_path = os.path.join(key_output_dir, "train_phi.json")
@@ -402,7 +449,8 @@ class CrossValidationTask(BaseModelTask):
         for fold_idx, (train_path, test_path) in enumerate(
             zip(self.train_data_paths, self.test_data_paths)
         ):
-            logger.info(f"Processing fold {fold_idx + 1} out of {self.cv_folds}.")
+            fold = fold_idx + 1
+            logger.info(f"Processing fold {fold} out of {self.cv_folds}.")
             df_train = pl.read_parquet(train_path)
             df_test = pl.read_parquet(test_path)
 
@@ -416,6 +464,70 @@ class CrossValidationTask(BaseModelTask):
                 model.random_seed = fold_seed
             train_data, test_data = model.prepare_data(df_train, df_test)
             model.fit(train_data)
+
+            if isinstance(model, BayesianHierarchicalModel):
+                parameter_summary = model.extract_parameter_summary()
+                parameter_summary.write_parquet(
+                    os.path.join(
+                        key_output_dir,
+                        f"parameter_summary_fold_{fold}.parquet",
+                    )
+                )
+                parameter_summary.write_parquet(
+                    os.path.join(
+                        key_output_dir,
+                        f"bhm_parameter_summary_fold_{fold}.parquet",
+                    )
+                )
+                prior_parameter_summary = model.prior_parameter_summary
+                if (
+                    prior_parameter_summary is not None
+                    and not prior_parameter_summary.is_empty()
+                ):
+                    prior_parameter_summary.write_parquet(
+                        os.path.join(
+                            key_output_dir,
+                            f"prior_parameter_summary_fold_{fold}.parquet",
+                        )
+                    )
+                    prior_parameter_summary.write_parquet(
+                        os.path.join(
+                            key_output_dir,
+                            f"bhm_prior_parameter_summary_fold_{fold}.parquet",
+                        )
+                    )
+
+            if isinstance(model, GeneralizedLinearMixedModel):
+                effect_summary = model.extract_effects()
+                effects_output_path = os.path.join(
+                    key_output_dir,
+                    f"train_effects_fold_{fold}.json",
+                )
+                validate_output_files(
+                    file_paths=[effects_output_path],
+                    files=[effect_summary],
+                )
+                with open(effects_output_path, "w") as out_stream:
+                    json.dump(effect_summary, out_stream, indent=2)
+                parameter_summary = model.extract_parameter_summary()
+                parameter_summary.write_parquet(
+                    os.path.join(
+                        key_output_dir,
+                        f"parameter_summary_fold_{fold}.parquet",
+                    )
+                )
+                if model.family == "beta":
+                    beta_phi = {"phi": model.extract_beta_phi()}
+                    phi_output_path = os.path.join(
+                        key_output_dir,
+                        f"train_phi_fold_{fold}.json",
+                    )
+                    validate_output_files(
+                        file_paths=[phi_output_path],
+                        files=[beta_phi],
+                    )
+                    with open(phi_output_path, "w") as out_stream:
+                        json.dump(beta_phi, out_stream, indent=2)
 
             # Evaluate on train and test
             logger.info("Making predictions and evaluating model performance.")
@@ -445,8 +557,6 @@ class CrossValidationTask(BaseModelTask):
             per_fold_metrics.append(
                 {"train": pred_metrics_train, "test": pred_metrics_test}
             )
-
-            fold = fold_idx + 1  # Increment fold index for file naming
 
             # Save per-fold prediction dataframes to parquet and free memory.
             train_pred_path = os.path.join(

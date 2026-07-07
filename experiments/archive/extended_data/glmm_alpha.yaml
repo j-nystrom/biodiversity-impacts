@@ -1,0 +1,76 @@
+glmm_alpha_training_main:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom
+    run_settings:
+      model_type: glmm
+      model_variables: alpha_glmm
+      glmm:
+        family: beta
+        link: logit
+        random_effects_type: independent
+        study_effects:
+          type: slope
+        block_effects:
+          type: intercept
+        effect_ci:
+          method: Wald
+          n_boot: 50
+glmm_alpha_standard_cv_main:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom
+    run_settings:
+      model_type: glmm
+      model_variables: alpha_glmm
+      glmm:
+        family: beta
+        link: logit
+        random_effects_type: independent
+        study_effects:
+          type: slope
+        block_effects:
+          type: intercept
+        effect_ci:
+          method: Wald
+          n_boot: 50
+    cv_settings:
+      split_level: site
+glmm_alpha_cross_study_main:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: alpha
+      sub_sampling:
+        fraction: 1.0
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom
+    run_settings:
+      model_type: glmm
+      model_variables: alpha_glmm
+      glmm:
+        family: beta
+        link: logit
+        random_effects_type: independent
+        study_effects:
+          type: slope
+        block_effects:
+          type: intercept
+        effect_ci:
+          method: Wald
+          n_boot: 50
+    cv_settings:
+      split_level: study

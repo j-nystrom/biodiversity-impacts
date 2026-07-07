@@ -55,11 +55,23 @@ class AlphaDiversityTask:
         """
         self.run_folder_path = run_folder_path
         self.feature_data_path: str = configs.feature_generation.feature_data_path
-        self.groupby_cols: list[str] = configs.diversity_metrics.groupby_cols
+        self.base_groupby_cols: list[str] = list(configs.diversity_metrics.groupby_cols)
+        self.groupby_cols: list[str] = list(self.base_groupby_cols)
         self.taxonomic_levels: list[str] = configs.diversity_metrics.taxonomic_levels
-        self.output_data_paths: dict[str, str] = (
-            configs.diversity_metrics.alpha.output_data_paths
+        self.taxonomic_grouping_cols: dict[str, list[str]] = {
+            name: list(cols)
+            for name, cols in configs.diversity_metrics.taxonomic_grouping_cols.items()
+        }
+        self.reference_baselines: list[str] = list(
+            configs.diversity_metrics.reference_baselines
         )
+        self.reference_baseline: str = self.reference_baselines[0]
+        self.output_data_paths: dict[str, dict[str, str]] = {
+            baseline: dict(paths)
+            for baseline, paths in (
+                configs.diversity_metrics.alpha.output_data_paths.items()
+            )
+        }
 
     def run_task(self) -> None:
         """
@@ -79,84 +91,103 @@ class AlphaDiversityTask:
         validate_input_files(file_paths=[self.feature_data_path])
         df = pl.read_parquet(self.feature_data_path)
 
-        # Iterate through all taxonomic levels, starting with all species
-        # In the first iteration, 'SS', 'SSB' and 'SSBS' is used for grouping
-        for i, path in enumerate(self.output_data_paths.values()):
-            logger.info(
-                f"Calculating at the following aggregation level: {self.groupby_cols}"
-            )
+        for reference_baseline in self.reference_baselines:
+            self.reference_baseline = reference_baseline
+            output_paths = self.output_data_paths[reference_baseline]
 
-            df_tot_abund = self.calculate_total_abundance(df)
-            df_arithmetic_mean_abund = self.calculate_arithmetic_mean_abundance(df)
-            df_geometric_mean_abund = self.calculate_geometric_mean_abundance(df)
-            df_richness = self.calculate_species_richness(df)
-            df_shannon = self.calculate_shannon_index(df)
+            # Each output defines its own taxonomic grouping. Custom and
+            # Custom_alt are siblings, not nested levels.
+            for output_name, path in output_paths.items():
+                self.groupby_cols = self.grouping_cols_for_output(output_name)
+                logger.info(
+                    f"Calculating {output_name} with {self.reference_baseline} "
+                    f"baseline at level: {self.groupby_cols}"
+                )
 
-            # Get the first instance of each SSBS from the original dataframe
-            # Drop columns that relate to individual taxon measurements
-            # Drop columns with more granular species info than the grouping
-            # (as that would not be meaningful in that dataframe)
-            df_first = df.group_by("SSBS").first()
-            df_first = df_first.drop(
-                [
-                    col
-                    for col in [
-                        "Taxon_name_entered",
-                        "Measurement",
-                        "Effort_corrected_measurement",
+                df_tot_abund = self.calculate_total_abundance(df)
+                df_arithmetic_mean_abund = self.calculate_arithmetic_mean_abundance(df)
+                df_geometric_mean_abund = self.calculate_geometric_mean_abundance(df)
+                df_richness = self.calculate_species_richness(df)
+                df_shannon = self.calculate_shannon_index(df)
+
+                # Get the first instance of each SSBS from the original dataframe
+                # Drop columns that relate to individual taxon measurements
+                # Drop columns with more granular species info than the grouping
+                # (as that would not be meaningful in that dataframe)
+                df_first = df.group_by("SSBS").first()
+                df_first = df_first.drop(
+                    [
+                        col
+                        for col in [
+                            "Taxon_name_entered",
+                            "Measurement",
+                            "Effort_corrected_measurement",
+                        ]
+                        if col in df_first.columns
                     ]
-                    if col in df_first.columns
-                ]
-            )
-            df_first = df_first.drop(self.taxonomic_levels[i:])
+                )
+                cols_to_drop = self.taxonomic_cols_to_drop(
+                    output_name, df_first.columns
+                )
+                df_first = df_first.drop(cols_to_drop)
 
-            # Sequentially join the alpha diversity metrics to create one df
-            df_res = df_tot_abund.join(  # Total abundance + arithmetic mean abundance
-                df_arithmetic_mean_abund,
-                on=self.groupby_cols,
-                how="left",
-            )
+                # Sequentially join the alpha diversity metrics to create one df
+                df_res = df_tot_abund.join(
+                    df_arithmetic_mean_abund,
+                    on=self.groupby_cols,
+                    how="left",
+                )
 
-            df_res = df_res.join(  # + Geometric mean abundance
-                df_geometric_mean_abund,
-                on=self.groupby_cols,
-                how="left",
-            )
+                df_res = df_res.join(
+                    df_geometric_mean_abund,
+                    on=self.groupby_cols,
+                    how="left",
+                )
 
-            df_res = df_res.join(  # + Species richness
-                df_richness,
-                on=self.groupby_cols,
-                how="left",
-            )
+                df_res = df_res.join(
+                    df_richness,
+                    on=self.groupby_cols,
+                    how="left",
+                )
 
-            df_res = df_res.join(  # + Shannon index
-                df_shannon,
-                on=self.groupby_cols,
-                how="left",
-            )
+                df_res = df_res.join(
+                    df_shannon,
+                    on=self.groupby_cols,
+                    how="left",
+                )
 
-            # Finally, include all other attributes in the original dataframe
-            # at the right level of aggregation
-            df_res = df_res.join(df_first, on="SSBS", how="left", validate="m:1")
+                # Finally, include all other attributes in the original dataframe
+                # at the right level of aggregation
+                df_res = df_res.join(df_first, on="SSBS", how="left", validate="m:1")
 
-            # Save the output file for this level of taxonomic aggregation
-            validate_output_files(
-                file_paths=[path], files=[df_res], allow_overwrite=True
-            )
-            df_res.write_parquet(path)
+                # Save the output file for this baseline and taxonomic aggregation
+                validate_output_files(
+                    file_paths=[path], files=[df_res], allow_overwrite=True
+                )
+                df_res.write_parquet(path)
 
-            logger.info(f"Finished calculations at level: {self.groupby_cols}")
-
-            # Update the list of grouping columns for the next iteration;
-            # 'taxonomic_levels' contains four taxonomic levels, we continue
-            # the loop until all levels have been added to groupby_cols
-            if i < len(self.taxonomic_levels):
-                self.groupby_cols.append(self.taxonomic_levels[i])
-            else:
-                break
+                logger.info(
+                    f"Finished {output_name} with {self.reference_baseline} baseline."
+                )
 
         runtime = str(timedelta(seconds=int(time.time() - start)))
         logger.info(f"Alpha diversity calculations finished in {runtime}.")
+
+    def grouping_cols_for_output(self, output_name: str) -> list[str]:
+        """Return grouping columns for one configured alpha output."""
+        return self.base_groupby_cols + self.taxonomic_grouping_cols[output_name]
+
+    def taxonomic_cols_to_drop(
+        self, output_name: str, available_cols: list[str]
+    ) -> list[str]:
+        """Return taxonomic columns that are more granular than the output."""
+        output_cols = set(self.taxonomic_grouping_cols[output_name])
+        taxonomic_cols = {
+            col for cols in self.taxonomic_grouping_cols.values() for col in cols
+        }
+        cols_to_drop = taxonomic_cols - output_cols
+        available_cols_to_drop = cols_to_drop.intersection(available_cols)
+        return sorted(available_cols_to_drop)
 
     def calculate_total_abundance(self, df: pl.DataFrame) -> pl.DataFrame:
         """Calculate the sum of the abundance of all species in each group."""
@@ -214,7 +245,10 @@ class AlphaDiversityTask:
         )
 
         # Scale within study
-        df_geom_mean = self.scale_by_study_max(df_geom_mean, diversity_metric=metric)
+        df_geom_mean = self.scale_by_study_max(
+            df_geom_mean,
+            diversity_metric=metric,
+        )
 
         validate_alpha_diversity_calculations(df_geom_mean, metric_name=metric)
         logger.info("Geometric mean abundance calculations finished.")
@@ -326,10 +360,12 @@ class AlphaDiversityTask:
 
         # Scale the Shannon indices
         df_shannon = self.scale_by_study_max(
-            df_shannon, diversity_metric="Shannon_index"
+            df_shannon,
+            diversity_metric="Shannon_index",
         )
         df_shannon = self.scale_by_study_max(
-            df_shannon, diversity_metric="Modified_Shannon_index"
+            df_shannon,
+            diversity_metric="Modified_Shannon_index",
         )
 
         validate_alpha_diversity_calculations(df_shannon, metric_name="Shannon_index")
@@ -375,19 +411,24 @@ class AlphaDiversityTask:
         )
 
         # Scale the metric within each study
-        df_scaled = self.scale_by_study_max(df_metric, diversity_metric=metric_name)
+        df_scaled = self.scale_by_study_max(
+            df_metric,
+            diversity_metric=metric_name,
+        )
 
         logger.info(f"{metric_name} calculations finished.")
 
         return df_scaled
 
     def scale_by_study_max(
-        self, df: pl.DataFrame, diversity_metric: str
+        self,
+        df: pl.DataFrame,
+        diversity_metric: str,
     ) -> pl.DataFrame:
         """
-        Scale diversity metrics by dividing them by the maximum value within
-        the study to which they belong. This is done to make the metrics
-        comparable across studies, so that data can be pooled for training.
+        Scale diversity metrics by dividing them by the maximum value within the
+        study to which they belong. This is done to make the metrics comparable
+        across studies, so that data can be pooled for training.
 
         Args:
             - df: Dataframe containing the diversity metric to be scaled.
@@ -402,7 +443,7 @@ class AlphaDiversityTask:
         tax_cols = [c for c in self.groupby_cols if c not in ("SS", "SSB", "SSBS")]
         groupby_cols = ["SS"] + tax_cols
 
-        # Calculate the max value within each study
+        # Calculate the max value within each study and taxonomic grouping.
         df_max = df.group_by(groupby_cols).agg(
             pl.max(diversity_metric).alias(f"Study_max_{diversity_metric}")
         )
@@ -414,13 +455,14 @@ class AlphaDiversityTask:
             how="left",
         )
 
-        # Perform the scaling, including handling of zero-abundance studies
+        # Perform the scaling, including handling of zero-abundance studies.
+        scaled_ratio = pl.col(diversity_metric) / pl.col(
+            f"Study_max_{diversity_metric}"
+        )
         df_scaled = df_scaled.with_columns(
             pl.when(pl.col(f"Study_max_{diversity_metric}") == 0)
             .then(0)
-            .otherwise(
-                pl.col(diversity_metric) / pl.col(f"Study_max_{diversity_metric}")
-            )
+            .otherwise(pl.min_horizontal(scaled_ratio, pl.lit(1.0)))
             .alias(f"Scaled_{diversity_metric}")
         )
 

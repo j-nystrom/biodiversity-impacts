@@ -1,0 +1,130 @@
+sbm_beta_training_main_alt_taxa:
+  dag: training
+  overrides:
+    data_scope:
+      diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom_alt
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        rolled_up_predictions: false
+        study_effects: beta_glmm
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.50
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.50
+            beta_likelihood:
+              beta: 20
+        training_components:
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+        prediction_components:
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+sbm_beta_standard_cv_main_alt_taxa:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom_alt
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        rolled_up_predictions: false
+        study_effects: beta_glmm
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.50
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.50
+            beta_likelihood:
+              beta: 20
+        training_components:
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+        prediction_components:
+          ecological: false
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+    cv_settings:
+      split_level: site
+sbm_beta_cross_study_main_alt_taxa:
+  dag: crossval
+  overrides:
+    data_scope:
+      diversity_type: beta
+      reference_baseline: minimal_primary_vegetation
+      sub_sampling:
+        fraction: 0.15
+      taxonomic:
+        resolution: All_species
+        filtering_scope: Custom_alt
+    run_settings:
+      model_type: bayesian
+      model_variables: beta_main
+      bayesian:
+        hierarchy:
+          level_1:
+          - Biome
+          level_2:
+          - Realm
+          level_3: []
+        rolled_up_predictions: false
+        study_effects: beta_glmm
+        priors:
+          beta:
+            alpha_hyper_mean_mu: 0.25
+            hyperprior_sd_alpha: 0.75
+            hyperprior_sd_beta: 0.50
+            random_intercept_sd: 0.75
+            random_slope_sd: 0.50
+            beta_likelihood:
+              beta: 20
+        training_components:
+          ecological: false
+          study_intercept: true
+          study_slopes: true
+          block_intercept: true
+        prediction_components:
+          ecological: false
+          study_intercept: false
+          study_slopes: false
+          block_intercept: false
+    cv_settings:
+      split_level: study
