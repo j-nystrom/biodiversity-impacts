@@ -5,7 +5,7 @@ btm_beta_training_ecological_no_study_controls:
       diversity_type: beta
       reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: Custom_alt
     run_settings:
@@ -44,7 +44,7 @@ btm_beta_standard_cv_ecological_no_study_controls:
       diversity_type: beta
       reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: Custom_alt
     run_settings:
@@ -85,7 +85,7 @@ btm_beta_cross_study_ecological_no_study_controls:
       diversity_type: beta
       reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: Custom_alt
     run_settings:

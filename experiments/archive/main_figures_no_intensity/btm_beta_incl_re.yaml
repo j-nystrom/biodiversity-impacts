@@ -4,7 +4,7 @@ btm_beta_training_incl_re_no_intensity:
     data_scope:
       diversity_type: beta
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: Custom_alt
       reference_baseline: primary_vegetation
@@ -59,7 +59,7 @@ btm_beta_standard_cv_incl_re_no_intensity:
     data_scope:
       diversity_type: beta
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: Custom_alt
       reference_baseline: primary_vegetation
@@ -116,7 +116,7 @@ btm_beta_cross_study_incl_re_no_intensity:
     data_scope:
       diversity_type: beta
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: Custom_alt
       reference_baseline: primary_vegetation

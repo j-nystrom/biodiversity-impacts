@@ -2,7 +2,6 @@ import os
 import time
 from datetime import timedelta
 
-import gower
 import numpy as np
 import polars as pl
 from box import Box
@@ -642,9 +641,11 @@ class BetaDiversityTask:
         self, df_comp_similarity: pl.DataFrame
     ) -> pl.DataFrame:
         """
-        Calculate the Gower distance between two sites based on environmental
-        variables. The Gower distance is a measure of dissimilarity between two
-        entities and is suitable for mixed data types.
+        Calculate environmental Gower distances for one study's site pairs.
+
+        Numeric differences are scaled by the range across all reference and
+        comparison sites in the study. Variables that are constant within the
+        study contribute zero distance.
 
         Args:
             df_comp_similarity: DataFrame containing the attributes of each
@@ -656,37 +657,36 @@ class BetaDiversityTask:
         """
         logger.info("Calculating environmental distances.")
 
-        def _gower_distance(row: dict, variables: list[str]) -> float:
-            # Construct 2-row array for Gower: [references site, other site]
-            data = np.array(
-                [
-                    [row[f"{var}_reference"] for var in variables],
-                    [row[var] for var in variables],
-                ],
-                dtype=float,
-            )
-
-            dist = gower.gower_matrix(data)[0, 1]
-            return dist
-
         suffix_map = {"alpha_equivalents": "alpha_feat", "all": "all_feat"}
         for feature_set, variables in self.environmental_dist_vars.items():
             suffix = suffix_map[feature_set]
             gower_col = f"Gower_distance_{suffix}"
+            contributions = []
 
-            # Build struct of required columns for this covariate set.
-            env_columns = [pl.col(var) for var in variables]
-            ref_columns = [pl.col(f"{var}_reference") for var in variables]
-            all_env_cols = env_columns + ref_columns
-
-            # Apply Gower row-wise for the current feature set.
-            df_comp_similarity = df_comp_similarity.with_columns(
-                pl.struct(all_env_cols)
-                .map_elements(
-                    lambda row, vars=variables: _gower_distance(row, vars),
-                    return_dtype=pl.Float64,
+            for variable in variables:
+                reference_variable = f"{variable}_reference"
+                study_min = min(
+                    df_comp_similarity.get_column(variable).min(),
+                    df_comp_similarity.get_column(reference_variable).min(),
                 )
-                .alias(gower_col)
+                study_max = max(
+                    df_comp_similarity.get_column(variable).max(),
+                    df_comp_similarity.get_column(reference_variable).max(),
+                )
+                study_range = study_max - study_min
+
+                if study_range == 0:
+                    contributions.append(pl.lit(0.0))
+                else:
+                    contributions.append(
+                        (
+                            (pl.col(variable) - pl.col(reference_variable)).abs()
+                            / study_range
+                        ).clip(0.0, 1.0)
+                    )
+
+            df_comp_similarity = df_comp_similarity.with_columns(
+                pl.mean_horizontal(contributions).clip(0.0, 1.0).alias(gower_col)
             )
 
             # Add the same transformations used for other continuous features.

@@ -65,6 +65,3 @@ jupyter-black
 python-box
 dill
 wakepy
-
-# Pip
-gower

@@ -97,7 +97,7 @@ site_info_filename = "site_info.parquet"
 brm_added_output_path = "additional_output"
 current_run_folder_suffix = "main_alt_taxa"
 
-effect_range_interval = "p1_99"  # "all", "iqr", "p5_95", or "p1_99"
+effect_range_interval = "all"  # "all", "iqr", "p5_95", or "p1_99"
 effect_size_scale = "response"  # "latent" or "response"
 effect_intervals = {
     "iqr": (0.25, 0.75),

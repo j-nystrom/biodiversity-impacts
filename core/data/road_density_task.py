@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from datetime import timedelta
 
@@ -29,7 +30,7 @@ class RoadDensityTask:
     the Oceania files here instead of in a separate notebook.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, run_folder_path: str) -> None:
         """
         Attributes:
             all_site_coords: Path to dataframe containing coordinates of all
@@ -41,12 +42,38 @@ class RoadDensityTask:
             polygon_sizes: Radii that were used in previous buffering.
             road_densities: Output paths for calculated densities per region.
         """
-        self.all_site_coords: str = configs.predicts.all_site_coords
-        self.road_network_data: list[str] = configs.roads.road_network_data
-        self.utm_site_polygons: list[str] = configs.roads.utm_site_polygons
-        self.un_regions: list[str] = configs.roads.un_regions
-        self.polygon_sizes: list[int] = configs.roads.polygon_sizes
-        self.road_density_data: list[str] = configs.roads.road_density_data
+        self.run_folder_path = run_folder_path
+        self.all_site_coords: str = configs.site_geodata.site_coords_path
+        self.road_network_data: list[str] = list(
+            configs.road_density.input_shapefile_paths
+        )
+        self.un_regions: list[str] = list(configs.road_density.un_regions)
+        self.polygon_sizes: list[int] = list(configs.road_density.polygon_sizes_km)
+        self.road_density_data: list[str] = list(configs.road_density.output_paths)
+
+        available_polygon_paths = list(configs.site_geodata.utm_polygon_paths)
+        self.utm_site_polygons: list[str] = []
+        for size in self.polygon_sizes:
+            matching_paths = [
+                path
+                for path in available_polygon_paths
+                if re.search(rf"_{size}km\.shp$", path)
+            ]
+            if len(matching_paths) != 1:
+                raise ValueError(
+                    f"Expected one UTM polygon path for {size} km, "
+                    f"found {len(matching_paths)}."
+                )
+            self.utm_site_polygons.append(matching_paths[0])
+
+        if not (
+            len(self.un_regions)
+            == len(self.road_network_data)
+            == len(self.road_density_data)
+        ):
+            raise ValueError(
+                "Road regions, input shapefiles and output paths must align."
+            )
 
     def run_task(self) -> None:
         """
@@ -67,7 +94,7 @@ class RoadDensityTask:
 
         df_all_sites = gpd.read_file(self.all_site_coords)
 
-        for region, input, output in zip(
+        for region, input_path, output_path in zip(
             self.un_regions, self.road_network_data, self.road_density_data
         ):
             logger.info(f"Processing road data for {region}.")
@@ -76,7 +103,7 @@ class RoadDensityTask:
             df_sites_reg = df_all_sites.loc[df_all_sites["UN_region"] == region]
 
             # Load the road network data for this region
-            gdf_roads = gpd.GeoDataFrame(gpd.read_file(input)["geometry"])
+            gdf_roads = gpd.GeoDataFrame(gpd.read_file(input_path)["geometry"])
 
             # Check if rows contain MultiLineStrings and split where needed
             gdf_roads = split_multi_line_strings(gdf_roads["geometry"])
@@ -101,7 +128,7 @@ class RoadDensityTask:
                 df_region_res[f"Road_density_{dist}km"] = result
 
             # Save the final dataframe with all sites and densities to disk
-            df_region_res.to_parquet(output)
+            df_region_res.to_parquet(output_path)
 
             runtime_region = str(timedelta(seconds=int(time.time() - start_region)))
             logger.info(f"Processing for {region} finished in {runtime_region}")

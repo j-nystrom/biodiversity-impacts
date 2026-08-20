@@ -32,8 +32,49 @@ class CalculateRasterStatsTask:
             global_site_polygons: List of shapefiles with buffered site
                 polygons at previously buffered scales.
         """
-        self.all_site_coords: str = configs.predicts.all_site_coords
-        self.global_site_polygons: str = configs.raster_data.global_site_polygons
+        self.all_site_coords: str = configs.site_geodata.site_coords_path
+        self.global_site_polygons: list[str] = list(
+            configs.site_geodata.global_polygon_paths
+        )
+
+    def configure_mode(self, mode: str) -> None:
+        """Load and validate the raster settings for one processing mode."""
+        if mode not in ["pop_density", "bioclimatic", "topographic"]:
+            raise ValueError(
+                "'mode' needs to be in ['pop_density', 'bioclimatic', 'topographic']"
+            )
+
+        mode_configs = configs.raster_data[mode]
+        self.polygon_sizes = list(mode_configs.polygon_sizes_km)
+        self.raster_paths = list(mode_configs.input_raster_paths)
+        self.result_col_names = list(mode_configs.result_col_names)
+        self.agg_metrics = mode_configs.agg_settings.metrics
+        self.include_all_pixels = mode_configs.agg_settings.include_all_pixels
+        self.output_paths = list(mode_configs.output_paths)
+
+        self.polygon_paths = []
+        for size in self.polygon_sizes:
+            matching_paths = [
+                path
+                for path in self.global_site_polygons
+                if re.search(rf"_{size}km\.shp$", path)
+            ]
+            if len(matching_paths) != 1:
+                raise ValueError(
+                    f"Expected one global polygon path for {size} km, "
+                    f"found {len(matching_paths)}."
+                )
+            self.polygon_paths.append(matching_paths[0])
+
+        if len(self.output_paths) != len(self.polygon_sizes):
+            raise ValueError("Each polygon size must have one raster output path.")
+
+        expected_columns = len(self.polygon_sizes) * len(self.raster_paths)
+        if len(self.result_col_names) != expected_columns:
+            raise ValueError(
+                "Raster result-column count does not match polygon sizes "
+                "and input rasters."
+            )
 
     def run_mode(self, mode: str) -> None:
         """
@@ -58,36 +99,18 @@ class CalculateRasterStatsTask:
                 polygon boundaries or just pixels with center points within it.
             output_paths: List of output paths for saving the result dataframes.
         """
-        if mode not in ["pop_density", "bioclimatic", "topographic"]:
-            raise ValueError(
-                "'mode' needs to be in ['pop_density', 'bioclimatic', 'topographic']"
-            )
         logger.info(f"Starting raster data extraction for mode {mode}.")
         start = time.time()
+
+        self.configure_mode(mode)
 
         # Load the dataframe that will hold the results, keeping the site id
         df_sites = pd.DataFrame(gpd.read_file(self.all_site_coords)["SSBS"])
 
-        # Get the configs for this particular mode
-        mode_configs = configs.raster_data[mode]
-        self.polygon_sizes = mode_configs.polygon_sizes
-        self.raster_paths = mode_configs.raster_paths
-        self.result_col_names = mode_configs.result_col_names
-        self.agg_metrics = mode_configs.rasterstats_settings.metrics
-        self.include_all_pixels = mode_configs.rasterstats_settings.include_all_pixels
-        self.output_paths = mode_configs.output_paths
-
-        # Keep only the polygon paths that match the desired scales
-        polygon_paths = []
-        for path in self.global_site_polygons:
-            for size in self.polygon_sizes:
-                if re.search(f"{size}km", path):
-                    polygon_paths.append(path)
-
         # Iterate through every combination of polygon datasets (shapefiles)
         # and raster datasets to extract the desired statistics
         i = 0
-        for polygon_path, output_path in zip(polygon_paths, self.output_paths):
+        for polygon_path, output_path in zip(self.polygon_paths, self.output_paths):
             df_result = df_sites.copy()
             for raster_path in self.raster_paths:
                 logger.info(
@@ -121,7 +144,7 @@ class CalculateRasterStatsTask:
     def calculate_raster_stats(
         polygon_path: str,
         raster_path: str,
-        metrics: list[str] = ["mean"],
+        metrics: str = "mean",
         include_all_pixels: bool = True,
     ) -> list[float]:
         """
@@ -156,28 +179,34 @@ class CalculateRasterStatsTask:
 class PopulationDensityTask(CalculateRasterStatsTask):
     """Population density data."""
 
+    mode = "pop_density"
+
     def __init__(self, run_folder_path: str) -> None:
         super().__init__()
 
     def run_task(self) -> None:
-        self.run_mode(mode="pop_density")
+        self.run_mode(mode=self.mode)
 
 
 class BioclimaticFactorsTask(CalculateRasterStatsTask):
     """Bioclimatic factors data."""
 
+    mode = "bioclimatic"
+
     def __init__(self, run_folder_path: str) -> None:
         super().__init__()
 
     def run_task(self) -> None:
-        self.run_mode(mode="bioclimatic")
+        self.run_mode(mode=self.mode)
 
 
 class TopographicFactorsTask(CalculateRasterStatsTask):
     """Topographic factors data."""
 
+    mode = "topographic"
+
     def __init__(self, run_folder_path: str) -> None:
         super().__init__()
 
     def run_task(self) -> None:
-        self.run_mode(mode="topographic")
+        self.run_mode(mode=self.mode)

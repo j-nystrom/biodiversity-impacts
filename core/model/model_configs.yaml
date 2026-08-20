@@ -150,7 +150,7 @@ run_settings:
       tune: 1000
       cores: 4
       chains: 4
-      target_accept: 0.97
+      target_accept: 0.95
       nuts_sampler: numpyro  # [numpyro, pymc]
 
   # Structural settings for generalized linear mixed models
