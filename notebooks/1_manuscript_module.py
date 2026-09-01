@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import geopandas as gpd
-import gower
 import jupyter_black
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,6 +14,7 @@ import statsmodels.api as sm
 from matplotlib.colors import Normalize
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from scipy.spatial import cKDTree
 from scipy.stats import spearmanr
 from shapely.geometry import LineString
 
@@ -95,12 +95,14 @@ base_path = project_root.parent / "data" / "runs_revision"
 key_output_path = "key_output"
 site_info_filename = "site_info.parquet"
 brm_added_output_path = "additional_output"
-current_run_folder_suffix = "main_alt_taxa"
+current_run_folder_suffix = "main"
 
-effect_range_interval = "all"  # "all", "iqr", "p5_95", or "p1_99"
+spread_interval = "p2_5_97_5"  # "all", "iqr", "p2_5_97_5", "p5_95", or "p1_99"
 effect_size_scale = "response"  # "latent" or "response"
 effect_intervals = {
+    "all": (0.0, 1.0),
     "iqr": (0.25, 0.75),
+    "p2_5_97_5": (0.025, 0.975),
     "p5_95": (0.05, 0.95),
     "p1_99": (0.01, 0.99),
 }
@@ -297,9 +299,9 @@ def effect_interval(values: list[float], interval: str) -> tuple[float, float]:
     """
     Return the selected interval for posterior-mean effect values.
 
-    Fig 3 uses the full min-max range, the interquartile range, or the
-    1st-99th percentile range. Each input value is one study-level slope
-    for the SBM or one final ecological-group slope for the BRM/BTM.
+    Each input value is one study-level slope for the SBM or one final
+    ecological-group slope for the BRM/BTM. The configured manuscript spread
+    is the full minimum-maximum range.
     """
     arr = np.asarray(values, dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -358,7 +360,7 @@ def filter_ecological_rows_to_active_term(
 def prepare_effect_panel_inputs(
     training_folders: dict[str, str],
     diversity_name: str,
-    interval: str = effect_range_interval,
+    interval: str = spread_interval,
     effect_scale: str = effect_size_scale,
 ) -> tuple[dict[str, dict], list[str], tuple[float, float]]:
     """
@@ -448,6 +450,7 @@ def prepare_effect_panel_inputs(
         low, high = effect_interval(df_term.get_column(value_col).to_list(), interval)
         effect_summaries["SBM"][term]["random_slope_lower"] = low
         effect_summaries["SBM"][term]["random_slope_upper"] = high
+        effect_summaries["SBM"][term]["spread_n"] = df_term.height
     ecological_models = [
         model_name
         for model_name in model_order
@@ -502,12 +505,7 @@ def prepare_effect_panel_inputs(
             )
             effect_summaries[model_name][term]["ecological_slope_lower"] = low
             effect_summaries[model_name][term]["ecological_slope_upper"] = high
-            effect_summaries[model_name][term]["random_slope_lower"] = effect_summaries[
-                "SBM"
-            ][term].get("random_slope_lower")
-            effect_summaries[model_name][term]["random_slope_upper"] = effect_summaries[
-                "SBM"
-            ][term].get("random_slope_upper")
+            effect_summaries[model_name][term]["spread_n"] = df_term.height
     limit_values = []
     for effect_dict in effect_summaries.values():
         for term in effect_order:
@@ -538,7 +536,7 @@ def plot_effect_panel(
     show_ecological_spread: bool = False,
     figsize: tuple[float, float] = (3.8, 5.4),
     axes_label_size: int = 9,
-    axes_number_size: int = 12,
+    axes_number_size: int = 9,
     ecological_line_width: float = 2.0,
     plot_effect_order: list[str] | None = None,
     plot_effect_x_limits: tuple[float, float] | None = None,
@@ -546,8 +544,8 @@ def plot_effect_panel(
     """
     Plot one Fig 3 effect-spread panel.
 
-    Rows are covariates. Circles show population fixed-effect slopes. Peach bars
-    show the configured range of SBM study-level slopes. Optional blue bars show
+    Rows are covariates. Circles show population fixed-effect slopes. When present,
+    peach bars show the configured range of SBM study-level slopes. Blue bars show
     the configured range of BRM/BTM final ecological-group slopes. Covariate
     labels are raw output names so final figure labels can be added separately.
     """
@@ -715,7 +713,7 @@ def build_parameter_spread_table(
     """
     Build Fig 4c-e conditional-shift parameter-change table.
 
-    For each model, CV mode, fold, covariate, and final group where applicable, the datapoint is the fold-training estimate minus the full-training estimate. BHM outputs are read from parameter_summary parquet files; GLMM outputs are read from train_effects JSON files. The plot later summarizes these datapoints with the selected IQR or 5th-95th percentile range.
+    For each model, CV mode, fold, covariate, and final group where applicable, the datapoint is the fold-training estimate minus the full-training estimate. BHM outputs are read from parameter_summary parquet files; GLMM outputs are read from train_effects JSON files. The plot later summarizes these datapoints with the configured spread interval.
     """
     rows = []
     for cv_mode, model_folders in cv_folders.items():
@@ -788,7 +786,7 @@ def plot_parameter_spread_panel(
     figsize: tuple[float, float] = (4.8, 5.2),
     show_axes_labels_values: bool = True,
     show_legend: bool = True,
-    interval: str = effect_range_interval,
+    interval: str = spread_interval,
     x_limits: tuple[float, float] | None = None,
 ) -> plt.Figure:
     """
@@ -796,8 +794,8 @@ def plot_parameter_spread_panel(
 
     Rows are the selected diversity metric's covariates. Each horizontal segment summarizes
     fold-training parameter changes from the full-training fit, with standard
-    and cross-study CV overlaid. The interval argument controls whether IQR or
-    5th-95th percentile ranges are shown. Labels use raw output covariate names.
+    and cross-study CV overlaid. The interval argument uses the same configured
+    spread interval as the effect panels. Labels use raw output covariate names.
     """
     df = parameter_table.filter(pl.col("Model") == model_name).to_pandas()
     terms = [term for term in effect_order if term in set(df["covariate"])]
@@ -810,14 +808,11 @@ def plot_parameter_spread_panel(
     summary = (
         df.groupby(["CV mode", "covariate"], as_index=False)["change"]
         .agg(
-            q25=lambda values: np.quantile(values, 0.25),
-            q75=lambda values: np.quantile(values, 0.75),
-            p5=lambda values: np.quantile(values, 0.05),
-            p95=lambda values: np.quantile(values, 0.95),
+            low=lambda values: effect_interval(values.tolist(), interval)[0],
+            high=lambda values: effect_interval(values.tolist(), interval)[1],
         )
         .reset_index()
     )
-    low_col, high_col = ("q25", "q75") if interval == "iqr" else ("p5", "p95")
     fig, ax = plt.subplots(figsize=figsize)
     ax.axvline(
         0, color=color_scheme["zero_line"], linestyle="--", linewidth=1, zorder=1
@@ -830,8 +825,8 @@ def plot_parameter_spread_panel(
         )
         ax.hlines(
             y=y_summary,
-            xmin=cv_summary[low_col],
-            xmax=cv_summary[high_col],
+            xmin=cv_summary["low"],
+            xmax=cv_summary["high"],
             color=color,
             linewidth=3,
             alpha=0.95,
