@@ -87,7 +87,7 @@ predicts:
 # SiteBufferingTask --------------------------------------
 
 site_geodata:
-  site_required_cols: [SSBS, Longitude, Latitude]  # Columns required for site data
+  site_required_cols: [SSBS, Longitude, Latitude, UN_region]  # Columns required for site data
   polygon_sizes_km: [1, 5, 10, 50] # Must match ALL buffer sizes used in tasks below
   polygon_type: round  # Type of site polygon, either 'square' or 'round'
   site_coords_crs: "EPSG:4326"  # Reference system of site coordinates
@@ -148,7 +148,7 @@ raster_data:
 
   # Mode: Bioclimatic variables based on temperature and precipitation
   bioclimatic:
-    polygon_sizes_km: [1, 5, 10]
+    polygon_sizes_km: [1, 10]
     input_raster_paths:
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_1.tif"  # Annual Mean Temperature
       - "../../../data/WorldClim/Bioclimatic/wc2.1_30s_bio_4.tif"  # Temperature Seasonality
@@ -174,14 +174,6 @@ raster_data:
       - Precip_wettest_month_1km
       - Precip_driest_month_1km
       - Precip_seasonality_1km
-      - Annual_mean_temp_5km
-      - Temp_seasonality_5km
-      - Max_temp_warmest_month_5km
-      - Min_temp_coldest_month_5km
-      - Annual_precip_5km
-      - Precip_wettest_month_5km
-      - Precip_driest_month_5km
-      - Precip_seasonality_5km
       - Annual_mean_temp_10km
       - Temp_seasonality_10km
       - Max_temp_warmest_month_10km
@@ -193,7 +185,7 @@ raster_data:
 
   # Mode: Topographic variables like elevation, slope, roughness
   topographic:
-    polygon_sizes_km: [1, 5, 10]
+    polygon_sizes_km: [1, 10]
     input_raster_paths:
       - "../../../data/EarthEnv/topography/elevation_1KMmn_GMTEDmd.tif"  # Elevation
       - "../../../data/EarthEnv/topography/slope_1KMmn_GMTEDmd.tif"  # Slope
@@ -211,10 +203,6 @@ raster_data:
       - Slope_1km
       - Terrain_roughness_1km
       - Terrain_ruggedness_index_1km
-      - Elevation_5km
-      - Slope_5km
-      - Terrain_roughness_5km
-      - Terrain_ruggedness_index_5km
       - Elevation_10km
       - Slope_10km
       - Terrain_roughness_10km

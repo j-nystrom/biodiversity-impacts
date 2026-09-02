@@ -5,7 +5,7 @@ brm_beta_training_ecological_study_slopes_group_disp:
       diversity_type: beta
       reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
@@ -69,7 +69,7 @@ brm_beta_standard_cv_ecological_study_slopes_group_disp:
       diversity_type: beta
       reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt
@@ -135,7 +135,7 @@ brm_beta_cross_study_ecological_study_slopes_group_disp:
       diversity_type: beta
       reference_baseline: minimal_primary_vegetation
       sub_sampling:
-        fraction: 0.10
+        fraction: 0.15
       taxonomic:
         resolution: All_species
         filtering_scope: Custom_alt

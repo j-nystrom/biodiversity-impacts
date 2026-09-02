@@ -130,7 +130,7 @@ class SiteBufferingTask:
         # Save one shapefile for each buffer distance in UTM and global formats
         for radius, path in zip(self.polygon_sizes_km, self.global_polygon_paths):
             gdf_res = gpd.GeoDataFrame(
-                gdf_coords[["SSBS", "Year", f"glob_{radius}km"]],
+                gdf_coords[["SSBS", "Year", "UN_region", f"glob_{radius}km"]],
                 geometry=f"glob_{radius}km",
             )
             # Save to file, using Fiona engine to avoid issues with missing CRS
@@ -144,7 +144,7 @@ class SiteBufferingTask:
 
         for radius, path in zip(self.polygon_sizes_km, self.utm_polygon_paths):
             gdf_res = gpd.GeoDataFrame(
-                gdf_coords[["SSBS", "Year", f"utm_{radius}km"]],
+                gdf_coords[["SSBS", "Year", "UN_region", f"utm_{radius}km"]],
                 geometry=f"utm_{radius}km",
             )
             validate_output_files(
@@ -197,6 +197,7 @@ class SiteBufferingTask:
                 pl.first("Longitude"),
                 pl.first("Latitude"),
                 pl.first("Year"),
+                pl.first("UN_region"),
             ]
         )
         coordinates = zip(
@@ -211,6 +212,7 @@ class SiteBufferingTask:
                 {
                     "SSBS": df_long_lat.get_column("SSBS"),
                     "Year": df_long_lat.get_column("Year"),
+                    "UN_region": df_long_lat.get_column("UN_region"),
                     "geometry": geometry,
                 }
             )
@@ -303,7 +305,7 @@ class SiteBufferingTask:
     ) -> None:
         """Validate the output df from create_site_coord_geometries."""
         # Check that the required columns exist
-        required_columns = {"SSBS", "geometry"}
+        required_columns = {"SSBS", "UN_region", "geometry"}
         missing_columns = required_columns - set(gdf.columns)
         if missing_columns:
             raise ValueError(

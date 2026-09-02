@@ -17,10 +17,10 @@ data_scope:
   exclude_outliers: True  # Use IQR / Tukey rule to exclude outliers in target
   iqr_multiplier: 1.5  # Multiplier for IQR to define outliers
   sub_sampling:
-    fraction: 0.15  # Fraction of data to include for beta diversity defaults
+    fraction: 0.10  # Fraction of data to include for beta diversity defaults
     level: sites  # [sites, studies]
-    min_k_per_study: 300  # For beta: min target number of sites per study
-    max_k_per_study: 3000  # For beta: max target number of sites per study
+    min_k_per_study: 400  # For beta: min target number of sites per study
+    max_k_per_study: 2000  # For beta: max target number of sites per study
 
   biogeographic:  # Biogeographic scope on which to train model
     include_all: True  # True if global scope, False if non-global
@@ -39,7 +39,7 @@ data_scope:
         #- Afrotropic
 
   taxonomic:  # Taxonomic scope on which to train model
-    resolution: Custom  # Determines scope and possible granularity of filtering
+    resolution: All_species  # Determines scope and possible granularity of filtering
     # [All_species, Custom, Custom_alt, Kingdom, Phylum, Class, Order]
     filtering_scope: Custom  # For consistent filtering when resolution is All_species
     include_all: True  # True if all species in scope, False if not
@@ -150,7 +150,7 @@ run_settings:
       tune: 1000
       cores: 4
       chains: 4
-      target_accept: 0.97
+      target_accept: 0.95
       nuts_sampler: numpyro  # [numpyro, pymc]
 
   # Structural settings for generalized linear mixed models

@@ -89,7 +89,7 @@ class GenerateFeaturesTask:
         df = self.combine_land_use_intensity_columns(df)
         df = self.group_land_use_types_and_intensities(df)
 
-        # Rescale WorldClim data (temperature and precipitation)
+        # Rescale WorldClim precipitation data
         df = self.rescale_continuous_covariates(df, variables=self.bioclimatic_vars)
 
         # Generate non-linear transformations for continuous variables
@@ -338,9 +338,9 @@ class GenerateFeaturesTask:
         variables: list[str],
     ) -> pl.DataFrame:
         """
-        Rescale bioclimatic data from WorldClim. The original temperature data
-        is in degrees C multiplied by 10 (to reduce filesize). Precipitation
-        data in in mm. Both are rescaled by dividing them by 10.
+        Rescale precipitation data by dividing it by 10. Temperature data is
+        already expressed in degrees C in the combined input and is left
+        unchanged.
 
         Args:
             - df: Dataframe containing the variables to be rescaled.
@@ -349,10 +349,10 @@ class GenerateFeaturesTask:
         Returns:
             - Updated Polars DataFrame with rescaled columns.
         """
-        logger.info("Rescaling temperature and precipitation variables.")
+        logger.info("Rescaling precipitation variables.")
 
         for var in variables:
-            if "temp" in var.lower() or "precip" in var.lower():
+            if "precip" in var.lower():
                 df = df.with_columns(
                     pl.when(pl.col(var).is_not_null())
                     .then(pl.col(var) / 10)

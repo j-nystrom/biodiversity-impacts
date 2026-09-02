@@ -181,7 +181,7 @@ diversity_metrics:
   groupby_cols: [SS, SSB, SSBS]
   reference_baselines:
     - minimal_primary_vegetation
-    - primary_vegetation
+    #- primary_vegetation
   taxonomic_grouping_cols:
     All_species: []
     Custom: [Custom_taxonomic_group]
@@ -207,10 +207,10 @@ diversity_metrics:
         All_species: "../../../data/output/alpha_diversity/alpha_all_species.parquet"
         Custom: "../../../data/output/alpha_diversity/alpha_custom.parquet"
         Custom_alt: "../../../data/output/alpha_diversity/alpha_custom_alt.parquet"
-      primary_vegetation:
-        All_species: "../../../data/output/alpha_diversity/alpha_all_species_primary.parquet"
-        Custom: "../../../data/output/alpha_diversity/alpha_custom_primary.parquet"
-        Custom_alt: "../../../data/output/alpha_diversity/alpha_custom_alt_primary.parquet"
+      # primary_vegetation:
+        # All_species: "../../../data/output/alpha_diversity/alpha_all_species_primary.parquet"
+        # Custom: "../../../data/output/alpha_diversity/alpha_custom_primary.parquet"
+        # Custom_alt: "../../../data/output/alpha_diversity/alpha_custom_alt_primary.parquet"
       # Kingdom: "../../../data/output/alpha_diversity/alpha_kingdom.parquet"
       # Phylum: "../../../data/output/alpha_diversity/alpha_phylum.parquet"
       # Class: "../../../data/output/alpha_diversity/alpha_class.parquet"
@@ -245,10 +245,10 @@ diversity_metrics:
         All_species: "../../../data/output/beta_diversity/beta_all_species.parquet"
         Custom: "../../../data/output/beta_diversity/beta_custom.parquet"
         Custom_alt: "../../../data/output/beta_diversity/beta_custom_alt.parquet"
-      primary_vegetation:
-        All_species: "../../../data/output/beta_diversity/beta_all_species_primary.parquet"
-        Custom: "../../../data/output/beta_diversity/beta_custom_primary.parquet"
-        Custom_alt: "../../../data/output/beta_diversity/beta_custom_alt_primary.parquet"
+      # primary_vegetation:
+        # All_species: "../../../data/output/beta_diversity/beta_all_species_primary.parquet"
+        # Custom: "../../../data/output/beta_diversity/beta_custom_primary.parquet"
+        # Custom_alt: "../../../data/output/beta_diversity/beta_custom_alt_primary.parquet"
       # Kingdom: "../../../data/output/beta_diversity/beta_kingdom.parquet"
       # Phylum: "../../../data/output/beta_diversity/beta_phylum.parquet"
       # Class: "../../../data/output/beta_diversity/beta_class.parquet"
