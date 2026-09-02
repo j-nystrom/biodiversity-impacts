@@ -20,6 +20,12 @@ from shapely.geometry import LineString
 
 jupyter_black.load()
 
+# Make summary and sample-size tables readable without unlimited dataframe output.
+pl.Config.set_tbl_rows(100)
+pl.Config.set_tbl_cols(30)
+pl.Config.set_fmt_str_lengths(80)
+pl.Config.set_tbl_width_chars(200)
+
 # Set global Seaborn theme
 sns.set_theme(
     style="white",  # White background
